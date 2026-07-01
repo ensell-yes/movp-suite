@@ -1,0 +1,27 @@
+{
+  "name": "@movp/graphql",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@movp/core-schema": "workspace:*",
+    "@movp/domain": "workspace:*",
+    "@pothos/core": "^4.3.0",
+    "@pothos/plugin-complexity": "^4.1.0",
+    "@pothos/plugin-dataloader": "^4.1.0",
+    "@supabase/supabase-js": "^2.45.0",
+    "graphql": "^16.9.0",
+    "graphql-yoga": "^5.10.0"
+  },
+  "devDependencies": {
+    "vitest": "^2.1.0"
+  }
+}

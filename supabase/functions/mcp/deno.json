@@ -1,0 +1,15 @@
+{
+  "imports": {
+    "@movp/mcp": "../../../packages/mcp/src/index.ts",
+    "@movp/core-schema": "../../../packages/core-schema/src/index.ts",
+    "@movp/domain": "../../../packages/domain/src/index.ts",
+    "@movp/auth": "../../../packages/auth/src/index.ts",
+    "@movp/obs": "../../../packages/obs/src/index.ts",
+    "@movp/search": "../../../packages/search/src/index.ts",
+    "@movp/search/gte-small": "../../../packages/search/src/gte-small.ts",
+    "@modelcontextprotocol/sdk/": "npm:@modelcontextprotocol/sdk@1.25.3/",
+    "zod": "npm:zod@^3.23.8",
+    "@supabase/supabase-js": "npm:@supabase/supabase-js@2",
+    "jose": "npm:jose@5"
+  }
+}

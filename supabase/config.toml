@@ -4,6 +4,12 @@
 # working directory name when running `supabase init`.
 project_id = "supasuite"
 
+[functions.graphql]
+verify_jwt = false
+
+[functions.mcp]
+verify_jwt = false
+
 [api]
 enabled = true
 # Port to use for the API URL.

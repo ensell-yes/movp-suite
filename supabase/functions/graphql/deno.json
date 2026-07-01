@@ -1,0 +1,18 @@
+{
+  "imports": {
+    "@movp/graphql": "../../../packages/graphql/src/index.ts",
+    "@movp/core-schema": "../../../packages/core-schema/src/index.ts",
+    "@movp/domain": "../../../packages/domain/src/index.ts",
+    "@movp/auth": "../../../packages/auth/src/index.ts",
+    "@movp/obs": "../../../packages/obs/src/index.ts",
+    "@movp/search": "../../../packages/search/src/index.ts",
+    "@movp/search/gte-small": "../../../packages/search/src/gte-small.ts",
+    "@pothos/core": "npm:@pothos/core@^4.3.0",
+    "@pothos/plugin-complexity": "npm:@pothos/plugin-complexity@^4.1.0",
+    "@pothos/plugin-dataloader": "npm:@pothos/plugin-dataloader@^4.1.0",
+    "graphql": "npm:graphql@^16.9.0",
+    "graphql-yoga": "npm:graphql-yoga@^5.10.0",
+    "@supabase/supabase-js": "npm:@supabase/supabase-js@2",
+    "jose": "npm:jose@5"
+  }
+}
