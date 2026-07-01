@@ -60,3 +60,73 @@ $$;
 
 revoke all on function public.can_access_entity(text, uuid, uuid) from public, anon;
 grant execute on function public.can_access_entity(text, uuid, uuid) to authenticated;
+
+-- Fine-grained RLS: replace the generated <name>_rw blanket policies.
+-- comment: readable by anyone who can access the entity; writable only by its author.
+drop policy if exists comment_rw on public.comment;
+create policy comment_select on public.comment for select to authenticated
+  using (public.can_access_entity(entity_type, entity_id, workspace_id));
+create policy comment_insert on public.comment for insert to authenticated
+  with check (author_id = (select auth.uid())
+              and public.can_access_entity(entity_type, entity_id, workspace_id));
+create policy comment_update on public.comment for update to authenticated
+  using (author_id = (select auth.uid())
+         and public.can_access_entity(entity_type, entity_id, workspace_id))
+  with check (author_id = (select auth.uid())
+              and public.can_access_entity(entity_type, entity_id, workspace_id));
+create policy comment_delete on public.comment for delete to authenticated
+  using (author_id = (select auth.uid())
+         and public.can_access_entity(entity_type, entity_id, workspace_id));
+
+-- reaction: readable by anyone who can access the entity; each user owns theirs.
+drop policy if exists reaction_rw on public.reaction;
+create policy reaction_select on public.reaction for select to authenticated
+  using (public.can_access_entity(entity_type, entity_id, workspace_id));
+create policy reaction_insert on public.reaction for insert to authenticated
+  with check (user_id = (select auth.uid())
+              and public.can_access_entity(entity_type, entity_id, workspace_id));
+create policy reaction_delete on public.reaction for delete to authenticated
+  using (user_id = (select auth.uid())
+         and public.can_access_entity(entity_type, entity_id, workspace_id));
+
+-- saved_item: strictly owner-only (private bookmarks).
+drop policy if exists saved_item_rw on public.saved_item;
+create policy saved_item_all on public.saved_item for all to authenticated
+  using (user_id = (select auth.uid()) and public.is_workspace_member(workspace_id))
+  with check (user_id = (select auth.uid())
+              and public.can_access_entity(entity_type, entity_id, workspace_id));
+
+-- mention: visible to anyone who can access the entity, or to a mentioned member.
+drop policy if exists mention_rw on public.mention;
+create policy mention_select on public.mention for select to authenticated
+  using (
+    public.can_access_entity(entity_type, entity_id, workspace_id)
+    or (mentioned_user_id = (select auth.uid()) and public.is_workspace_member(workspace_id))
+  );
+-- mention_insert: only the referenced comment's author can mint mentions, and
+-- recipients must be workspace members.
+create policy mention_insert on public.mention for insert to authenticated
+  with check (
+    public.can_access_entity(mention.entity_type, mention.entity_id, mention.workspace_id)
+    and exists (
+      select 1 from public.comment c
+      where c.id = mention.comment_id
+        and c.workspace_id = mention.workspace_id
+        and c.entity_type  = mention.entity_type
+        and c.entity_id    = mention.entity_id
+        and c.author_id    = (select auth.uid())
+    )
+    and exists (
+      select 1 from public.workspace_membership m
+      where m.workspace_id = mention.workspace_id
+        and m.user_id      = mention.mentioned_user_id
+    )
+  );
+
+-- share_link: managed only by its creator, who must be able to access the entity.
+drop policy if exists share_link_rw on public.share_link;
+create policy share_link_all on public.share_link for all to authenticated
+  using (created_by = (select auth.uid())
+         and public.can_access_entity(entity_type, entity_id, workspace_id))
+  with check (created_by = (select auth.uid())
+              and public.can_access_entity(entity_type, entity_id, workspace_id));
