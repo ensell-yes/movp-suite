@@ -1,0 +1,16 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "movp-frontend-astro",
+  "main": "./dist/_worker.js/index.js",
+  "compatibility_date": "2025-05-05",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": { "directory": "./dist", "binding": "ASSETS" },
+  "r2_buckets": [
+    { "binding": "MEDIA_BUCKET", "bucket_name": "movp-frontend-media" }
+  ],
+  "vars": {
+    "GRAPHQL_ENDPOINT": "http://127.0.0.1:54321/functions/v1/graphql",
+    "WORKSPACE_ID": "33333333-3333-3333-3333-333333333333"
+  },
+  "observability": { "enabled": true }
+}

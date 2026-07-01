@@ -1,0 +1,8 @@
+---
+import Base from '../layouts/Base.astro'
+import SearchBox from '../components/SearchBox.tsx'
+---
+<Base title="Search">
+  <h1 tabindex="-1" id="search-heading">Search</h1>
+  <SearchBox client:load />
+</Base>

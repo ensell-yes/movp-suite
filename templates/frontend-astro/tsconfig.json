@@ -1,0 +1,8 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["astro/client"],
+    "jsx": "preserve"
+  },
+  "include": ["src", "tests", "env.d.ts", "src/env.d.ts"]
+}

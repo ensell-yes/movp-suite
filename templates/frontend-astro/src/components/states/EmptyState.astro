@@ -1,0 +1,5 @@
+---
+interface Props { message?: string }
+const { message = 'Nothing here yet.' } = Astro.props
+---
+<section data-testid="empty"><p>{message}</p><slot /></section>

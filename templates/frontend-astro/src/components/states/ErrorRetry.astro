@@ -1,0 +1,8 @@
+---
+interface Props { message?: string; retryHref: string }
+const { message = 'Something went wrong.', retryHref } = Astro.props
+---
+<section data-testid="error" role="alert">
+  <p>{message}</p>
+  <a data-testid="retry" href={retryHref}>Retry</a>
+</section>

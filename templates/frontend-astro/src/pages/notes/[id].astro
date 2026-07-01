@@ -1,0 +1,38 @@
+---
+import Base from '../../layouts/Base.astro'
+import AuthFailure from '../../components/states/AuthFailure.astro'
+import ErrorRetry from '../../components/states/ErrorRetry.astro'
+import EmptyState from '../../components/states/EmptyState.astro'
+import { readServerEnv } from '../../lib/env.ts'
+import { getSessionToken } from '../../lib/session.ts'
+import { gqlRequest, NOTE_QUERY, type NoteRow } from '../../lib/graphql.ts'
+
+const { id } = Astro.params
+const token = getSessionToken(Astro.cookies)
+let state: 'auth' | 'error' | 'empty' | 'ok' = 'auth'
+let note: NoteRow | null = null
+
+if (token) {
+  const { graphqlEndpoint } = readServerEnv()
+  const r = await gqlRequest<{ note: NoteRow | null }>({ endpoint: graphqlEndpoint, token }, NOTE_QUERY, { id })
+  if (!r.ok) state = 'error'
+  else if (!r.data.note) state = 'empty'
+  else {
+    note = r.data.note
+    state = 'ok'
+  }
+}
+---
+<Base title={note?.title ?? 'Note'}>
+  {state === 'auth' && <AuthFailure resource="this note" />}
+  {state === 'error' && <ErrorRetry message="Could not load this note." retryHref={Astro.url.pathname} />}
+  {state === 'empty' && <EmptyState message="Note not found."><a href="/">Back to notes</a></EmptyState>}
+  {state === 'ok' && note && (
+    <article data-testid="note-detail">
+      <h1 tabindex="-1" id="note-heading">{note.title}</h1>
+      <p><small>{note.status} updated {note.updated_at}</small></p>
+      <div>{note.body ?? ''}</div>
+      <a href="/">Back to notes</a>
+    </article>
+  )}
+</Base>

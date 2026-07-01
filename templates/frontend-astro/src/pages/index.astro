@@ -1,0 +1,42 @@
+---
+import Base from '../layouts/Base.astro'
+import AuthFailure from '../components/states/AuthFailure.astro'
+import ErrorRetry from '../components/states/ErrorRetry.astro'
+import EmptyState from '../components/states/EmptyState.astro'
+import { readServerEnv } from '../lib/env.ts'
+import { getSessionToken } from '../lib/session.ts'
+import { gqlRequest, NOTES_QUERY, clampFirst, type NotePage } from '../lib/graphql.ts'
+
+const token = getSessionToken(Astro.cookies)
+let state: 'auth' | 'error' | 'empty' | 'ok' = 'auth'
+let notes: NotePage['items'] = []
+
+if (token) {
+  const { graphqlEndpoint, workspaceId } = readServerEnv()
+  const first = clampFirst(Number(Astro.url.searchParams.get('first') ?? '') || undefined)
+  const r = await gqlRequest<{ notes: NotePage }>(
+    { endpoint: graphqlEndpoint, token },
+    NOTES_QUERY,
+    { workspaceId, first, after: null },
+  )
+  if (!r.ok) {
+    state = 'error'
+  } else {
+    notes = r.data.notes.items
+    state = notes.length === 0 ? 'empty' : 'ok'
+  }
+}
+---
+<Base title="Notes">
+  <h1 tabindex="-1" id="notes-heading">Notes</h1>
+  {state === 'auth' && <AuthFailure resource="notes" />}
+  {state === 'error' && <ErrorRetry message="Could not load notes." retryHref={Astro.url.pathname + Astro.url.search} />}
+  {state === 'empty' && <EmptyState message="No notes yet." />}
+  {state === 'ok' && (
+    <ul data-testid="notes-list">
+      {notes.map((note) => (
+        <li><a href={`/notes/${note.id}`}>{note.title}</a> <small>{note.status}</small></li>
+      ))}
+    </ul>
+  )}
+</Base>

@@ -6,6 +6,9 @@
   "scripts": {
     "codegen": "tsx scripts/codegen.ts",
     "test": "turbo run test",
+    "test:graphql-shape": "pnpm --filter @movp/graphql exec vitest run schema",
+    "test:jobs": "pnpm --filter @movp/flows exec vitest run jobs",
+    "test:redaction": "pnpm --filter @movp/obs exec vitest run emit",
     "typecheck": "turbo run typecheck"
   },
   "devDependencies": {

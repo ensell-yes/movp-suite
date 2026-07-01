@@ -1,0 +1,8 @@
+---
+interface Props { resource?: string }
+const { resource = 'this page' } = Astro.props
+---
+<section data-testid="auth-failure" role="alert">
+  <p>You are signed out. Please sign in to view {resource}.</p>
+  <a href="/login">Sign in</a>
+</section>

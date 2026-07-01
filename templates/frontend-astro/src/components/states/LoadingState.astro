@@ -1,0 +1,5 @@
+---
+interface Props { label?: string }
+const { label = 'Loading...' } = Astro.props
+---
+<p data-testid="loading" role="status" aria-live="polite">{label}</p>
