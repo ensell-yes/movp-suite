@@ -1,5 +1,5 @@
 begin;
-select plan(12);
+select plan(17);
 
 -- Shared seed (as table owner; RLS bypassed).
 -- W1 members: A (owner), C (member). B is NOT a member of W1. W2 has no seeded members.
@@ -35,6 +35,22 @@ select is((select count(*)::int from pg_indexes where schemaname='public' and in
           1, 'saved_item entity index exists');
 select is((select count(*)::int from pg_indexes where schemaname='public' and indexname='mention_entity_idx'),
           1, 'mention entity index exists');
+
+-- Task 3: can_access_entity (act as member A of W1).
+set local role authenticated;
+set local request.jwt.claims = '{"sub":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"}';
+select is(public.can_access_entity('note','33333333-3333-3333-3333-333333333333','11111111-1111-1111-1111-111111111111'),
+          true,  'member + entity in ws -> true');
+select is(public.can_access_entity('note','44444444-4444-4444-4444-444444444444','11111111-1111-1111-1111-111111111111'),
+          false, 'entity not in the passed workspace -> false');
+select is(public.can_access_entity('task','99999999-9999-9999-9999-999999999999','11111111-1111-1111-1111-111111111111'),
+          false, 'unknown entity_type -> false (fail closed) even for a member');
+-- Act as non-member B (not in W1).
+set local request.jwt.claims = '{"sub":"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"}';
+select is(public.can_access_entity('note','33333333-3333-3333-3333-333333333333','11111111-1111-1111-1111-111111111111'),
+          false, 'non-member -> false');
+select is(public.can_access_entity('task','99999999-9999-9999-9999-999999999999','11111111-1111-1111-1111-111111111111'),
+          false, 'unknown entity_type -> false (fail closed), non-member');
 
 select * from finish();
 rollback;
