@@ -36,6 +36,7 @@ export function buildMcpServer(schema: MovpSchema, ctx: McpCtx): McpServer {
   const domain = createDomain({ db: ctx.db, userId: ctx.userId }, { embedder: ctx.embedder })
 
   for (const c of schema.collections) {
+    if (c.internal) continue
     const svc = service(domain, c.name)
 
     server.registerTool(
@@ -101,6 +102,76 @@ export function buildMcpServer(schema: MovpSchema, ctx: McpCtx): McpServer {
         text(await (domain.graph as { link: (a: unknown) => Promise<unknown> }).link({ srcType: c.name, ...args })),
     )
   }
+
+  server.registerTool(
+    'inbox.list',
+    {
+      title: 'List inbox',
+      description: 'List the current user inbox feed for a workspace',
+      inputSchema: {
+        workspaceId: z.string(),
+        tab: z.enum(['all', 'mentions', 'saved', 'assigned']).optional(),
+        first: z.number().optional(),
+      },
+    },
+    async ({ workspaceId, tab, first }) => text(await domain.collab.inbox({ workspaceId, tab: tab ?? 'all', first })),
+  )
+
+  server.registerTool(
+    'comment.add',
+    {
+      title: 'Add comment',
+      description: 'Add a comment to an entity, optionally mentioning users',
+      inputSchema: {
+        entityType: z.string(),
+        entityId: z.string(),
+        body: z.string(),
+        parentId: z.string().optional(),
+        mentions: z.array(z.string()).optional(),
+      },
+    },
+    async ({ entityType, entityId, body, parentId, mentions }) =>
+      text(await domain.collab.comment.create({ entityType, entityId, body, parentId, mentions })),
+  )
+
+  server.registerTool(
+    'reaction.toggle',
+    {
+      title: 'Toggle reaction',
+      description: 'Add or remove a like/dislike on an entity',
+      inputSchema: { entityType: z.string(), entityId: z.string(), kind: z.enum(['like', 'dislike']), on: z.boolean() },
+    },
+    async ({ entityType, entityId, kind, on }) => {
+      if (on) await domain.collab.react({ entityType, entityId, kind })
+      else await domain.collab.unreact({ entityType, entityId, kind })
+      return text({ ok: true })
+    },
+  )
+
+  server.registerTool(
+    'save.toggle',
+    {
+      title: 'Toggle save',
+      description: 'Save or unsave an entity for the current user',
+      inputSchema: { entityType: z.string(), entityId: z.string(), on: z.boolean() },
+    },
+    async ({ entityType, entityId, on }) => {
+      if (on) await domain.collab.save({ entityType, entityId })
+      else await domain.collab.unsave({ entityType, entityId })
+      return text({ ok: true })
+    },
+  )
+
+  server.registerTool(
+    'share.create',
+    {
+      title: 'Create share link',
+      description: 'Mint a share link token for an entity (returned once)',
+      inputSchema: { entityType: z.string(), entityId: z.string(), expiresInHours: z.number().optional() },
+    },
+    async ({ entityType, entityId, expiresInHours }) =>
+      text(await domain.collab.createShareLink({ entityType, entityId, expiresInHours })),
+  )
 
   return server
 }
