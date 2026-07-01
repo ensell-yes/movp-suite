@@ -25,18 +25,32 @@ copy-paste-correct: transcribe the code samples verbatim and follow the gates.
 5. `2026-06-30-movp-core-05-search-async.md` — embeddings, jobs, flows, notifications
 6. `2026-06-30-movp-core-06-frontend-ci.md` — Astro template + all CI gates
 
+> **Stage A status:** executed and committed (`main` up to `2e6327d`). The DSL/codegen
+> contract is app-ready (`f.json`/`f.date`, `many-to-one` FK emission, `movp_job_kind`
+> registry, `CollectionDef.internal`).
+
 **Stage B — Application phases** (see `2026-06-30-movp-app-roadmap.md` for sequence &
 dependencies). Build order: Collaboration (`app-05`) → Task (`app-01`) → CMS (`app-02`) →
 Campaigns (`app-03`) → Segmentation (`app-04`) → Domain Workflows (`app-06`).
 
-> **Important — Stage B plans are ROADMAP/design altitude, not executable TDD yet.** Each
-> `app-0N` plan specifies collections, events, workflows, RLS, and surfaces, but must first be
-> **expanded into a bite-sized TDD implementation series** (the way Core Phase 1 is six
-> task-level plans) before code is written. The immediately executable work is **Stage A**.
+**Phase 2 — Collaboration is EXPANDED and EXECUTABLE** (bite-sized TDD, committed
+`31cceed`/`09a75a5`; passed adversarial review at 9.31). Execute **in order**:
+1. `2026-07-01-movp-app-05a-collaboration-data.md` — the 5 collab collections (config-first,
+   `internal: true`), `can_access_entity` (fail-closed), fine-grained RLS + lifecycle triggers
+   (migration `…000006`). Adds `CollectionDef.internal` to `@movp/core-schema`.
+2. `2026-07-01-movp-app-05b-collaboration-services.md` — `makeCollabService`, `inbox_feed` /
+   `resolve_share_link` + atomic `create_comment_with_mentions` RPCs (migration `…000007`),
+   single-recipient notify fan-out, and GraphQL/MCP/CLI custom surfaces (generic CRUD for the
+   `internal` collab collections is suppressed). **Precondition: 05a merged first.**
+
+> **The remaining app phases** (`app-01` Task, `app-02` CMS, `app-03` Campaigns, `app-04`
+> Segmentation, `app-06` Domain Workflows) are still ROADMAP/design altitude — each must be
+> **expanded into a bite-sized TDD series** (as Core Phase 1 and Collaboration were) before
+> code is written.
 
 ## Per-task execution protocol
 
-For every `### Task N` (Stage A):
+For every `### Task N` (Stage A **and** the Collaboration `05a`/`05b` series):
 1. Read **Files** and **Interfaces** (the exact signatures neighboring tasks rely on).
 2. Follow the `- [ ]` steps in order — the TDD cycle is deliberate:
    write the failing test → run it, confirm the **stated expected failure** → paste the
