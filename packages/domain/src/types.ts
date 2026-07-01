@@ -1,5 +1,13 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
-import type { NoteCreate, NoteRow, NoteUpdate, TagCreate, TagRow, TagUpdate } from './generated/types.ts'
+import type {
+  CommentRow,
+  NoteCreate,
+  NoteRow,
+  NoteUpdate,
+  TagCreate,
+  TagRow,
+  TagUpdate,
+} from './generated/types.ts'
 
 export interface DomainCtx {
   db: SupabaseClient
@@ -63,9 +71,44 @@ export interface GraphService {
   }): Promise<Array<{ type: string; id: string; depth: number }>>
 }
 
+export interface InboxItem {
+  kind: string
+  entity_type: string
+  entity_id: string
+  ref_id: string
+  created_at: string
+  payload: Record<string, unknown>
+}
+
+export interface CollabService {
+  comment: {
+    create(input: {
+      entityType: string
+      entityId: string
+      body: string
+      parentId?: string
+      mentions?: string[]
+    }): Promise<CommentRow>
+    listByEntity(a: {
+      workspaceId: string
+      entityType: string
+      entityId: string
+      first?: number
+      after?: string | null
+    }): Promise<Page<CommentRow>>
+  }
+  react(i: { entityType: string; entityId: string; kind: 'like' | 'dislike' }): Promise<void>
+  unreact(i: { entityType: string; entityId: string; kind: 'like' | 'dislike' }): Promise<void>
+  save(i: { entityType: string; entityId: string }): Promise<void>
+  unsave(i: { entityType: string; entityId: string }): Promise<void>
+  createShareLink(i: { entityType: string; entityId: string; expiresInHours?: number }): Promise<{ token: string }>
+  inbox(a: { workspaceId: string; tab: 'all' | 'mentions' | 'saved' | 'assigned'; first?: number }): Promise<InboxItem[]>
+}
+
 export interface Domain {
   note: CollectionService<NoteRow, NoteCreate, NoteUpdate>
   tag: CollectionService<TagRow, TagCreate, TagUpdate>
   search(a: SearchArgs): Promise<SearchHit[]>
   graph: GraphService
+  collab: CollabService
 }
