@@ -188,6 +188,8 @@ create table if not exists public.movp_fields (
 );
 grant select on public.movp_collections to authenticated;
 grant select on public.movp_fields to authenticated;
+grant select, insert, update, delete on public.movp_collections to service_role;
+grant select, insert, update, delete on public.movp_fields to service_role;
 
 create table if not exists movp_internal.movp_jobs (
   id uuid primary key default gen_random_uuid(),
@@ -227,6 +229,7 @@ create table if not exists public.search_chunk (
 );
 alter table public.search_chunk enable row level security;
 grant select on public.search_chunk to authenticated;
+grant select, insert, update, delete on public.search_chunk to service_role;
 create policy search_chunk_read on public.search_chunk
   for select to authenticated
   using (public.is_workspace_member(workspace_id));
@@ -268,6 +271,7 @@ create table if not exists public.edges (
 );
 alter table public.edges enable row level security;
 grant select, insert, update, delete on public.edges to authenticated;
+grant select, insert, update, delete on public.edges to service_role;
 create policy edges_rw on public.edges for all to authenticated
   using (public.is_workspace_member(workspace_id))
   with check (public.is_workspace_member(workspace_id));
@@ -291,6 +295,7 @@ ${cols.join(',\n')}
 );
 alter table public.${ident(c.name)} enable row level security;
 grant select, insert, update, delete on public.${ident(c.name)} to authenticated;
+grant select, insert, update, delete on public.${ident(c.name)} to service_role;
 create policy ${ident(c.name)}_rw on public.${ident(c.name)} for all to authenticated
   using (public.is_workspace_member(workspace_id))
   with check (public.is_workspace_member(workspace_id));

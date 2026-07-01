@@ -17,6 +17,9 @@ describe('emitSharedInfraSql', () => {
     expect(sql).toContain('limit least(greatest(match_count, 1), 50)')
     expect(sql).toContain('create table if not exists public.edges')
     expect(sql).toContain('create table if not exists public.movp_collections')
+    expect(sql).toContain('grant select, insert, update, delete on public.movp_collections to service_role;')
+    expect(sql).toContain('grant select, insert, update, delete on public.search_chunk to service_role;')
+    expect(sql).toContain('grant select, insert, update, delete on public.edges to service_role;')
   })
 })
 
@@ -25,6 +28,7 @@ describe('emitCollectionSql(note)', () => {
 
   it('creates table, FTS, RLS, embed trigger, cleanup trigger, and metadata', () => {
     expect(sql).toContain('create table if not exists public.note')
+    expect(sql).toContain('grant select, insert, update, delete on public.note to service_role;')
     expect(sql).toContain('workspace_id uuid not null references public.workspace(id) on delete cascade')
     expect(sql).toContain('title text not null')
     expect(sql).toContain("status text not null default 'draft' check (status in ('draft', 'published', 'archived'))")

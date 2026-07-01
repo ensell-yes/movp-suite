@@ -8,6 +8,7 @@ let SUPABASE_URL = ''
 let ISS = ''
 let env: { SUPABASE_URL: string; SUPABASE_ANON_KEY: string }
 const KID = 'test-key-1'
+const ES_KID = 'test-key-2'
 const SUB = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
 
 let server: Server
@@ -27,11 +28,15 @@ beforeAll(async () => {
   jwk.kid = KID
   jwk.alg = 'RS256'
   jwk.use = 'sig'
+  const esJwk = await exportJWK(es.publicKey)
+  esJwk.kid = ES_KID
+  esJwk.alg = 'ES256'
+  esJwk.use = 'sig'
 
   server = createServer((req, res) => {
     if (req.url === '/auth/v1/.well-known/jwks.json') {
       res.writeHead(200, { 'content-type': 'application/json' })
-      res.end(JSON.stringify({ keys: [jwk] }))
+      res.end(JSON.stringify({ keys: [jwk, esJwk] }))
       return
     }
     res.writeHead(404)
@@ -56,14 +61,15 @@ function req(token?: string): Request {
 }
 
 async function sign(
-  key: KeyLike,
-  alg: 'RS256' | 'ES256',
+  key: KeyLike | Uint8Array,
+  alg: 'RS256' | 'ES256' | 'HS256',
   claims: Record<string, unknown>,
   expSeconds?: number,
+  kid = KID,
 ) {
   const now = Math.floor(Date.now() / 1000)
   return await new SignJWT(claims)
-    .setProtectedHeader({ alg, kid: KID })
+    .setProtectedHeader({ alg, kid })
     .setIssuedAt(now)
     .setExpirationTime(expSeconds ?? now + 3600)
     .sign(key)
@@ -78,6 +84,12 @@ describe('resolvePrincipal', () => {
       expect(r.userId).toBe(SUB)
       expect(r.db).toBeDefined()
     }
+  })
+
+  it('accepts Supabase asymmetric ES256 member tokens', async () => {
+    const token = await sign(esPriv, 'ES256', { iss: ISS, aud: 'authenticated', sub: SUB }, undefined, ES_KID)
+    const r = await resolvePrincipal(req(token), env)
+    expect(r.ok).toBe(true)
   })
 
   it('rejects a missing token', async () => {
@@ -103,8 +115,12 @@ describe('resolvePrincipal', () => {
     expect(r).toEqual({ ok: false, code: 'invalid_token' })
   })
 
-  it('rejects a wrong algorithm (ES256)', async () => {
-    const token = await sign(esPriv, 'ES256', { iss: ISS, aud: 'authenticated', sub: SUB })
+  it('rejects a symmetric algorithm (HS256)', async () => {
+    const token = await sign(new TextEncoder().encode('super-secret-test-key'), 'HS256', {
+      iss: ISS,
+      aud: 'authenticated',
+      sub: SUB,
+    })
     const r = await resolvePrincipal(req(token), env)
     expect(r).toEqual({ ok: false, code: 'invalid_token' })
   })

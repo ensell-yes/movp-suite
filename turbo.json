@@ -1,5 +1,6 @@
 {
   "$schema": "https://turbo.build/schema.json",
+  "globalPassThroughEnv": ["SUPABASE_WORKDIR"],
   "tasks": {
     "test": { "dependsOn": ["^test"] },
     "typecheck": { "dependsOn": ["^typecheck"] }

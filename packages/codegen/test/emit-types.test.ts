@@ -1,6 +1,6 @@
 import { schema } from '@movp/core-schema'
 import { describe, expect, it } from 'vitest'
-import { emitTypes } from '../src/index.ts'
+import { emitTypes, generate } from '../src/index.ts'
 
 describe('emitTypes', () => {
   const ts = emitTypes(schema)
@@ -26,5 +26,9 @@ describe('emitTypes', () => {
     expect(ts).toContain('export interface TagRow {')
     expect(ts).toContain('  name: string')
     expect(ts).not.toContain('tags')
+  })
+
+  it('exports the CLI codegen entry point', () => {
+    expect(generate).toEqual(expect.any(Function))
   })
 })

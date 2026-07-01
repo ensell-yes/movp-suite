@@ -2,9 +2,11 @@ import { execFileSync } from 'node:child_process'
 import { defineConfig } from 'vitest/config'
 
 function stackEnv(): Record<string, string> {
+  const args = ['status', '-o', 'env']
+  if (process.env.SUPABASE_WORKDIR) args.push('--workdir', process.env.SUPABASE_WORKDIR)
   let out: string
   try {
-    out = execFileSync('supabase', ['status', '-o', 'env'], { encoding: 'utf8' })
+    out = execFileSync('supabase', args, { encoding: 'utf8' })
   } catch {
     throw new Error('`supabase status` failed - run `supabase start` before `pnpm --filter @movp/domain test`')
   }

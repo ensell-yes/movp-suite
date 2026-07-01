@@ -18,6 +18,8 @@ create index workspace_membership_user_idx on public.workspace_membership (user_
 
 grant select on public.workspace to authenticated;
 grant select on public.workspace_membership to authenticated;
+grant select, insert, update, delete on public.workspace to service_role;
+grant select, insert, update, delete on public.workspace_membership to service_role;
 
 -- Hardened SECURITY DEFINER: pinned empty search_path, fully schema-qualified,
 -- least-privilege execute grant.

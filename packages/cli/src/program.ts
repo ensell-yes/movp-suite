@@ -32,8 +32,8 @@ export function buildProgram(opts: BuildProgramOpts = {}): Command {
   const runCodegen =
     opts.runCodegen ??
     (async () => {
-      const mod = (await import('@movp/codegen')) as { generate?: () => Promise<void> }
-      if (!mod.generate) throw new Error('@movp/codegen.generate() not found: delivered in Plan 2')
+      const mod = await import('@movp/codegen')
+      if (!mod.generate) throw new Error('@movp/codegen.generate() not found')
       await mod.generate()
     })
 

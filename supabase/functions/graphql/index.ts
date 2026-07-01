@@ -10,6 +10,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
   const env = {
     SUPABASE_URL: Deno.env.get('SUPABASE_URL')!,
     SUPABASE_ANON_KEY: Deno.env.get('SUPABASE_ANON_KEY')!,
+    SUPABASE_JWT_ISSUER: Deno.env.get('MOVP_JWT_ISSUER') ?? Deno.env.get('SUPABASE_JWT_ISSUER') ?? undefined,
   }
   const principal = await resolvePrincipal(req, env)
   if (!principal.ok) {
