@@ -39,7 +39,7 @@ These are Part A's deliverables. Part B code references them by exact name; a mi
 - `public.is_workspace_member(uuid)` (from bootstrap tenancy — already present).
 - `movp_internal.movp_events (id, type, workspace_id, payload jsonb, trace_id, created_at)` (from `...005`).
 
-**RLS assumptions Part B relies on:** comment writes are author-scoped (`author_id = auth.uid()`) with `can_access_entity` reads; a comment's author may insert `mention` rows for that comment; reaction/saved_item are user-scoped (`user_id = auth.uid()`). Part A's `user.mentioned` event payload carries `recipient_user_id`.
+**RLS assumptions Part B relies on:** comment writes are author-scoped (`author_id = auth.uid()`) with `can_access_entity` reads; a comment's author may insert `mention` rows for that comment, but ONLY when the `mentioned_user_id` is a workspace member (Part A's `mention_insert` RLS additionally gates on `public.workspace_membership`) — a mention can never target a non-member, matching `inbox_feed`'s `is_workspace_member` gate; reaction/saved_item are user-scoped (`user_id = auth.uid()`). Part A's `user.mentioned` event payload carries `recipient_user_id`.
 
 **CollabService interface (fixed contract — Task 2 implements it verbatim):**
 ```ts
@@ -124,7 +124,7 @@ supasuite/
 
 ### Task 1: Inbox + share-link RPCs (`20260701000007_collaboration_rpcs.sql`) + pgTAP
 
-Two `public` SECURITY DEFINER read RPCs granted to `authenticated`. `inbox_feed` returns `'[]'` unless the caller is a member of `ws`, then returns this user's mentions / saved items / recent workspace events / (empty for `assigned`). `resolve_share_link` returns `{entity_type, entity_id, workspace_id}` for a non-expired link matching the token hash, else SQL `null`. The same migration also adds one `SECURITY INVOKER` write RPC, `create_comment_with_mentions`, which inserts a comment and its denormalized mention rows in a single transaction (see FIX 2 in the migration below); Task 2's domain service calls it and Task 2's integration test proves its atomicity, while this task's pgTAP asserts only its structure + grants.
+Two `public` SECURITY DEFINER read RPCs granted to `authenticated`. `inbox_feed` returns `'[]'` unless the caller is a member of `ws`, then returns this user's mentions / saved items / recent workspace events / (empty for `assigned`). `resolve_share_link` returns `{entity_type, entity_id, workspace_id}` for a non-expired link matching the token hash, else SQL `null`. The same migration also adds one `SECURITY INVOKER` write RPC, `create_comment_with_mentions`, which inserts a comment and its denormalized mention rows in a single transaction (see FIX 2 in the migration below); Task 2's domain service calls it and Task 2's integration test proves its atomicity (a mention targeting a non-member is denied by Part A's workspace-membership-gated `mention_insert` RLS, rolling the whole comment back), while this task's pgTAP asserts only its structure + grants.
 
 **Files:**
 - Create: `supabase/migrations/20260701000007_collaboration_rpcs.sql`
@@ -342,10 +342,12 @@ grant execute on function public.resolve_share_link(text) to authenticated;
 -- insert leaves an orphan comment (no mentions, no user.mentioned events). This
 -- SECURITY INVOKER RPC inserts both in ONE transaction, so Part A's RLS still runs
 -- as the CALLER (author-scoping on comment + can_access_entity + the mention
--- author/exists check). Because the comment is inserted BEFORE the mentions in the
--- same transaction, Part A's mention_insert RLS `exists(... c.author_id = auth.uid())`
--- is satisfied by the just-inserted comment; and if ANY mention is disallowed the
--- whole statement rolls back — no orphan comment persists.
+-- author-exists check AND a workspace-membership check on each mentioned_user_id —
+-- a mention can only ever target a member). Because the comment is inserted BEFORE
+-- the mentions in the same transaction, Part A's mention_insert RLS
+-- `exists(... c.author_id = auth.uid())` is satisfied by the just-inserted comment;
+-- and if ANY mention is disallowed (a non-member mentioned_user_id, or an entity the
+-- caller cannot access) the whole statement rolls back — no orphan comment persists.
 create or replace function public.create_comment_with_mentions(
   ws uuid,
   p_entity_type text,
@@ -385,7 +387,7 @@ revoke all on function public.create_comment_with_mentions(uuid, text, uuid, tex
 grant execute on function public.create_comment_with_mentions(uuid, text, uuid, text, uuid, uuid[]) to authenticated;
 ```
 
-> **Why `SECURITY INVOKER` (not `DEFINER`).** The function must run under the caller's RLS so Part A enforces author-scoping + `can_access_entity` on the comment insert and the mention author/exists check on each mention row. Because the comment is inserted BEFORE the mentions in the SAME transaction, Part A's `mention_insert` RLS `exists(... c.author_id = auth.uid())` check is satisfied by the just-inserted comment — and the whole thing rolls back if any mention is disallowed, so no orphan comment is ever persisted. It carries `set search_path = ''` and full schema-qualification like the DEFINER RPCs, but `check-definer-audit.mjs` does not flag it (it is not a definer).
+> **Why `SECURITY INVOKER` (not `DEFINER`).** The function must run under the caller's RLS so Part A enforces author-scoping + `can_access_entity` on the comment insert and, on each mention row, the mention author-exists check AND the workspace-membership check on `mentioned_user_id` (a mention can never target a non-member). Because the comment is inserted BEFORE the mentions in the SAME transaction, Part A's `mention_insert` RLS `exists(... c.author_id = auth.uid())` check is satisfied by the just-inserted comment — and the whole thing rolls back if any mention is disallowed (e.g. a non-member `mentioned_user_id`), so no orphan comment is ever persisted. It carries `set search_path = ''` and full schema-qualification like the DEFINER RPCs, but `check-definer-audit.mjs` does not flag it (it is not a definer).
 
 - [ ] **Step 4: Apply, run the test, drift + definer gates**
 
@@ -405,7 +407,7 @@ git commit -m "feat(db): inbox_feed + resolve_share_link collaboration RPCs (def
 
 ### Task 2: Domain `collab` service + `createDomain` wiring
 
-Implement `makeCollabService(ctx)` and the standalone `resolveShareLink(ctx, token)` in `packages/domain/src/collab.ts`; add `InboxItem` + `CollabService` to `types.ts` and extend `Domain`; wire the `collab` service into `createDomain` (the collab collections are `internal` and are NOT wired as generic `CollectionService`s); export from `index.ts`. The test is the domain integration test (requires the local stack + Part A tables).
+Implement `makeCollabService(ctx)` and the standalone `resolveShareLink(ctx, token)` in `packages/domain/src/collab.ts`; add `InboxItem` + `CollabService` to `types.ts` and extend `Domain`; wire the `collab` service into `createDomain` (the collab collections are `internal` and are NOT wired as generic `CollectionService`s); export from `index.ts`. A mention's `mentioned_user_id` must be a **workspace member** — Part A's `mention_insert` RLS additionally gates on `workspace_membership` — so the happy-path test mentions a real second member of the workspace, and mentioning a non-member (a random uuid) is denied (42501) and, because the comment and its mention rows commit in one `SECURITY INVOKER` transaction, rolls the whole comment back. The test is the domain integration test (requires the local stack + Part A tables).
 
 **Files:**
 - Create: `packages/domain/src/collab.ts`
@@ -493,12 +495,22 @@ describe('collab integration', () => {
 
     const note = await authorDomain.note.create({ workspace_id: ws1, title: 'Collab note', body: 'hello' })
 
-    // comment mentioning the 2nd user; workspace_id is derived from the note
+    // Happy path: mention `mentioned`, a REAL member of ws1 (added via addMember above).
+    // Part A's mention_insert RLS now gates mentioned_user_id on workspace_membership,
+    // so a mention can only ever target a member; workspace_id is derived from the note.
     const comment = await authorDomain.collab.comment.create({
       entityType: 'note', entityId: note.id, body: 'great work', mentions: [mentioned.id],
     })
     expect(comment.entity_id).toBe(note.id)
     expect(comment.author_id).toBe(author.id)
+
+    // a mention row was written for that member (service client bypasses RLS)
+    const mentionRows = await adminDb
+      .from('mention')
+      .select('id')
+      .eq('comment_id', comment.id)
+      .eq('mentioned_user_id', mentioned.id)
+    expect((mentionRows.data ?? []).length).toBe(1)
 
     const page = await authorDomain.collab.comment.listByEntity({
       workspaceId: ws1, entityType: 'note', entityId: note.id,
@@ -522,9 +534,11 @@ describe('collab integration', () => {
     const resolved = await resolveShareLink({ db: userClient(author.token), userId: author.id }, token)
     expect(resolved).toMatchObject({ entity_type: 'note', entity_id: note.id, workspace_id: ws1 })
 
-    // atomicity: a comment whose mention is disallowed/invalid (an unknown user id)
-    // rolls back the WHOLE create — no orphan comment persists. Count under the
-    // service client (RLS-bypassing) before and after the failing create.
+    // atomicity: mentioning a NON-MEMBER rolls back the WHOLE create. A random uuid
+    // is never a workspace member, so Part A's mention_insert RLS (workspace-membership
+    // gate) denies the mention row (42501); because the comment + its mention rows
+    // commit in ONE SECURITY INVOKER transaction, the comment is rolled back too — no
+    // orphan persists. Count under the service client (RLS-bypassing) before and after.
     const before = await adminDb.from('comment').select('id').eq('entity_id', note.id)
     const beforeCount = (before.data ?? []).length
     await expect(
@@ -1728,5 +1742,6 @@ git commit -m "test(e2e): collaboration slice — comment/mention/inbox/reaction
 - [ ] `createDomain` exposes NO generic collab keys — the collab collections are `internal: true` and reached only through `collab`. The `collab` service's internal table references (`comment/reaction/saved_item/mention/share_link` via `ctx.db.from(...)` and `create_comment_with_mentions`) match Part A's collection names AND DB table names (the naming invariant). If Part A diverged, reconcile before merge.
 - [ ] Every SECURITY DEFINER function in `20260701000007_collaboration_rpcs.sql` has `set search_path = ''` and is granted to `authenticated` only (`node scripts/check-definer-audit.mjs` green).
 - [ ] NO generic `create<CollabCollection>` mutation / tool / command exists — the GraphQL/MCP/CLI builders each `if (c.internal) continue`, so the SDL has no `createComment`, `tools/list` has no `comment.create`, and the CLI tree has no `movp comment create`. The ONLY collab write/read paths are the custom `collab` ops, which set `author_id`/`user_id`/`workspace_id` server-side and route comment+mentions through the atomic `create_comment_with_mentions` RPC.
+- [ ] A mention's `mentioned_user_id` is always a **workspace member** — Part A's `mention_insert` RLS gates on `public.workspace_membership`, matching `inbox_feed`'s membership gate, so a mention can never notify a non-member. The domain integration test mentions a real second member on the happy path (asserting a `mention` row + a `user.mentioned` inbox item) and proves that a non-member mention (a random uuid) is denied and rolls the whole comment back (`packages/domain/test/collab.integration.test.ts`).
 - [ ] `templates/` untouched (`bash scripts/check-boundary.sh` green).
 - [ ] Full suite: `pnpm test` (turbo) + `bash scripts/slice-e2e.sh` green.

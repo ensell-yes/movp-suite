@@ -607,20 +607,24 @@ insert into public.saved_item (workspace_id, entity_type, entity_id, user_id)
 select is((select count(*)::int from public.saved_item), 1, 'owner sees own saved_item');
 set local request.jwt.claims = '{"sub":"cccccccc-cccc-cccc-cccc-cccccccccccc"}';
 select is((select count(*)::int from public.saved_item), 0, 'saved_item is private to its owner');
--- mention visibility REQUIRES workspace membership (matches inbox_feed's gate):
--- a mentioned MEMBER sees their mention, a mentioned NON-member does not.
--- Author A (member) mints one mention for non-member B and one for member C.
+-- mention: a mention may only TARGET a workspace MEMBER, and visibility REQUIRES
+-- membership (matches Part B's inbox_feed gate, which returns [] for non-members).
+-- Author A (member) mints a mention for member C (succeeds); C sees it. Minting one
+-- for NON-member B is DENIED by mention_insert's membership check.
 set local request.jwt.claims = '{"sub":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"}';
 insert into public.mention (workspace_id, comment_id, mentioned_user_id, entity_type, entity_id)
   values ('11111111-1111-1111-1111-111111111111','55555555-5555-5555-5555-555555555555',
-          'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb','note','33333333-3333-3333-3333-333333333333');
-insert into public.mention (workspace_id, comment_id, mentioned_user_id, entity_type, entity_id)
-  values ('11111111-1111-1111-1111-111111111111','55555555-5555-5555-5555-555555555555',
           'cccccccc-cccc-cccc-cccc-cccccccccccc','note','33333333-3333-3333-3333-333333333333');
--- mentioned NON-member B sees nothing (membership gate denies it)
-set local request.jwt.claims = '{"sub":"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"}';
-select is((select count(*)::int from public.mention where mentioned_user_id='bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'),
-          0, 'mentioned non-member does NOT see the mention (visibility requires membership)');
+-- a mention TARGETING non-member B is denied: mention_insert WITH CHECK requires
+-- mentioned_user_id to be a workspace member. throws_ok savepoints the failed insert
+-- so the test transaction continues (and B's row never persists). NULL errmsg =
+-- check the SQLSTATE only (42501 = insufficient_privilege / RLS violation).
+select throws_ok(
+  $$insert into public.mention (workspace_id, comment_id, mentioned_user_id, entity_type, entity_id)
+    values ('11111111-1111-1111-1111-111111111111','55555555-5555-5555-5555-555555555555',
+            'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb','note','33333333-3333-3333-3333-333333333333')$$,
+  '42501', NULL,
+  'a mention targeting a non-member is denied (mentions target workspace members only)');
 -- mentioned MEMBER C sees their own mention
 set local request.jwt.claims = '{"sub":"cccccccc-cccc-cccc-cccc-cccccccccccc"}';
 select is((select count(*)::int from public.mention where mentioned_user_id='cccccccc-cccc-cccc-cccc-cccccccccccc'),
@@ -675,7 +679,7 @@ set local role authenticated;
 ```
 
 Run: `supabase test db`
-Expected: FAIL — the blanket `<name>_rw` policies still govern (each verb gated only on `is_workspace_member`), so the tightening assertions mismatch: a non-author member can still edit the comment, `saved_item` is not owner-private (member C sees A's saved_item), and member C's non-authored `mention` insert does not throw. The first 17 assertions still pass. (The two mention-visibility assertions happen to hold under the blanket policy too — a non-member is denied by membership and a member is allowed — but they pin the intended behaviour once the override lands.)
+Expected: FAIL — the blanket `<name>_rw` policies still govern (each verb gated only on `is_workspace_member`), so the tightening assertions mismatch: a non-author member can still edit the comment, `saved_item` is not owner-private (member C sees A's saved_item), member C's non-authored `mention` insert does not throw, and author A's `mention` targeting non-member B is NOT denied (the blanket policy lets any member insert, so the members-only `throws_ok` fails). The first 17 assertions still pass. (The `mentioned member sees their own mention` assertion happens to hold under the blanket policy too — a member is allowed — but it pins the intended behaviour once the override lands.)
 
 - [ ] **Step 2: Append the RLS overrides (green)**
 
@@ -725,6 +729,11 @@ create policy mention_select on public.mention for select to authenticated
     public.can_access_entity(entity_type, entity_id, workspace_id)
     or (mentioned_user_id = (select auth.uid()) and public.is_workspace_member(workspace_id))
   );
+-- mention_insert: three ANDed guards. (1) the author can access the entity; (2)
+-- the referenced comment is authored by the caller (only a comment's author mints
+-- its mentions); (3) mentioned_user_id is a workspace MEMBER, so a mention can never
+-- target a random/cross-tenant uuid and its user.mentioned notify never fans out to
+-- a non-member (consistent with mention_select/inbox_feed's membership gate).
 create policy mention_insert on public.mention for insert to authenticated
   with check (
     public.can_access_entity(mention.entity_type, mention.entity_id, mention.workspace_id)
@@ -735,6 +744,11 @@ create policy mention_insert on public.mention for insert to authenticated
         and c.entity_type  = mention.entity_type
         and c.entity_id    = mention.entity_id
         and c.author_id    = (select auth.uid())
+    )
+    and exists (
+      select 1 from public.workspace_membership m
+      where m.workspace_id = mention.workspace_id
+        and m.user_id      = mention.mentioned_user_id
     )
   );
 
@@ -798,7 +812,7 @@ insert into public.comment (id, workspace_id, entity_type, entity_id, body, auth
           '66666666-6666-6666-6666-666666666666');
 insert into public.mention (workspace_id, comment_id, mentioned_user_id, entity_type, entity_id)
   values ('11111111-1111-1111-1111-111111111111','66666666-6666-6666-6666-666666666666',
-          'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb','note','33333333-3333-3333-3333-333333333333');
+          'cccccccc-cccc-cccc-cccc-cccccccccccc','note','33333333-3333-3333-3333-333333333333');
 insert into public.reaction (workspace_id, entity_type, entity_id, user_id, kind)
   values ('11111111-1111-1111-1111-111111111111','note','33333333-3333-3333-3333-333333333333',
           'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','like');
@@ -813,7 +827,7 @@ select is((select count(*)::int from movp_internal.movp_events
 select is((select count(*)::int from movp_internal.movp_events
            where type='user.mentioned'
              and payload->>'comment_id'='66666666-6666-6666-6666-666666666666'
-             and payload->>'recipient_user_id'='bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'),
+             and payload->>'recipient_user_id'='cccccccc-cccc-cccc-cccc-cccccccccccc'),
           1, 'mention insert emits user.mentioned carrying recipient_user_id');
 select is((select count(*)::int from movp_internal.movp_events
            where type='item.liked'
@@ -1013,7 +1027,7 @@ git commit -m "feat(db): collaboration lifecycle triggers over emit_event"
   - Event names verbatim: `comment.added`/`comment.replied` (parent_id branch), `user.mentioned` (payload `recipient_user_id = mentioned_user_id`), `item.liked`/`item.disliked`, `item.saved`, `item.shared`.
 - **`can_access_entity` gate with member/other-ws/unknown-type semantics (Task 3):** unknown `entity_type` now **fails closed** (returns `false`), not member-only. All plan examples/e2e inserts use `entity_type = 'note'` (with `'comment'` reserved for future comment-on-comment); the only `'task'` references are the two fail-closed assertions expecting `false`.
 - **Correctness / self-consistency:** collection order (`comment` before `mention`) satisfies the FK; the generated `<Name>Row` shapes shown in Task 1 are exactly what `emit-types.ts` produces for these field defs (verified against `dataFields`-then-`fkFields` ordering and `required || default` nullability rules); the pgTAP `plan(N)` is bumped 12 → 17 → 29 → 33 as blocks are inserted before the single `select * from finish();`.
-- **Safety:** the authoritative check is `can_access_entity` (server-side, `SECURITY DEFINER`, RLS-bypassing existence probe against the verified principal via `is_workspace_member((select auth.uid()))`), and its `else` arm **fails closed** so an unknown `entity_type` can never grant access. Writes are gated, not just reads: `comment_update`/`comment_delete` require *current* entity access (a removed member cannot edit/delete their old comment); `saved_item_all` requires workspace membership on `using` and entity access on `with check` (no cross-workspace saves); `mention_insert` requires the referenced comment to exist in the same workspace/entity and be authored by the caller (only a comment's author mints its mentions). saved_item stays owner-only; a mention is visible to a mentioned MEMBER or anyone who can access the entity (visibility requires workspace membership, so a mentioned non-member cannot read the row — matching Part B's `inbox_feed`, which returns `[]` for non-members); `movp_internal` is read in tests only as the owner (`reset role`), never as `authenticated`. Negative pgTAP assertions (mentioned non-member sees 0, non-member save denied, non-author mention denied, removed-author update/delete no-op) pin each tightening. All new definers pinned (`search_path=''`, schema-qualified) — passes `check-definer-audit.mjs`.
+- **Safety:** the authoritative check is `can_access_entity` (server-side, `SECURITY DEFINER`, RLS-bypassing existence probe against the verified principal via `is_workspace_member((select auth.uid()))`), and its `else` arm **fails closed** so an unknown `entity_type` can never grant access. Writes are gated, not just reads: `comment_update`/`comment_delete` require *current* entity access (a removed member cannot edit/delete their old comment); `saved_item_all` requires workspace membership on `using` and entity access on `with check` (no cross-workspace saves); `mention_insert` requires the referenced comment to exist in the same workspace/entity and be authored by the caller (only a comment's author mints its mentions), AND requires `mentioned_user_id` to be a workspace member — mentions target members only, so the `mention` AFTER-INSERT trigger's `user.mentioned` notify can never fan out to a random or cross-tenant user, consistent with `mention_select`/`inbox_feed`'s membership gate. (Part B's `create_comment_with_mentions` RPC MAY additionally `raise` a `mention_recipient_not_member`-style message for a friendlier error, but this RLS check is the authoritative gate and rolls the whole transaction back regardless.) saved_item stays owner-only; a mention is visible to a mentioned MEMBER or anyone who can access the entity (visibility requires workspace membership — matching Part B's `inbox_feed`, which returns `[]` for non-members); `movp_internal` is read in tests only as the owner (`reset role`), never as `authenticated`. Negative pgTAP assertions (mention targeting a non-member denied, non-member save denied, non-author mention denied, removed-author update/delete no-op) pin each tightening. All new definers pinned (`search_path=''`, schema-qualified) — passes `check-definer-audit.mjs`.
 - **Reliability / drift:** every task ends with `supabase db reset` + `supabase db diff` empty; codegen reproducibility pinned by `git diff --exit-code`. The `drop policy if exists` + `drop trigger if exists` guards keep the migration re-runnable in a fresh reset.
 - **Observability:** trigger payloads carry ids + entity refs + `recipient_user_id` where a notify is intended; `emit_event` (unchanged) records into `movp_internal.movp_events` and enqueues `notify`/`webhook` jobs with `on conflict do nothing` idempotency.
 - **Efficiency / Performance:** entity lookups on `(entity_type, entity_id)` are indexed on all four commentable tables; composite uniques prevent duplicate reactions/saves and enforce token uniqueness. `can_access_entity` is `stable` and does one existence probe per call.
