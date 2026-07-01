@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.turbo/
+.claude/
+supabase/.branches/
+supabase/.temp/
+*.log
+.env
+.env.*
