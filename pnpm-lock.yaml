@@ -56,6 +56,16 @@ importers:
         specifier: ^2.1.0
         version: 2.1.9(@types/node@26.0.1)(msw@2.14.6(@types/node@26.0.1)(typescript@5.9.3))
 
+  packages/domain:
+    dependencies:
+      '@supabase/supabase-js':
+        specifier: ^2.45.0
+        version: 2.110.0
+    devDependencies:
+      vitest:
+        specifier: ^2.1.0
+        version: 2.1.9(@types/node@26.0.1)(msw@2.14.6(@types/node@26.0.1)(typescript@5.9.3))
+
 packages:
 
   '@esbuild/aix-ppc64@0.21.5':
