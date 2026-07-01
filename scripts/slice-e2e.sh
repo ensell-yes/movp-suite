@@ -152,6 +152,54 @@ MCP="$(curl -sS "$API_URL/functions/v1/mcp" \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}')"
 echo "$MCP" | grep -qi 'note' || { echo "MCP tools/list missing note tools: $MCP"; exit 1; }
 
+echo "== [collab] define a token-scoped GraphQL helper + a 2nd member =="
+post_graphql_as() {
+  curl -sS "$API_URL/functions/v1/graphql" \
+    -H "Authorization: Bearer $1" \
+    -H "apikey: $ANON_KEY" \
+    -H "content-type: application/json" \
+    -d "$2"
+}
+curl -sS "$API_URL/auth/v1/admin/users" \
+  -H "Authorization: Bearer $SERVICE_ROLE_KEY" -H "apikey: $SERVICE_ROLE_KEY" \
+  -H "content-type: application/json" \
+  -d '{"email":"e2e-collab2@example.com","password":"Passw0rd!1","email_confirm":true}' >/dev/null
+TOKEN2="$(
+  curl -sS "$API_URL/auth/v1/token?grant_type=password" \
+    -H "apikey: $ANON_KEY" -H "content-type: application/json" \
+    -d '{"email":"e2e-collab2@example.com","password":"Passw0rd!1"}' | json_get access_token
+)"
+[ -n "$TOKEN2" ] || { echo "failed to mint 2nd token"; exit 1; }
+USER2_ID="$(node -e 'const t=process.argv[1].split(".")[1];process.stdout.write(JSON.parse(Buffer.from(t,"base64url")).sub)' "$TOKEN2")"
+psql "$DB_URL" -v ON_ERROR_STOP=1 \
+  -c "insert into public.workspace_membership (workspace_id,user_id,role) values ('$WS','$USER2_ID','member') on conflict do nothing;"
+
+echo "== [collab] create a note, add a comment mentioning the 2nd user =="
+NOTE="$(post_graphql "{\"query\":\"mutation(\$i:NoteCreateInput!){createNote(input:\$i){id}}\",\"variables\":{\"i\":{\"workspace_id\":\"$WS\",\"title\":\"Collab note\",\"body\":\"collab body\"}}}")"
+NOTE_ID="$(echo "$NOTE" | json_get data.createNote.id)"
+[ -n "$NOTE_ID" ] || { echo "collab note create failed: $NOTE"; exit 1; }
+ADD="$(post_graphql "{\"query\":\"mutation{addComment(entityType:\\\"note\\\", entityId:\\\"$NOTE_ID\\\", body:\\\"welcome\\\", mentions:[\\\"$USER2_ID\\\"]){id entity_id}}\"}")"
+echo "$ADD" | grep -q "$NOTE_ID" || { echo "addComment failed: $ADD"; exit 1; }
+
+echo "== [collab] mentioned user sees it in inbox(mentions) =="
+INBOX="$(post_graphql_as "$TOKEN2" "{\"query\":\"query{inbox(workspaceId:\\\"$WS\\\", tab:\\\"mentions\\\"){kind entity_id}}\"}")"
+echo "$INBOX" | grep -q "$NOTE_ID" || { echo "inbox mentions missing note: $INBOX"; exit 1; }
+
+echo "== [collab] toggle a reaction and a save =="
+post_graphql "{\"query\":\"mutation{toggleReaction(entityType:\\\"note\\\", entityId:\\\"$NOTE_ID\\\", kind:\\\"like\\\", on:true)}\"}" | grep -q 'true' || { echo "toggleReaction failed"; exit 1; }
+post_graphql "{\"query\":\"mutation{toggleSave(entityType:\\\"note\\\", entityId:\\\"$NOTE_ID\\\", on:true)}\"}" | grep -q 'true' || { echo "toggleSave failed"; exit 1; }
+
+echo "== [collab] create + resolve a share link =="
+SHARE="$(post_graphql "{\"query\":\"mutation{createShareLink(entityType:\\\"note\\\", entityId:\\\"$NOTE_ID\\\"){token}}\"}")"
+SHARE_TOKEN="$(echo "$SHARE" | json_get data.createShareLink.token)"
+[ -n "$SHARE_TOKEN" ] || { echo "createShareLink failed: $SHARE"; exit 1; }
+RES="$(post_graphql "{\"query\":\"mutation{resolveShareLink(token:\\\"$SHARE_TOKEN\\\"){entity_id workspace_id}}\"}")"
+echo "$RES" | grep -q "$NOTE_ID" || { echo "resolveShareLink failed: $RES"; exit 1; }
+
+echo "== [collab] a user.mentioned notify job carries recipient_user_id =="
+MENTION_JOBS="$(psql "$DB_URL" -tAc "select count(*) from movp_internal.movp_jobs where kind='notify' and payload->>'event'='user.mentioned' and payload ? 'recipient_user_id';")"
+[ "$(echo "$MENTION_JOBS" | tr -d '[:space:]')" -ge 1 ] || { echo "no user.mentioned notify job with recipient_user_id (got $MENTION_JOBS)"; exit 1; }
+
 echo "== [8] internal not exposed via PostgREST API =="
 REST="$(curl -sS -o /dev/null -w '%{http_code}' "$API_URL/rest/v1/movp_jobs" -H "apikey: $ANON_KEY")"
 [ "$REST" = "404" ] || [ "$REST" = "401" ] || { echo "movp_jobs reachable via REST ($REST)"; exit 1; }
