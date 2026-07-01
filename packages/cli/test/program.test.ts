@@ -5,6 +5,10 @@ const created = { id: 'n1', workspace_id: 'w', title: 'Hello' }
 const noteCreate = vi.fn(async () => created)
 const noteList = vi.fn(async () => ({ items: [created], nextCursor: null }))
 const search = vi.fn(async () => [{ collection: 'note', id: 'n1', title: 'Hello', snippet: 'Hello', score: 1 }])
+const commentCreate = vi.fn(async () => ({ id: 'c1', body: 'hi' }))
+const inbox = vi.fn(async () => [
+  { kind: 'user.mentioned', entity_type: 'note', entity_id: 'n1', ref_id: 'm1', created_at: 't', payload: {} },
+])
 
 vi.mock('@movp/domain', () => ({
   createDomain: () => ({
@@ -24,6 +28,15 @@ vi.mock('@movp/domain', () => ({
     },
     search,
     graph: { link: vi.fn(), traverse: vi.fn() },
+    collab: {
+      comment: { create: commentCreate, listByEntity: vi.fn() },
+      react: vi.fn(),
+      unreact: vi.fn(),
+      save: vi.fn(),
+      unsave: vi.fn(),
+      createShareLink: vi.fn(),
+      inbox,
+    },
   }),
 }))
 
@@ -64,5 +77,50 @@ describe('movp CLI', () => {
     const { cmd } = program({ jobs: { replay, reindex: vi.fn(async () => undefined) } })
     await cmd.parseAsync(['node', 'movp', 'jobs', 'replay', '--dead'])
     expect(replay).toHaveBeenCalledWith({ dead: true, kind: undefined })
+  })
+
+  it('inbox prints the feed for a workspace/tab', async () => {
+    const { cmd, out } = program()
+    await cmd.parseAsync(['node', 'movp', 'inbox', '--workspace', 'w', '--tab', 'mentions'])
+    expect(inbox).toHaveBeenCalledWith({ workspaceId: 'w', tab: 'mentions', first: undefined })
+    expect(out[0]).toContain('user.mentioned')
+  })
+
+  it('comment add routes to collab.comment.create with mentions', async () => {
+    const { cmd, out } = program()
+    await cmd.parseAsync([
+      'node',
+      'movp',
+      'comment',
+      'add',
+      '--entity-type',
+      'note',
+      '--entity-id',
+      'n1',
+      '--body',
+      'hi',
+      '--mention',
+      'u2',
+    ])
+    expect(commentCreate).toHaveBeenCalledWith({
+      entityType: 'note',
+      entityId: 'n1',
+      body: 'hi',
+      parentId: undefined,
+      mentions: ['u2'],
+    })
+    expect(out[0]).toContain('c1')
+  })
+
+  it('does not surface generic CRUD commands for the internal collab collections', () => {
+    const { cmd } = program()
+    const top = cmd.commands.map((c) => c.name())
+    expect(top).not.toContain('mention')
+    expect(top).not.toContain('reaction')
+    expect(top).not.toContain('saved_item')
+    expect(top).not.toContain('share_link')
+    expect(top).toEqual(expect.arrayContaining(['note', 'tag', 'inbox', 'comment']))
+    const comment = cmd.commands.find((c) => c.name() === 'comment')
+    expect(comment?.commands.map((s) => s.name())).toEqual(['add'])
   })
 })

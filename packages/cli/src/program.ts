@@ -60,6 +60,7 @@ export function buildProgram(opts: BuildProgramOpts = {}): Command {
   const program = new Command('movp').description('MOVP Core CLI')
 
   for (const c of schema.collections as CollectionDef[]) {
+    if (c.internal) continue
     const cmd = program.command(c.name).description(`Operate on ${c.labelPlural}`)
 
     const create = cmd.command('create').requiredOption('--workspace <id>', 'workspace id')
@@ -105,6 +106,48 @@ export function buildProgram(opts: BuildProgramOpts = {}): Command {
         )
       })
   }
+
+  program
+    .command('inbox')
+    .description('List the current user inbox feed')
+    .requiredOption('--workspace <id>', 'workspace id')
+    .option('--tab <tab>', 'all | mentions | saved | assigned', 'all')
+    .option('--first <n>', 'max items', (v) => parseInt(v, 10))
+    .action(async (o: { workspace: string; tab?: string; first?: number }) => {
+      const domain = createDomain(resolveCtx())
+      out(
+        JSON.stringify(
+          await domain.collab.inbox({
+            workspaceId: o.workspace,
+            tab: (o.tab ?? 'all') as 'all' | 'mentions' | 'saved' | 'assigned',
+            first: o.first,
+          }),
+        ),
+      )
+    })
+
+  const commentCmd = program.command('comment').description('Collaborate with comments')
+  commentCmd
+    .command('add')
+    .requiredOption('--entity-type <type>', 'entity type, e.g. note')
+    .requiredOption('--entity-id <id>', 'entity id')
+    .requiredOption('--body <text>', 'comment body')
+    .option('--parent <id>', 'parent comment id')
+    .option('--mention <userId...>', 'user ids to mention')
+    .action(async (o: { entityType: string; entityId: string; body: string; parent?: string; mention?: string[] }) => {
+      const domain = createDomain(resolveCtx())
+      out(
+        JSON.stringify(
+          await domain.collab.comment.create({
+            entityType: o.entityType,
+            entityId: o.entityId,
+            body: o.body,
+            parentId: o.parent,
+            mentions: o.mention,
+          }),
+        ),
+      )
+    })
 
   program
     .command('search <query>')
