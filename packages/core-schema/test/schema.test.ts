@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { comment } from '../src/collections/comment.ts'
 import { note } from '../src/collections/note.ts'
 import { tag } from '../src/collections/tag.ts'
 import { defineSchema } from '../src/define.ts'
@@ -33,7 +34,16 @@ describe('example collections', () => {
 
 describe('defineSchema aggregate', () => {
   it('aggregates the collections in order', () => {
-    expect(schema.collections.map((c) => c.name)).toEqual(['note', 'tag'])
+    expect(schema.collections.map((c) => c.name)).toEqual([
+      'note',
+      'tag',
+      'comment',
+      'reaction',
+      'saved_item',
+      'mention',
+      'share_link',
+    ])
+    expect(comment.internal).toBe(true)
   })
 
   it('rejects duplicate collection names', () => {

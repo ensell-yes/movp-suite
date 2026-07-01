@@ -1,4 +1,4 @@
-import { note, schema } from '@movp/core-schema'
+import { comment, note, schema } from '@movp/core-schema'
 import { describe, expect, it } from 'vitest'
 import { emitCollectionSql, emitSharedInfraSql, emitSqlMigration } from '../src/index.ts'
 
@@ -46,6 +46,16 @@ describe('emitCollectionSql(note)', () => {
     expect(sql).toContain('delete from public.search_chunk')
     expect(sql).toContain("values ('note', 'Note', 'Notes', true)")
     expect(sql).toContain("('note', 'tags', 'relation', 'Tags', 'many-to-many', null, false, false)")
+  })
+})
+
+describe('emitCollectionSql(comment)', () => {
+  const sql = emitCollectionSql(comment)
+
+  it('still emits SQL for internal collections', () => {
+    expect(comment.internal).toBe(true)
+    expect(sql).toContain('create table if not exists public.comment')
+    expect(sql).toContain('parent_id uuid references public.comment(id) on delete set null')
   })
 })
 

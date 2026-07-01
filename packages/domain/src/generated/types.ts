@@ -39,3 +39,139 @@ export interface TagCreate {
 export interface TagUpdate {
   name?: string
 }
+
+export interface CommentRow {
+  id: string
+  workspace_id: string
+  entity_type: string
+  entity_id: string
+  body: string
+  author_id: string
+  parent_id: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface CommentCreate {
+  workspace_id: string
+  entity_type: string
+  entity_id: string
+  body: string
+  author_id: string
+  parent_id?: string
+}
+
+export interface CommentUpdate {
+  entity_type?: string
+  entity_id?: string
+  body?: string
+  author_id?: string
+  parent_id?: string
+}
+
+export interface ReactionRow {
+  id: string
+  workspace_id: string
+  entity_type: string
+  entity_id: string
+  user_id: string
+  kind: 'like' | 'dislike'
+  created_at: string
+  updated_at: string
+}
+
+export interface ReactionCreate {
+  workspace_id: string
+  entity_type: string
+  entity_id: string
+  user_id: string
+  kind: 'like' | 'dislike'
+}
+
+export interface ReactionUpdate {
+  entity_type?: string
+  entity_id?: string
+  user_id?: string
+  kind?: 'like' | 'dislike'
+}
+
+export interface SavedItemRow {
+  id: string
+  workspace_id: string
+  entity_type: string
+  entity_id: string
+  user_id: string
+  created_at: string
+  updated_at: string
+}
+
+export interface SavedItemCreate {
+  workspace_id: string
+  entity_type: string
+  entity_id: string
+  user_id: string
+}
+
+export interface SavedItemUpdate {
+  entity_type?: string
+  entity_id?: string
+  user_id?: string
+}
+
+export interface MentionRow {
+  id: string
+  workspace_id: string
+  mentioned_user_id: string
+  entity_type: string
+  entity_id: string
+  comment_id: string
+  created_at: string
+  updated_at: string
+}
+
+export interface MentionCreate {
+  workspace_id: string
+  mentioned_user_id: string
+  entity_type: string
+  entity_id: string
+  comment_id: string
+}
+
+export interface MentionUpdate {
+  mentioned_user_id?: string
+  entity_type?: string
+  entity_id?: string
+  comment_id?: string
+}
+
+export interface ShareLinkRow {
+  id: string
+  workspace_id: string
+  entity_type: string
+  entity_id: string
+  token_hash: string
+  scope: 'view'
+  created_by: string
+  expires_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface ShareLinkCreate {
+  workspace_id: string
+  entity_type: string
+  entity_id: string
+  token_hash: string
+  scope?: 'view'
+  created_by: string
+  expires_at?: string
+}
+
+export interface ShareLinkUpdate {
+  entity_type?: string
+  entity_id?: string
+  token_hash?: string
+  scope?: 'view'
+  created_by?: string
+  expires_at?: string
+}

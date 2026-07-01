@@ -289,3 +289,298 @@ on conflict (collection_name, name) do update set
   reporting_role = excluded.reporting_role,
   searchable = excluded.searchable,
   embeddable = excluded.embeddable;
+
+
+create table if not exists public.comment (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id uuid not null references public.workspace(id) on delete cascade,
+  entity_type text not null,
+  entity_id uuid not null,
+  body text not null,
+  author_id uuid not null,
+  parent_id uuid references public.comment(id) on delete set null,
+  search_vector tsvector,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+alter table public.comment enable row level security;
+grant select, insert, update, delete on public.comment to authenticated;
+grant select, insert, update, delete on public.comment to service_role;
+create policy comment_rw on public.comment for all to authenticated
+  using (public.is_workspace_member(workspace_id))
+  with check (public.is_workspace_member(workspace_id));
+
+create or replace function public.comment_search_vector_update()
+returns trigger
+language plpgsql
+as $$
+begin
+  new.search_vector := to_tsvector('english', coalesce(new.body, ''));
+  return new;
+end;
+$$;
+
+create trigger comment_search_vector_tg
+  before insert or update on public.comment
+  for each row execute function public.comment_search_vector_update();
+
+create index comment_search_idx on public.comment using gin (search_vector);
+
+
+create or replace function public.comment_delete_chunks()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  delete from public.search_chunk where source_table = 'comment' and source_id = old.id;
+  return old;
+end;
+$$;
+revoke all on function public.comment_delete_chunks() from public, anon, authenticated;
+
+create trigger comment_delete_chunks_tg
+  after delete on public.comment
+  for each row execute function public.comment_delete_chunks();
+
+insert into public.movp_collections (name, label, label_plural, workspace_scoped)
+values ('comment', 'Comment', 'Comments', true)
+on conflict (name) do update set label = excluded.label, label_plural = excluded.label_plural, workspace_scoped = excluded.workspace_scoped;
+
+insert into public.movp_fields (collection_name, name, type, label, cardinality, reporting_role, searchable, embeddable)
+values
+  ('comment', 'entity_type', 'text', 'Entity Type', null, null, false, false),
+  ('comment', 'entity_id', 'uuid', 'Entity', null, null, false, false),
+  ('comment', 'body', 'richText', 'Body', null, null, true, false),
+  ('comment', 'author_id', 'uuid', 'Author', null, null, false, false),
+  ('comment', 'parent', 'relation', 'Parent Comment', 'many-to-one', null, false, false)
+on conflict (collection_name, name) do update set
+  type = excluded.type,
+  label = excluded.label,
+  cardinality = excluded.cardinality,
+  reporting_role = excluded.reporting_role,
+  searchable = excluded.searchable,
+  embeddable = excluded.embeddable;
+
+
+create table if not exists public.reaction (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id uuid not null references public.workspace(id) on delete cascade,
+  entity_type text not null,
+  entity_id uuid not null,
+  user_id uuid not null,
+  kind text not null check (kind in ('like', 'dislike')),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+alter table public.reaction enable row level security;
+grant select, insert, update, delete on public.reaction to authenticated;
+grant select, insert, update, delete on public.reaction to service_role;
+create policy reaction_rw on public.reaction for all to authenticated
+  using (public.is_workspace_member(workspace_id))
+  with check (public.is_workspace_member(workspace_id));
+
+
+
+create or replace function public.reaction_delete_chunks()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  delete from public.search_chunk where source_table = 'reaction' and source_id = old.id;
+  return old;
+end;
+$$;
+revoke all on function public.reaction_delete_chunks() from public, anon, authenticated;
+
+create trigger reaction_delete_chunks_tg
+  after delete on public.reaction
+  for each row execute function public.reaction_delete_chunks();
+
+insert into public.movp_collections (name, label, label_plural, workspace_scoped)
+values ('reaction', 'Reaction', 'Reactions', true)
+on conflict (name) do update set label = excluded.label, label_plural = excluded.label_plural, workspace_scoped = excluded.workspace_scoped;
+
+insert into public.movp_fields (collection_name, name, type, label, cardinality, reporting_role, searchable, embeddable)
+values
+  ('reaction', 'entity_type', 'text', 'Entity Type', null, null, false, false),
+  ('reaction', 'entity_id', 'uuid', 'Entity', null, null, false, false),
+  ('reaction', 'user_id', 'uuid', 'User', null, null, false, false),
+  ('reaction', 'kind', 'enum', 'Kind', null, 'dimension', false, false)
+on conflict (collection_name, name) do update set
+  type = excluded.type,
+  label = excluded.label,
+  cardinality = excluded.cardinality,
+  reporting_role = excluded.reporting_role,
+  searchable = excluded.searchable,
+  embeddable = excluded.embeddable;
+
+
+create table if not exists public.saved_item (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id uuid not null references public.workspace(id) on delete cascade,
+  entity_type text not null,
+  entity_id uuid not null,
+  user_id uuid not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+alter table public.saved_item enable row level security;
+grant select, insert, update, delete on public.saved_item to authenticated;
+grant select, insert, update, delete on public.saved_item to service_role;
+create policy saved_item_rw on public.saved_item for all to authenticated
+  using (public.is_workspace_member(workspace_id))
+  with check (public.is_workspace_member(workspace_id));
+
+
+
+create or replace function public.saved_item_delete_chunks()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  delete from public.search_chunk where source_table = 'saved_item' and source_id = old.id;
+  return old;
+end;
+$$;
+revoke all on function public.saved_item_delete_chunks() from public, anon, authenticated;
+
+create trigger saved_item_delete_chunks_tg
+  after delete on public.saved_item
+  for each row execute function public.saved_item_delete_chunks();
+
+insert into public.movp_collections (name, label, label_plural, workspace_scoped)
+values ('saved_item', 'Saved Item', 'Saved Items', true)
+on conflict (name) do update set label = excluded.label, label_plural = excluded.label_plural, workspace_scoped = excluded.workspace_scoped;
+
+insert into public.movp_fields (collection_name, name, type, label, cardinality, reporting_role, searchable, embeddable)
+values
+  ('saved_item', 'entity_type', 'text', 'Entity Type', null, null, false, false),
+  ('saved_item', 'entity_id', 'uuid', 'Entity', null, null, false, false),
+  ('saved_item', 'user_id', 'uuid', 'User', null, null, false, false)
+on conflict (collection_name, name) do update set
+  type = excluded.type,
+  label = excluded.label,
+  cardinality = excluded.cardinality,
+  reporting_role = excluded.reporting_role,
+  searchable = excluded.searchable,
+  embeddable = excluded.embeddable;
+
+
+create table if not exists public.mention (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id uuid not null references public.workspace(id) on delete cascade,
+  mentioned_user_id uuid not null,
+  entity_type text not null,
+  entity_id uuid not null,
+  comment_id uuid not null references public.comment(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+alter table public.mention enable row level security;
+grant select, insert, update, delete on public.mention to authenticated;
+grant select, insert, update, delete on public.mention to service_role;
+create policy mention_rw on public.mention for all to authenticated
+  using (public.is_workspace_member(workspace_id))
+  with check (public.is_workspace_member(workspace_id));
+
+
+
+create or replace function public.mention_delete_chunks()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  delete from public.search_chunk where source_table = 'mention' and source_id = old.id;
+  return old;
+end;
+$$;
+revoke all on function public.mention_delete_chunks() from public, anon, authenticated;
+
+create trigger mention_delete_chunks_tg
+  after delete on public.mention
+  for each row execute function public.mention_delete_chunks();
+
+insert into public.movp_collections (name, label, label_plural, workspace_scoped)
+values ('mention', 'Mention', 'Mentions', true)
+on conflict (name) do update set label = excluded.label, label_plural = excluded.label_plural, workspace_scoped = excluded.workspace_scoped;
+
+insert into public.movp_fields (collection_name, name, type, label, cardinality, reporting_role, searchable, embeddable)
+values
+  ('mention', 'comment', 'relation', 'Comment', 'many-to-one', null, false, false),
+  ('mention', 'mentioned_user_id', 'uuid', 'Mentioned User', null, null, false, false),
+  ('mention', 'entity_type', 'text', 'Entity Type', null, null, false, false),
+  ('mention', 'entity_id', 'uuid', 'Entity', null, null, false, false)
+on conflict (collection_name, name) do update set
+  type = excluded.type,
+  label = excluded.label,
+  cardinality = excluded.cardinality,
+  reporting_role = excluded.reporting_role,
+  searchable = excluded.searchable,
+  embeddable = excluded.embeddable;
+
+
+create table if not exists public.share_link (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id uuid not null references public.workspace(id) on delete cascade,
+  entity_type text not null,
+  entity_id uuid not null,
+  token_hash text not null,
+  scope text not null default 'view' check (scope in ('view')),
+  created_by uuid not null,
+  expires_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+alter table public.share_link enable row level security;
+grant select, insert, update, delete on public.share_link to authenticated;
+grant select, insert, update, delete on public.share_link to service_role;
+create policy share_link_rw on public.share_link for all to authenticated
+  using (public.is_workspace_member(workspace_id))
+  with check (public.is_workspace_member(workspace_id));
+
+
+
+create or replace function public.share_link_delete_chunks()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  delete from public.search_chunk where source_table = 'share_link' and source_id = old.id;
+  return old;
+end;
+$$;
+revoke all on function public.share_link_delete_chunks() from public, anon, authenticated;
+
+create trigger share_link_delete_chunks_tg
+  after delete on public.share_link
+  for each row execute function public.share_link_delete_chunks();
+
+insert into public.movp_collections (name, label, label_plural, workspace_scoped)
+values ('share_link', 'Share Link', 'Share Links', true)
+on conflict (name) do update set label = excluded.label, label_plural = excluded.label_plural, workspace_scoped = excluded.workspace_scoped;
+
+insert into public.movp_fields (collection_name, name, type, label, cardinality, reporting_role, searchable, embeddable)
+values
+  ('share_link', 'entity_type', 'text', 'Entity Type', null, null, false, false),
+  ('share_link', 'entity_id', 'uuid', 'Entity', null, null, false, false),
+  ('share_link', 'token_hash', 'text', 'Token Hash', null, null, false, false),
+  ('share_link', 'scope', 'enum', 'Scope', null, null, false, false),
+  ('share_link', 'created_by', 'uuid', 'Created By', null, null, false, false),
+  ('share_link', 'expires_at', 'datetime', 'Expires At', null, null, false, false)
+on conflict (collection_name, name) do update set
+  type = excluded.type,
+  label = excluded.label,
+  cardinality = excluded.cardinality,
+  reporting_role = excluded.reporting_role,
+  searchable = excluded.searchable,
+  embeddable = excluded.embeddable;

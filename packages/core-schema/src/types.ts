@@ -34,6 +34,11 @@ export interface CollectionDef {
   label: string
   labelPlural: string
   workspaceScoped: boolean
+  /**
+   * Internal collections still generate tables/types, but are intentionally
+   * skipped by generic public surfaces when writes need bespoke atomic logic.
+   */
+  internal?: boolean
   fields: Record<string, FieldDef>
 }
 
