@@ -1,5 +1,5 @@
 begin;
-select plan(29);
+select plan(33);
 
 -- Shared seed (as table owner; RLS bypassed).
 -- W1 members: A (owner), C (member). B is NOT a member of W1. W2 has no seeded members.
@@ -133,6 +133,40 @@ select is((select body from public.comment where id='55555555-5555-5555-5555-555
 insert into public.workspace_membership (workspace_id, user_id, role) values
   ('11111111-1111-1111-1111-111111111111', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'owner');
 set local role authenticated;
+
+-- Task 5: lifecycle triggers (still role=authenticated as member A).
+set local request.jwt.claims = '{"sub":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"}';
+insert into public.comment (id, workspace_id, entity_type, entity_id, body, author_id)
+  values ('66666666-6666-6666-6666-666666666666','11111111-1111-1111-1111-111111111111',
+          'note','33333333-3333-3333-3333-333333333333','trigger me','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
+insert into public.comment (id, workspace_id, entity_type, entity_id, body, author_id, parent_id)
+  values ('77777777-7777-7777-7777-777777777777','11111111-1111-1111-1111-111111111111',
+          'note','33333333-3333-3333-3333-333333333333','a reply','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+          '66666666-6666-6666-6666-666666666666');
+insert into public.mention (workspace_id, comment_id, mentioned_user_id, entity_type, entity_id)
+  values ('11111111-1111-1111-1111-111111111111','66666666-6666-6666-6666-666666666666',
+          'cccccccc-cccc-cccc-cccc-cccccccccccc','note','33333333-3333-3333-3333-333333333333');
+insert into public.reaction (workspace_id, entity_type, entity_id, user_id, kind)
+  values ('11111111-1111-1111-1111-111111111111','note','33333333-3333-3333-3333-333333333333',
+          'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','like');
+-- movp_internal is denied to authenticated; read the event log as the table owner.
+reset role;
+select is((select count(*)::int from movp_internal.movp_events
+           where type='comment.added' and payload->>'id'='66666666-6666-6666-6666-666666666666'),
+          1, 'comment insert emits comment.added');
+select is((select count(*)::int from movp_internal.movp_events
+           where type='comment.replied' and payload->>'parent_id'='66666666-6666-6666-6666-666666666666'),
+          1, 'reply comment emits comment.replied');
+select is((select count(*)::int from movp_internal.movp_events
+           where type='user.mentioned'
+             and payload->>'comment_id'='66666666-6666-6666-6666-666666666666'
+             and payload->>'recipient_user_id'='cccccccc-cccc-cccc-cccc-cccccccccccc'),
+          1, 'mention insert emits user.mentioned carrying recipient_user_id');
+select is((select count(*)::int from movp_internal.movp_events
+           where type='item.liked'
+             and payload->>'user_id'='aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+             and payload->>'entity_id'='33333333-3333-3333-3333-333333333333'),
+          1, 'like reaction emits item.liked');
 
 select * from finish();
 rollback;

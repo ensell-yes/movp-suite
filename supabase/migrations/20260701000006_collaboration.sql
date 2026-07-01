@@ -130,3 +130,149 @@ create policy share_link_all on public.share_link for all to authenticated
          and public.can_access_entity(entity_type, entity_id, workspace_id))
   with check (created_by = (select auth.uid())
               and public.can_access_entity(entity_type, entity_id, workspace_id));
+
+-- Lifecycle triggers: fan out through public.emit_event (from 000005).
+create or replace function public.comment_emit_event()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  perform public.emit_event(
+    case when new.parent_id is not null then 'comment.replied' else 'comment.added' end,
+    new.workspace_id,
+    jsonb_build_object(
+      'id', new.id,
+      'entity_type', new.entity_type,
+      'entity_id', new.entity_id,
+      'author_id', new.author_id,
+      'parent_id', new.parent_id
+    ),
+    gen_random_uuid()::text
+  );
+  return new;
+end;
+$$;
+revoke all on function public.comment_emit_event() from public, anon, authenticated;
+
+drop trigger if exists comment_emit_event_tg on public.comment;
+create trigger comment_emit_event_tg
+  after insert on public.comment
+  for each row execute function public.comment_emit_event();
+
+create or replace function public.mention_emit_event()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  perform public.emit_event(
+    'user.mentioned',
+    new.workspace_id,
+    jsonb_build_object(
+      'id', new.id,
+      'comment_id', new.comment_id,
+      'mentioned_user_id', new.mentioned_user_id,
+      'entity_type', new.entity_type,
+      'entity_id', new.entity_id,
+      'recipient_user_id', new.mentioned_user_id
+    ),
+    gen_random_uuid()::text
+  );
+  return new;
+end;
+$$;
+revoke all on function public.mention_emit_event() from public, anon, authenticated;
+
+drop trigger if exists mention_emit_event_tg on public.mention;
+create trigger mention_emit_event_tg
+  after insert on public.mention
+  for each row execute function public.mention_emit_event();
+
+create or replace function public.reaction_emit_event()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  perform public.emit_event(
+    case when new.kind = 'like' then 'item.liked' else 'item.disliked' end,
+    new.workspace_id,
+    jsonb_build_object(
+      'id', new.id,
+      'entity_type', new.entity_type,
+      'entity_id', new.entity_id,
+      'user_id', new.user_id,
+      'kind', new.kind
+    ),
+    gen_random_uuid()::text
+  );
+  return new;
+end;
+$$;
+revoke all on function public.reaction_emit_event() from public, anon, authenticated;
+
+drop trigger if exists reaction_emit_event_tg on public.reaction;
+create trigger reaction_emit_event_tg
+  after insert on public.reaction
+  for each row execute function public.reaction_emit_event();
+
+create or replace function public.saved_item_emit_event()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  perform public.emit_event(
+    'item.saved',
+    new.workspace_id,
+    jsonb_build_object(
+      'id', new.id,
+      'entity_type', new.entity_type,
+      'entity_id', new.entity_id,
+      'user_id', new.user_id
+    ),
+    gen_random_uuid()::text
+  );
+  return new;
+end;
+$$;
+revoke all on function public.saved_item_emit_event() from public, anon, authenticated;
+
+drop trigger if exists saved_item_emit_event_tg on public.saved_item;
+create trigger saved_item_emit_event_tg
+  after insert on public.saved_item
+  for each row execute function public.saved_item_emit_event();
+
+create or replace function public.share_link_emit_event()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  perform public.emit_event(
+    'item.shared',
+    new.workspace_id,
+    jsonb_build_object(
+      'id', new.id,
+      'entity_type', new.entity_type,
+      'entity_id', new.entity_id,
+      'created_by', new.created_by,
+      'scope', new.scope
+    ),
+    gen_random_uuid()::text
+  );
+  return new;
+end;
+$$;
+revoke all on function public.share_link_emit_event() from public, anon, authenticated;
+
+drop trigger if exists share_link_emit_event_tg on public.share_link;
+create trigger share_link_emit_event_tg
+  after insert on public.share_link
+  for each row execute function public.share_link_emit_event();
