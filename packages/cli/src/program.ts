@@ -47,11 +47,13 @@ export function buildProgram(opts: BuildProgramOpts = {}): Command {
 
   const jobs: JobsHandlers =
     opts.jobs ?? {
-      replay: async () => {
-        throw new Error('movp jobs replay is delivered in Plan 5 (Search & Async)')
+      replay: async (o) => {
+        const { replayJobs } = await import('@movp/flows')
+        await replayJobs(resolveCtx().db, o)
       },
-      reindex: async () => {
-        throw new Error('movp jobs reindex is delivered in Plan 5 (Search & Async)')
+      reindex: async (collection) => {
+        const { reindexCollection } = await import('@movp/flows')
+        await reindexCollection(resolveCtx().db, collection)
       },
     }
 

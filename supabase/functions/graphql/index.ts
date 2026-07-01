@@ -2,6 +2,7 @@ import { createYoga } from '@movp/graphql'
 import { schema } from '@movp/core-schema'
 import { resolvePrincipal } from '@movp/auth'
 import { emit, REDACTION_VERSION } from '@movp/obs'
+import { GteSmallProvider } from '@movp/search/gte-small'
 
 const yoga = createYoga({ schema })
 
@@ -28,5 +29,5 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
   const url = new URL(req.url)
   const yogaReq = new Request(new URL(`/graphql${url.search}`, url.origin), req)
-  return yoga.handleRequest(yogaReq, { db: principal.db, userId: principal.userId })
+  return yoga.handleRequest(yogaReq, { db: principal.db, userId: principal.userId, embedder: new GteSmallProvider() })
 })

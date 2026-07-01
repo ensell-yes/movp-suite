@@ -51,6 +51,9 @@ importers:
       '@movp/domain':
         specifier: workspace:*
         version: link:../domain
+      '@movp/flows':
+        specifier: workspace:*
+        version: link:../flows
       '@movp/obs':
         specifier: workspace:*
         version: link:../obs
@@ -83,6 +86,25 @@ importers:
 
   packages/domain:
     dependencies:
+      '@supabase/supabase-js':
+        specifier: ^2.45.0
+        version: 2.110.0
+    devDependencies:
+      vitest:
+        specifier: ^2.1.0
+        version: 2.1.9(@types/node@26.0.1)(msw@2.14.6(@types/node@26.0.1)(typescript@5.9.3))
+
+  packages/flows:
+    dependencies:
+      '@movp/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@movp/notifications':
+        specifier: workspace:*
+        version: link:../notifications
+      '@movp/search':
+        specifier: workspace:*
+        version: link:../search
       '@supabase/supabase-js':
         specifier: ^2.45.0
         version: 2.110.0
@@ -144,7 +166,23 @@ importers:
         specifier: ^2.1.0
         version: 2.1.9(@types/node@26.0.1)(msw@2.14.6(@types/node@26.0.1)(typescript@5.9.3))
 
+  packages/notifications:
+    devDependencies:
+      vitest:
+        specifier: ^2.1.0
+        version: 2.1.9(@types/node@26.0.1)(msw@2.14.6(@types/node@26.0.1)(typescript@5.9.3))
+
   packages/obs:
+    devDependencies:
+      vitest:
+        specifier: ^2.1.0
+        version: 2.1.9(@types/node@26.0.1)(msw@2.14.6(@types/node@26.0.1)(typescript@5.9.3))
+
+  packages/search:
+    dependencies:
+      '@movp/domain':
+        specifier: workspace:*
+        version: link:../domain
     devDependencies:
       vitest:
         specifier: ^2.1.0

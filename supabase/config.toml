@@ -10,6 +10,12 @@ verify_jwt = false
 [functions.mcp]
 verify_jwt = false
 
+[functions.index-embeddings]
+verify_jwt = false
+
+[functions.flows]
+verify_jwt = false
+
 [api]
 enabled = true
 # Port to use for the API URL.

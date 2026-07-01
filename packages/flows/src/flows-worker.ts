@@ -1,0 +1,54 @@
+import type { SupabaseClient } from '@supabase/supabase-js'
+import type { NotificationProvider } from '@movp/notifications'
+import { escapeHtml } from '@movp/notifications'
+import { claimDueJobs, completeJob } from './jobs.ts'
+
+function stringField(value: unknown): string | null {
+  return typeof value === 'string' && value.length > 0 ? value : null
+}
+
+export async function runFlowsWorker(
+  db: SupabaseClient,
+  notifier: NotificationProvider,
+  limit = 10,
+): Promise<{ processed: number; failed: number }> {
+  let processed = 0
+  let failed = 0
+
+  for (const job of await claimDueJobs(db, 'notify', limit)) {
+    try {
+      const payload = job.payload
+      const to = stringField(payload.email)
+      if (!to) throw new Error('notify_missing_email')
+      const event = stringField(payload.event) ?? 'event'
+      const title = escapeHtml(stringField(payload.title) ?? event)
+      await notifier.send({ to, subject: `MOVP ${event}`, html: `<p>${title}</p>` })
+      await completeJob(db, job.id, true)
+      processed++
+    } catch (e) {
+      await completeJob(db, job.id, false, e instanceof Error ? e.message.slice(0, 40) : 'unknown')
+      failed++
+    }
+  }
+
+  for (const job of await claimDueJobs(db, 'webhook', limit)) {
+    try {
+      const payload = job.payload
+      const url = stringField(payload.url)
+      if (!url) throw new Error('webhook_missing_url')
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      if (!res.ok) throw new Error(`webhook:${res.status}`)
+      await completeJob(db, job.id, true)
+      processed++
+    } catch (e) {
+      await completeJob(db, job.id, false, e instanceof Error ? e.message.slice(0, 40) : 'unknown')
+      failed++
+    }
+  }
+
+  return { processed, failed }
+}

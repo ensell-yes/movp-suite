@@ -3,6 +3,7 @@ import { buildMcpServer } from '@movp/mcp'
 import { schema } from '@movp/core-schema'
 import { resolvePrincipal } from '@movp/auth'
 import { emit, REDACTION_VERSION } from '@movp/obs'
+import { GteSmallProvider } from '@movp/search/gte-small'
 
 Deno.serve(async (req: Request): Promise<Response> => {
   const env = {
@@ -25,7 +26,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
     })
   }
 
-  const server = buildMcpServer(schema, { db: principal.db, userId: principal.userId })
+  const server = buildMcpServer(schema, { db: principal.db, userId: principal.userId, embedder: new GteSmallProvider() })
   const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined })
   await server.connect(transport)
   return await transport.handleRequest(req)
