@@ -7,6 +7,13 @@ function stringField(value: unknown): string | null {
   return typeof value === 'string' && value.length > 0 ? value : null
 }
 
+async function emailForUser(db: SupabaseClient, userId: string): Promise<string | null> {
+  const { data, error } = await db.auth.admin.getUserById(userId)
+  if (error) return null
+  const email = data.user?.email
+  return typeof email === 'string' && email.length > 0 ? email : null
+}
+
 export async function runFlowsWorker(
   db: SupabaseClient,
   notifier: NotificationProvider,
@@ -18,10 +25,17 @@ export async function runFlowsWorker(
   for (const job of await claimDueJobs(db, 'notify', limit)) {
     try {
       const payload = job.payload
-      const to = stringField(payload.email)
-      if (!to) throw new Error('notify_missing_email')
       const event = stringField(payload.event) ?? 'event'
       const title = escapeHtml(stringField(payload.title) ?? event)
+      const recipientUserId = stringField(payload.recipient_user_id)
+      let to: string | null
+      if (recipientUserId) {
+        to = await emailForUser(db, recipientUserId)
+        if (!to) throw new Error('notify_recipient_no_email')
+      } else {
+        to = stringField(payload.email)
+        if (!to) throw new Error('notify_missing_email')
+      }
       await notifier.send({ to, subject: `MOVP ${event}`, html: `<p>${title}</p>` })
       await completeJob(db, job.id, true)
       processed++
