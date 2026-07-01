@@ -16,6 +16,9 @@ create table public.workspace_membership (
 
 create index workspace_membership_user_idx on public.workspace_membership (user_id);
 
+grant select on public.workspace to authenticated;
+grant select on public.workspace_membership to authenticated;
+
 -- Hardened SECURITY DEFINER: pinned empty search_path, fully schema-qualified,
 -- least-privilege execute grant.
 create or replace function public.is_workspace_member(ws uuid)

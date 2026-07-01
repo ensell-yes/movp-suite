@@ -7,6 +7,7 @@ export default defineConfig({
   output: 'server',
   integrations: [react()],
   adapter: cloudflare({
+    imageService: 'passthrough',
     platformProxy: { enabled: true },
   }),
 })

@@ -186,6 +186,8 @@ create table if not exists public.movp_fields (
   embeddable boolean not null default false,
   primary key (collection_name, name)
 );
+grant select on public.movp_collections to authenticated;
+grant select on public.movp_fields to authenticated;
 
 create table if not exists movp_internal.movp_jobs (
   id uuid primary key default gen_random_uuid(),
@@ -224,6 +226,7 @@ create table if not exists public.search_chunk (
   unique (source_table, source_id, field, chunk_index)
 );
 alter table public.search_chunk enable row level security;
+grant select on public.search_chunk to authenticated;
 create policy search_chunk_read on public.search_chunk
   for select to authenticated
   using (public.is_workspace_member(workspace_id));
@@ -242,11 +245,12 @@ as $$
 begin
   perform set_config('hnsw.iterative_scan', 'strict_order', true);
   return query
-  select c.source_table, c.source_id, c.field, c.chunk_index, c.content, c.embedding <=> query_embedding as distance
+  select c.source_table, c.source_id, c.field, c.chunk_index, c.content,
+         c.embedding OPERATOR(extensions.<=>) query_embedding as distance
     from public.search_chunk c
    where c.workspace_id = ws
      and (source_table_filter is null or c.source_table = source_table_filter)
-   order by c.embedding <=> query_embedding
+   order by c.embedding OPERATOR(extensions.<=>) query_embedding
    limit least(greatest(match_count, 1), 50);
 end;
 $$;
@@ -263,6 +267,7 @@ create table if not exists public.edges (
   unique (workspace_id, src_type, src_id, rel, dst_type, dst_id)
 );
 alter table public.edges enable row level security;
+grant select, insert, update, delete on public.edges to authenticated;
 create policy edges_rw on public.edges for all to authenticated
   using (public.is_workspace_member(workspace_id))
   with check (public.is_workspace_member(workspace_id));
@@ -285,6 +290,7 @@ create table if not exists public.${ident(c.name)} (
 ${cols.join(',\n')}
 );
 alter table public.${ident(c.name)} enable row level security;
+grant select, insert, update, delete on public.${ident(c.name)} to authenticated;
 create policy ${ident(c.name)}_rw on public.${ident(c.name)} for all to authenticated
   using (public.is_workspace_member(workspace_id))
   with check (public.is_workspace_member(workspace_id));

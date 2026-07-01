@@ -1,5 +1,7 @@
 \set ON_ERROR_STOP on
 
+drop index if exists public.search_chunk_hnsw;
+
 do $$
 declare n bigint;
 begin
@@ -7,16 +9,18 @@ begin
   if n < 500000 then
     insert into public.workspace (id, name)
       select gen_random_uuid(), 'vs-ws-' || g from generate_series(1,10) g;
+
     insert into public.search_chunk
       (workspace_id, source_table, source_id, field, chunk_index, content, embedding, content_hash)
     select w.id, 'note', gen_random_uuid(), 'body', 0, 'chunk',
-           (select array_agg(random()::real) from generate_series(1,384))::extensions.vector(384),
-           md5(random()::text)
+           (select ('[' || string_agg('0.001', ',') || ']')::extensions.vector(384) from generate_series(1,384)),
+           md5(w.id::text || ':' || s::text)
       from (select id from public.workspace where name like 'vs-ws-%' limit 10) w,
            generate_series(1,50000) s;
   end if;
 end $$;
 
+create index if not exists search_chunk_hnsw on public.search_chunk using hnsw (embedding extensions.vector_cosine_ops);
 analyze public.search_chunk;
 set hnsw.iterative_scan = strict_order;
 
