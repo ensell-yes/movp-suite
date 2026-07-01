@@ -3,7 +3,14 @@ import ComplexityPlugin from '@pothos/plugin-complexity'
 import DataloaderPlugin from '@pothos/plugin-dataloader'
 import type { GraphQLSchema } from 'graphql'
 import type { CollectionDef, FieldDef, MovpSchema } from '@movp/core-schema'
-import { createDomain, type CollectionService, type Domain, type SearchHit } from '@movp/domain'
+import {
+  createDomain,
+  resolveShareLink,
+  type CollectionService,
+  type Domain,
+  type InboxItem,
+  type SearchHit,
+} from '@movp/domain'
 import { COMPLEXITY_BUDGET, DEPTH_LIMIT, clampPageSize } from './limits.ts'
 import { loadEdgeTargets } from './relations.ts'
 import type { GraphQLContext, Row } from './types.ts'
@@ -50,10 +57,34 @@ export function buildSchema(schema: MovpSchema): GraphQLSchema {
     }),
   })
 
+  const inboxItem = builder.objectRef<InboxItem>('InboxItem').implement({
+    fields: (t) => ({
+      kind: t.exposeString('kind'),
+      entity_type: t.exposeString('entity_type'),
+      entity_id: t.exposeID('entity_id'),
+      ref_id: t.exposeID('ref_id'),
+      created_at: t.exposeString('created_at'),
+      payload: t.string({ resolve: (i) => JSON.stringify(i.payload) }),
+    }),
+  })
+  const shareLinkToken = builder.objectRef<{ token: string }>('ShareLinkToken').implement({
+    fields: (t) => ({ token: t.exposeString('token') }),
+  })
+  const resolvedShareLink = builder
+    .objectRef<{ entity_type: string; entity_id: string; workspace_id: string }>('ResolvedShareLink')
+    .implement({
+      fields: (t) => ({
+        entity_type: t.exposeString('entity_type'),
+        entity_id: t.exposeID('entity_id'),
+        workspace_id: t.exposeID('workspace_id'),
+      }),
+    })
+
   const pages = new Map<string, any>()
   const inputs = new Map<string, any>()
 
   for (const c of schema.collections as CollectionDef[]) {
+    if (c.internal) continue
     const ref = refs.get(c.name)
     ref.implement({
       fields: (t: any) => {
@@ -124,6 +155,7 @@ export function buildSchema(schema: MovpSchema): GraphQLSchema {
   builder.mutationType({})
 
   for (const c of schema.collections as CollectionDef[]) {
+    if (c.internal) continue
     const ref = refs.get(c.name)
     const page = pages.get(c.name)
     const input = inputs.get(c.name)
@@ -187,6 +219,131 @@ export function buildSchema(schema: MovpSchema): GraphQLSchema {
         }),
     }),
   )
+
+  if (refs.has('comment')) {
+    const commentRef = refs.get('comment')
+    commentRef.implement({
+      fields: (t: any) => ({
+        id: t.exposeID('id', { complexity: 0 }),
+        workspace_id: t.exposeString('workspace_id', { complexity: 0 }),
+        entity_type: t.string({ nullable: true, complexity: 0, resolve: (r: Row) => (r.entity_type == null ? null : String(r.entity_type)) }),
+        entity_id: t.exposeID('entity_id', { complexity: 0 }),
+        body: t.string({ nullable: true, complexity: 0, resolve: (r: Row) => (r.body == null ? null : String(r.body)) }),
+        author_id: t.string({ nullable: true, complexity: 0, resolve: (r: Row) => (r.author_id == null ? null : String(r.author_id)) }),
+        parent_id: t.string({ nullable: true, complexity: 0, resolve: (r: Row) => (r.parent_id == null ? null : String(r.parent_id)) }),
+        created_at: t.exposeString('created_at', { complexity: 0 }),
+        updated_at: t.exposeString('updated_at', { complexity: 0 }),
+      }),
+    })
+
+    builder.queryField('inbox', (t: any) =>
+      t.field({
+        type: [inboxItem],
+        complexity: (args: any) => ({ field: 1, multiplier: clampPageSize(args.first) }),
+        args: {
+          workspaceId: t.arg.id({ required: true }),
+          tab: t.arg.string({ required: false }),
+          first: t.arg.int({ required: false }),
+        },
+        resolve: (_r: unknown, args: any, ctx: GraphQLContext) =>
+          domainFrom(ctx).collab.inbox({
+            workspaceId: String(args.workspaceId),
+            tab: (args.tab ?? 'all') as 'all' | 'mentions' | 'saved' | 'assigned',
+            first: clampPageSize(args.first),
+          }),
+      }),
+    )
+
+    builder.mutationField('addComment', (t: any) =>
+      t.field({
+        type: commentRef,
+        complexity: 10,
+        args: {
+          entityType: t.arg.string({ required: true }),
+          entityId: t.arg.id({ required: true }),
+          body: t.arg.string({ required: true }),
+          parentId: t.arg.id({ required: false }),
+          mentions: t.arg.stringList({ required: false }),
+        },
+        resolve: (_r: unknown, args: any, ctx: GraphQLContext) =>
+          domainFrom(ctx).collab.comment.create({
+            entityType: String(args.entityType),
+            entityId: String(args.entityId),
+            body: String(args.body),
+            parentId: args.parentId ?? undefined,
+            mentions: args.mentions ?? undefined,
+          }),
+      }),
+    )
+
+    builder.mutationField('toggleReaction', (t: any) =>
+      t.field({
+        type: 'Boolean',
+        complexity: 5,
+        args: {
+          entityType: t.arg.string({ required: true }),
+          entityId: t.arg.id({ required: true }),
+          kind: t.arg.string({ required: true }),
+          on: t.arg.boolean({ required: true }),
+        },
+        resolve: async (_r: unknown, args: any, ctx: GraphQLContext) => {
+          const collab = domainFrom(ctx).collab
+          const i = { entityType: String(args.entityType), entityId: String(args.entityId), kind: String(args.kind) as 'like' | 'dislike' }
+          if (args.on) await collab.react(i)
+          else await collab.unreact(i)
+          return true
+        },
+      }),
+    )
+
+    builder.mutationField('toggleSave', (t: any) =>
+      t.field({
+        type: 'Boolean',
+        complexity: 5,
+        args: {
+          entityType: t.arg.string({ required: true }),
+          entityId: t.arg.id({ required: true }),
+          on: t.arg.boolean({ required: true }),
+        },
+        resolve: async (_r: unknown, args: any, ctx: GraphQLContext) => {
+          const collab = domainFrom(ctx).collab
+          const i = { entityType: String(args.entityType), entityId: String(args.entityId) }
+          if (args.on) await collab.save(i)
+          else await collab.unsave(i)
+          return true
+        },
+      }),
+    )
+
+    builder.mutationField('createShareLink', (t: any) =>
+      t.field({
+        type: shareLinkToken,
+        complexity: 5,
+        args: {
+          entityType: t.arg.string({ required: true }),
+          entityId: t.arg.id({ required: true }),
+          expiresInHours: t.arg.int({ required: false }),
+        },
+        resolve: (_r: unknown, args: any, ctx: GraphQLContext) =>
+          domainFrom(ctx).collab.createShareLink({
+            entityType: String(args.entityType),
+            entityId: String(args.entityId),
+            expiresInHours: args.expiresInHours ?? undefined,
+          }),
+      }),
+    )
+
+    builder.mutationField('resolveShareLink', (t: any) =>
+      t.field({
+        type: resolvedShareLink,
+        nullable: true,
+        complexity: 1,
+        args: { token: t.arg.string({ required: true }) },
+        resolve: (_r: unknown, args: any, ctx: GraphQLContext) =>
+          resolveShareLink({ db: ctx.db, userId: ctx.userId }, String(args.token)),
+      }),
+    )
+  }
 
   return builder.toSchema()
 }
