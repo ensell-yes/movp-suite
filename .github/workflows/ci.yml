@@ -105,6 +105,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @movp/frontend-astro build
       - run: pnpm --filter @movp/frontend-astro test
+      - run: pnpm --filter @movp/frontend-astro exec playwright install --with-deps chromium
+      - run: pnpm --filter @movp/frontend-astro e2e
 
   slice-e2e:
     runs-on: ubuntu-latest
