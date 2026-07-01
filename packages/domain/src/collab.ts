@@ -73,13 +73,18 @@ export function makeCollabService(ctx: DomainCtx): CollabService {
 
     async react(i) {
       const ws = await workspaceOf(i.entityType, i.entityId)
-      const { error } = await ctx.db.from('reaction').insert({
-        workspace_id: ws,
-        user_id: ctx.userId,
-        entity_type: i.entityType,
-        entity_id: i.entityId,
-        kind: i.kind,
-      })
+      const { error } = await ctx.db
+        .from('reaction')
+        .upsert(
+          {
+            workspace_id: ws,
+            user_id: ctx.userId,
+            entity_type: i.entityType,
+            entity_id: i.entityId,
+            kind: i.kind,
+          },
+          { onConflict: 'workspace_id,user_id,entity_type,entity_id,kind', ignoreDuplicates: true },
+        )
       if (error) fail('react', error.code)
     },
 
@@ -96,12 +101,17 @@ export function makeCollabService(ctx: DomainCtx): CollabService {
 
     async save(i) {
       const ws = await workspaceOf(i.entityType, i.entityId)
-      const { error } = await ctx.db.from('saved_item').insert({
-        workspace_id: ws,
-        user_id: ctx.userId,
-        entity_type: i.entityType,
-        entity_id: i.entityId,
-      })
+      const { error } = await ctx.db
+        .from('saved_item')
+        .upsert(
+          {
+            workspace_id: ws,
+            user_id: ctx.userId,
+            entity_type: i.entityType,
+            entity_id: i.entityId,
+          },
+          { onConflict: 'workspace_id,user_id,entity_type,entity_id', ignoreDuplicates: true },
+        )
       if (error) fail('save', error.code)
     },
 
