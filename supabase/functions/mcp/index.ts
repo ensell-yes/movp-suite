@@ -1,4 +1,4 @@
-import { WebStandardStreamableHTTPServerTransport } from 'npm:@modelcontextprotocol/sdk@1.25.3/server/webStandardStreamableHttp.js'
+import { WebStandardStreamableHTTPServerTransport } from 'npm:@modelcontextprotocol/sdk@1.26.0/server/webStandardStreamableHttp.js'
 import { buildMcpServer } from '@movp/mcp'
 import { schema } from '@movp/core-schema'
 import { resolvePrincipal } from '@movp/auth'
