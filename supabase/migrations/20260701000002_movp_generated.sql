@@ -28,9 +28,19 @@ grant select on public.movp_fields to authenticated;
 grant select, insert, update, delete on public.movp_collections to service_role;
 grant select, insert, update, delete on public.movp_fields to service_role;
 
+create table if not exists movp_internal.movp_job_kind (
+  kind text primary key
+);
+insert into movp_internal.movp_job_kind (kind)
+values ('embed'), ('webhook'), ('notify')
+on conflict (kind) do nothing;
+alter table movp_internal.movp_job_kind enable row level security;
+revoke all on movp_internal.movp_job_kind from anon, authenticated;
+grant all on movp_internal.movp_job_kind to service_role;
+
 create table if not exists movp_internal.movp_jobs (
   id uuid primary key default gen_random_uuid(),
-  kind text not null check (kind in ('embed', 'webhook', 'notify')),
+  kind text not null references movp_internal.movp_job_kind(kind),
   idempotency_key text not null,
   payload jsonb not null default '{}',
   workspace_id uuid references public.workspace(id) on delete cascade,

@@ -17,8 +17,12 @@ function sqlType(field: FieldDef): string {
       return 'numeric'
     case 'boolean':
       return 'boolean'
+    case 'date':
+      return 'date'
     case 'datetime':
       return 'timestamptz'
+    case 'json':
+      return 'jsonb'
     case 'uuid':
       return 'uuid'
     default:
@@ -36,6 +40,21 @@ function columnSql(name: string, field: FieldDef): string | null {
   if (field.type === 'enum' && field.values?.length) {
     parts.push(`check (${ident(name)} in (${field.values.map(q).join(', ')}))`)
   }
+  return parts.join(' ')
+}
+
+function relationHoldsFk(field: FieldDef): boolean {
+  return field.type === 'relation' && (field.cardinality === 'many-to-one' || field.cardinality === 'one-to-one')
+}
+
+function fkColumnSql(name: string, field: FieldDef): string | null {
+  if (!relationHoldsFk(field)) return null
+  if (!field.target) throw new Error(`relation field ${name} requires a target`)
+  const parts = [`  ${ident(name)}_id uuid`]
+  const required = field.required === true
+  if (required) parts.push('not null')
+  parts.push(`references public.${ident(field.target)}(id)`)
+  parts.push(required ? 'on delete cascade' : 'on delete set null')
   return parts.join(' ')
 }
 
@@ -191,9 +210,19 @@ grant select on public.movp_fields to authenticated;
 grant select, insert, update, delete on public.movp_collections to service_role;
 grant select, insert, update, delete on public.movp_fields to service_role;
 
+create table if not exists movp_internal.movp_job_kind (
+  kind text primary key
+);
+insert into movp_internal.movp_job_kind (kind)
+values ('embed'), ('webhook'), ('notify')
+on conflict (kind) do nothing;
+alter table movp_internal.movp_job_kind enable row level security;
+revoke all on movp_internal.movp_job_kind from anon, authenticated;
+grant all on movp_internal.movp_job_kind to service_role;
+
 create table if not exists movp_internal.movp_jobs (
   id uuid primary key default gen_random_uuid(),
-  kind text not null check (kind in ('embed', 'webhook', 'notify')),
+  kind text not null references movp_internal.movp_job_kind(kind),
   idempotency_key text not null,
   payload jsonb not null default '{}',
   workspace_id uuid references public.workspace(id) on delete cascade,
@@ -284,6 +313,7 @@ export function emitCollectionSql(c: CollectionDef): string {
     '  id uuid primary key default gen_random_uuid()',
     c.workspaceScoped ? '  workspace_id uuid not null references public.workspace(id) on delete cascade' : null,
     ...Object.entries(c.fields).map(([name, field]) => columnSql(name, field)),
+    ...Object.entries(c.fields).map(([name, field]) => fkColumnSql(name, field)),
     searchableFields(c).length ? '  search_vector tsvector' : null,
     '  created_at timestamptz not null default now()',
     '  updated_at timestamptz not null default now()',

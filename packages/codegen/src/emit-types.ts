@@ -17,6 +17,8 @@ function scalarType(field: FieldDef): string {
       return 'number'
     case 'boolean':
       return 'boolean'
+    case 'json':
+      return 'Record<string, unknown>'
     default:
       return 'string'
   }
@@ -35,6 +37,14 @@ function dataFields(c: CollectionDef): [string, FieldDef][] {
   return Object.entries(c.fields).filter((entry): entry is [string, FieldDef] => entry[1].type !== 'relation')
 }
 
+function relationHoldsFk(field: FieldDef): boolean {
+  return field.type === 'relation' && (field.cardinality === 'many-to-one' || field.cardinality === 'one-to-one')
+}
+
+function fkFields(c: CollectionDef): [string, FieldDef][] {
+  return Object.entries(c.fields).filter((entry): entry is [string, FieldDef] => relationHoldsFk(entry[1]))
+}
+
 function emitCollectionTypes(c: CollectionDef): string {
   const name = pascal(c.name)
   const out: string[] = []
@@ -44,6 +54,9 @@ function emitCollectionTypes(c: CollectionDef): string {
   if (c.workspaceScoped) out.push('  workspace_id: string')
   for (const [fieldName, field] of dataFields(c)) {
     out.push(`  ${fieldName}: ${rowFieldType(field)}`)
+  }
+  for (const [fieldName, field] of fkFields(c)) {
+    out.push(`  ${fieldName}_id: ${field.required === true ? 'string' : 'string | null'}`)
   }
   out.push('  created_at: string')
   out.push('  updated_at: string')
@@ -56,12 +69,19 @@ function emitCollectionTypes(c: CollectionDef): string {
     const optional = createFieldOptional(field) ? '?' : ''
     out.push(`  ${fieldName}${optional}: ${scalarType(field)}`)
   }
+  for (const [fieldName, field] of fkFields(c)) {
+    const optional = createFieldOptional(field) ? '?' : ''
+    out.push(`  ${fieldName}_id${optional}: string`)
+  }
   out.push('}')
   out.push('')
 
   out.push(`export interface ${name}Update {`)
   for (const [fieldName, field] of dataFields(c)) {
     out.push(`  ${fieldName}?: ${scalarType(field)}`)
+  }
+  for (const [fieldName] of fkFields(c)) {
+    out.push(`  ${fieldName}_id?: string`)
   }
   out.push('}')
 

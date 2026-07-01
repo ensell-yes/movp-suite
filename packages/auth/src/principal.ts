@@ -41,6 +41,9 @@ export async function resolvePrincipal(req: Request, env: Env): Promise<Principa
     ;({ payload } = await jwtVerify(token, jwksFor(env.SUPABASE_URL), {
       issuer: issuersFor(env),
       audience: 'authenticated',
+      // Local Supabase currently signs JWKS-backed access tokens with ES256,
+      // while hosted projects can use RS256. Keep this asymmetric-only; HS*
+      // algs stay rejected to avoid symmetric/asymmetric confusion.
       algorithms: ['RS256', 'ES256'],
     }))
   } catch (e) {

@@ -16,6 +16,8 @@
 - **Codegen is a pure transform.** `emitSqlMigration` / `emitSharedInfraSql` / `emitCollectionSql` / `emitTypes` are pure functions of their input (no I/O, no env, no clock). Only `scripts/codegen.ts` touches the filesystem. This keeps emitters unit-testable and deterministic.
 - **One source of truth.** The DB schema and the TS types are *generated* from `@movp/core-schema`; never hand-edit `supabase/migrations/<ts>_movp_generated.sql` or `packages/domain/src/generated/types.ts`. Both carry a `do not edit by hand` header.
 - **Supabase CLI is the only migration applier.** `pnpm codegen` writes SQL into `supabase/migrations/`; `supabase db reset` applies it; `supabase db diff` is the drift gate (must be empty).
+- **User references use `f.uuid`, never `relation('user')`.** There is no cross-schema FK to `auth.users`; a user-referencing field is a plain `uuid` column whose workspace-membership validity is enforced by RLS / a trigger (per Core invariant: authoritative authz at the data boundary). The `relation` builder targets MOVP collections only.
+- **Relation → storage mapping (used by every downstream app phase):** a `relation` field with `cardinality` `'many-to-one'` or `'one-to-one'` emits a real FK column `<field>_id uuid references public.<target>(id)` (required → `on delete cascade`, optional → `on delete set null`) and surfaces in generated types as `<field>_id: string`; `'one-to-many'` is the inverse side (no column); `'many-to-many'` (with `graph: true`) uses the typed `edges` graph. Field types include `json` (`→ jsonb`, TS `Record<string, unknown>`) and `date` (`→ date`, TS `string`).
 - **Idempotent codegen.** Re-running `pnpm codegen` overwrites the single existing `*_movp_generated.sql` file (it does not mint a new timestamped file each run) so the migration set — and therefore the drift gate — stays stable across reruns.
 - **All `SECURITY DEFINER` functions are hardened:** `set search_path = ''`, every non-`pg_catalog` object fully schema-qualified (`movp_internal.*`, `public.*`, `extensions.*`), `execute` revoked from `public`/`anon`/`authenticated` (the embed triggers run as system writers to the internal queue). The FTS maintenance trigger is a plain `security invoker` function (it only mutates `NEW` on the row being written) and is intentionally **not** `SECURITY DEFINER`. `match_chunks` is `security invoker` so RLS still applies.
 - **Internal-table isolation.** `movp_internal.movp_jobs` lives in the `movp_internal` schema, which must be **excluded** from `config.toml [api] schemas`; RLS enabled deny-all (no policy), all privileges revoked from `anon`/`authenticated`, granted only to `service_role`.
@@ -78,14 +80,14 @@ supasuite/
 **Interfaces:**
 - Consumes: nothing (pure library; no earlier-task dependency).
 - Produces (relied on by `@movp/codegen`, and by `@movp/domain`/`@movp/graphql` later):
-  - `type Cardinality = 'one-to-one' | 'one-to-many' | 'many-to-many'`
+  - `type Cardinality = 'one-to-one' | 'one-to-many' | 'many-to-one' | 'many-to-many'`
   - `type ReportingRole = 'dimension' | 'measure'`
-  - `type FieldType = 'text' | 'richText' | 'enum' | 'number' | 'boolean' | 'datetime' | 'uuid' | 'relation'`
+  - `type FieldType = 'text' | 'richText' | 'enum' | 'number' | 'boolean' | 'date' | 'datetime' | 'json' | 'uuid' | 'relation'`
   - `interface FieldDef { type: FieldType; label: string; description?: string; required?: boolean; default?: string | number | boolean; searchable?: boolean; embeddable?: boolean; reporting?: { role: ReportingRole }; values?: string[]; target?: string; cardinality?: Cardinality; graph?: boolean }`
   - `interface CollectionDef { name: string; label: string; labelPlural: string; workspaceScoped: boolean; fields: Record<string, FieldDef> }`
   - `interface MovpSchema { collections: CollectionDef[] }`
   - `type FieldOptions = Omit<FieldDef, 'type' | 'values' | 'target'>`
-  - `const f: { text(o: FieldOptions): FieldDef; richText(o: FieldOptions): FieldDef; enum(values: string[], o: FieldOptions): FieldDef; number(o: FieldOptions): FieldDef; boolean(o: FieldOptions): FieldDef; datetime(o: FieldOptions): FieldDef; uuid(o: FieldOptions): FieldDef; relation(target: string, o: FieldOptions): FieldDef }`
+  - `const f: { text; richText; enum(values, o); number; boolean; date; datetime; json; uuid; relation(target, o) }` (each `(o: FieldOptions) => FieldDef` unless shown otherwise)
   - `defineCollection(def: CollectionDef): CollectionDef`
   - `defineSchema(collections: CollectionDef[]): MovpSchema`
 
@@ -203,7 +205,10 @@ Expected: FAIL — cannot resolve `../src/builders.ts` / `../src/define.ts` (mod
 
 `packages/core-schema/src/types.ts`:
 ```ts
-export type Cardinality = 'one-to-one' | 'one-to-many' | 'many-to-many'
+// 'many-to-one' / 'one-to-one' → this row holds a FK column (`<field>_id`).
+// 'one-to-many' → inverse side (FK lives on the other collection; no column here).
+// 'many-to-many' → the typed `edges` graph (set `graph: true`).
+export type Cardinality = 'one-to-one' | 'one-to-many' | 'many-to-one' | 'many-to-many'
 export type ReportingRole = 'dimension' | 'measure'
 export type FieldType =
   | 'text'
@@ -211,7 +216,9 @@ export type FieldType =
   | 'enum'
   | 'number'
   | 'boolean'
-  | 'datetime'
+  | 'date'      // date-only → `date`
+  | 'datetime'  // timestamp → `timestamptz`
+  | 'json'      // → `jsonb`
   | 'uuid'
   | 'relation'
 
@@ -256,8 +263,12 @@ export const f = {
   enum: (values: string[], o: FieldOptions): FieldDef => ({ type: 'enum', values, ...o }),
   number: (o: FieldOptions): FieldDef => ({ type: 'number', ...o }),
   boolean: (o: FieldOptions): FieldDef => ({ type: 'boolean', ...o }),
+  date: (o: FieldOptions): FieldDef => ({ type: 'date', ...o }),
   datetime: (o: FieldOptions): FieldDef => ({ type: 'datetime', ...o }),
+  json: (o: FieldOptions): FieldDef => ({ type: 'json', ...o }),
   uuid: (o: FieldOptions): FieldDef => ({ type: 'uuid', ...o }),
+  // A user reference is `f.uuid` (NOT relation('user')): no cross-schema FK to
+  // auth.users; workspace membership is validated by RLS/trigger. See Global Constraints.
   relation: (target: string, o: FieldOptions): FieldDef => ({ type: 'relation', target, ...o }),
 }
 ```
@@ -533,7 +544,7 @@ git commit -m "feat(core-schema): note + tag example collections and schema aggr
   - `emitSqlMigration(schema: MovpSchema): string` — full migration = header + shared infra + each collection's DDL.
   - `emitSharedInfraSql(): string` — emitted once: `extensions.vector`/`pgcrypto`, `movp_internal` schema, metadata-registry tables, `movp_internal.movp_jobs`, `public.search_chunk` (+ HNSW), `public.match_chunks`, `public.edges`.
   - `emitCollectionSql(c: CollectionDef): string` — per collection: table (+ enum CHECKs, `search_vector`), FTS GIN index + trigger, RLS, embed-enqueue + delete-cleanup `SECURITY DEFINER` triggers, metadata-registry `INSERT`s.
-  - `emitTypes(schema: MovpSchema): string` — generated `<Pascal>Row` / `<Pascal>Create` / `<Pascal>Update` interfaces (relation fields excluded). Reproduces exactly: `NoteRow{id:string,workspace_id:string,title:string,body:string|null,status:'draft'|'published'|'archived',created_at:string,updated_at:string}`; `NoteCreate{workspace_id:string,title:string,body?:string,status?:'draft'|'published'|'archived'}`; `NoteUpdate{title?:string,body?:string,status?:'draft'|'published'|'archived'}`; `TagRow{id,workspace_id,name,created_at,updated_at}`; `TagCreate{workspace_id,name}`; `TagUpdate{name?}`.
+  - `emitTypes(schema: MovpSchema): string` — generated `<Pascal>Row` / `<Pascal>Create` / `<Pascal>Update` interfaces (many-to-many relations excluded; FK relations surface as `<field>_id: string`). Reproduces exactly: `NoteRow{id:string,workspace_id:string,title:string,body:string|null,status:'draft'|'published'|'archived',created_at:string,updated_at:string}`; `NoteCreate{workspace_id:string,title:string,body?:string,status?:'draft'|'published'|'archived'}`; `NoteUpdate{title?:string,body?:string,status?:'draft'|'published'|'archived'}`; `TagRow{id,workspace_id,name,created_at,updated_at}`; `TagCreate{workspace_id,name}`; `TagUpdate{name?}`.
 
 - [ ] **Step 1: Create the package skeleton**
 
@@ -599,7 +610,9 @@ describe('emitSharedInfraSql', () => {
   })
   it('creates the internal jobs queue with dedupe + service-role-only grants', () => {
     expect(sql).toContain('create table movp_internal.movp_jobs')
-    expect(sql).toContain("check (kind in ('embed', 'webhook', 'notify'))")
+    expect(sql).toContain('create table if not exists movp_internal.movp_job_kind')
+    expect(sql).toContain("values ('embed'), ('webhook'), ('notify')")
+    expect(sql).toContain('kind text not null references movp_internal.movp_job_kind(kind)')
     expect(sql).toContain("check (status in ('pending', 'running', 'done', 'failed', 'dead'))")
     expect(sql).toContain('unique (kind, idempotency_key)')
     expect(sql).toContain('create index movp_jobs_due on movp_internal.movp_jobs (status, next_run_at, lease_expires_at);')
@@ -758,13 +771,25 @@ function sqlColumnType(field: FieldDef): string {
       return 'numeric'
     case 'boolean':
       return 'boolean'
+    case 'date':
+      return 'date'
     case 'datetime':
       return 'timestamptz'
+    case 'json':
+      return 'jsonb'
     case 'uuid':
       return 'uuid'
     default:
       return 'text'
   }
+}
+
+// A relation is a physical column ONLY when this row holds the FK
+// ('many-to-one' or 'one-to-one'). 'one-to-many' is the inverse side (no column);
+// 'many-to-many' is expressed via the `edges` graph (graph: true).
+function relationHoldsFk(field: FieldDef): boolean {
+  return field.type === 'relation' &&
+    (field.cardinality === 'many-to-one' || field.cardinality === 'one-to-one')
 }
 
 function quote(s: string): string {
@@ -796,6 +821,20 @@ function columnLine(name: string, field: FieldDef): string {
     const vals = (field.values ?? []).map(quote).join(', ')
     parts.push(`check (${name} in (${vals}))`)
   }
+  return parts.join(' ')
+}
+
+// FK-holding relations become a `<name>_id` column referencing the target's PK.
+// Required → on delete cascade (child dies with parent); optional → on delete set null.
+function fkRelations(c: CollectionDef): Array<[string, FieldDef]> {
+  return Object.entries(c.fields).filter(([, field]) => relationHoldsFk(field))
+}
+function fkColumnLine(name: string, field: FieldDef): string {
+  const parts = [`  ${name}_id uuid`]
+  const notNull = field.required === true
+  if (notNull) parts.push('not null')
+  parts.push(`references public.${field.target} (id)`)
+  parts.push(notNull ? 'on delete cascade' : 'on delete set null')
   return parts.join(' ')
 }
 
@@ -832,9 +871,21 @@ alter table public.movp_fields enable row level security;
 create policy movp_fields_read on public.movp_fields
   for select to authenticated using (true);`,
 
+    `create table if not exists movp_internal.movp_job_kind (
+  kind text primary key
+);
+insert into movp_internal.movp_job_kind (kind)
+values ('embed'), ('webhook'), ('notify')
+on conflict (kind) do nothing;
+alter table movp_internal.movp_job_kind enable row level security;
+revoke all on movp_internal.movp_job_kind from anon, authenticated;
+grant all on movp_internal.movp_job_kind to service_role;`,
+
     `create table movp_internal.movp_jobs (
   id uuid primary key default gen_random_uuid(),
-  kind text not null check (kind in ('embed', 'webhook', 'notify')),
+  -- kind is an FK into an extensible registry, NOT a hardcoded CHECK: an app phase
+  -- adds a job kind with one INSERT (no ALTER TABLE / constraint rewrite).
+  kind text not null references movp_internal.movp_job_kind(kind),
   idempotency_key text not null,
   payload jsonb not null,
   status text not null default 'pending'
@@ -934,6 +985,7 @@ export function emitCollectionSql(c: CollectionDef): string {
     cols.push('  workspace_id uuid not null references public.workspace(id) on delete cascade')
   }
   for (const [name, field] of scalarFields(c)) cols.push(columnLine(name, field))
+  for (const [name, field] of fkRelations(c)) cols.push(fkColumnLine(name, field))
   const searchables = searchableFields(c)
   if (searchables.length > 0) cols.push('  search_vector tsvector')
   cols.push('  created_at timestamptz not null default now()')
@@ -1093,12 +1145,15 @@ function tsType(field: FieldDef): string {
     case 'text':
     case 'richText':
     case 'uuid':
+    case 'date':
     case 'datetime':
       return 'string'
     case 'number':
       return 'number'
     case 'boolean':
       return 'boolean'
+    case 'json':
+      return 'Record<string, unknown>'
     case 'enum':
       return (field.values ?? []).map((v) => `'${v}'`).join(' | ')
     default:
@@ -1110,6 +1165,13 @@ function scalarFields(c: CollectionDef): Array<[string, FieldDef]> {
   return Object.entries(c.fields).filter(([, field]) => field.type !== 'relation')
 }
 
+// FK-holding relations surface as a `<name>_id: string` field (nullable unless required).
+function fkRelations(c: CollectionDef): Array<[string, FieldDef]> {
+  return Object.entries(c.fields).filter(
+    ([, f]) => f.type === 'relation' && (f.cardinality === 'many-to-one' || f.cardinality === 'one-to-one'),
+  )
+}
+
 function emitRow(c: CollectionDef): string {
   const lines = ['  id: string']
   if (c.workspaceScoped) lines.push('  workspace_id: string')
@@ -1117,6 +1179,9 @@ function emitRow(c: CollectionDef): string {
     const base = tsType(field)
     const notNull = field.required === true || field.default !== undefined
     lines.push(`  ${name}: ${notNull ? base : `${base} | null`}`)
+  }
+  for (const [name, field] of fkRelations(c)) {
+    lines.push(`  ${name}_id: ${field.required === true ? 'string' : 'string | null'}`)
   }
   lines.push('  created_at: string')
   lines.push('  updated_at: string')
@@ -1130,11 +1195,15 @@ function emitCreate(c: CollectionDef): string {
     const required = field.required === true && field.default === undefined
     lines.push(`  ${name}${required ? '' : '?'}: ${tsType(field)}`)
   }
+  for (const [name, field] of fkRelations(c)) {
+    lines.push(`  ${name}_id${field.required === true ? '' : '?'}: string`)
+  }
   return `export interface ${pascal(c.name)}Create {\n${lines.join('\n')}\n}`
 }
 
 function emitUpdate(c: CollectionDef): string {
   const lines = scalarFields(c).map(([name, field]) => `  ${name}?: ${tsType(field)}`)
+  for (const [name] of fkRelations(c)) lines.push(`  ${name}_id?: string`)
   return `export interface ${pascal(c.name)}Update {\n${lines.join('\n')}\n}`
 }
 
@@ -1152,6 +1221,53 @@ export function emitTypes(schema: MovpSchema): string {
 export { emitSharedInfraSql, emitCollectionSql, emitSqlMigration } from './emit-sql.ts'
 export { emitTypes } from './emit-types.ts'
 ```
+
+- [ ] **Step 5b: Contract-extension gate — `f.json`/`f.date`/FK relations**
+
+`packages/codegen/test/contract-extensions.test.ts` (proves the DSL/codegen contract the
+app phases depend on — many-to-one/one-to-one → FK column, many-to-many → edges, `json`→`jsonb`,
+`date`→`date`):
+```ts
+import { describe, expect, it } from 'vitest'
+import { f, defineCollection, type CollectionDef } from '@movp/core-schema'
+import { emitCollectionSql, emitTypes } from '../src/index.ts'
+
+const deliverable: CollectionDef = defineCollection({
+  name: 'deliverable', label: 'Deliverable', labelPlural: 'Deliverables', workspaceScoped: true,
+  fields: {
+    campaign: f.relation('campaign', { label: 'Campaign', required: true, cardinality: 'many-to-one' }),
+    reviewer: f.relation('reviewer', { label: 'Reviewer', cardinality: 'one-to-one' }),
+    tags: f.relation('tag', { label: 'Tags', cardinality: 'many-to-many', graph: true }),
+    due_on: f.date({ label: 'Due' }),
+    meta: f.json({ label: 'Meta' }),
+  },
+})
+
+describe('DSL/codegen contract extensions', () => {
+  const sql = emitCollectionSql(deliverable)
+  const ts = emitTypes({ collections: [deliverable] })
+
+  it('many-to-one / one-to-one relations emit FK columns', () => {
+    expect(sql).toContain('campaign_id uuid not null references public.campaign(id) on delete cascade')
+    expect(sql).toContain('reviewer_id uuid references public.reviewer(id) on delete set null')
+  })
+  it('many-to-many relations do NOT emit a column (they use edges)', () => {
+    expect(sql).not.toContain('tags_id')
+  })
+  it('json → jsonb, date → date', () => {
+    expect(sql).toContain('meta jsonb')
+    expect(sql).toContain('due_on date')
+  })
+  it('generated types carry FK ids + json/date mappings', () => {
+    expect(ts).toContain('campaign_id: string')       // required FK
+    expect(ts).toContain('reviewer_id: string | null') // optional FK
+    expect(ts).toContain('meta: Record<string, unknown> | null')
+    expect(ts).toContain('due_on: string | null')
+    expect(ts).not.toContain('tags')                   // m2m excluded from types
+  })
+})
+```
+Expected after Step 6: PASS.
 
 - [ ] **Step 6: Run the tests to verify they pass**
 

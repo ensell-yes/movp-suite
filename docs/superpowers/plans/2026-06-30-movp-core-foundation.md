@@ -384,12 +384,13 @@ const SUPABASE_URL = 'https://test.supabase.co'
 const ISS = `${SUPABASE_URL}/auth/v1`
 const env = { SUPABASE_URL, SUPABASE_ANON_KEY: 'anon-test-key' }
 const KID = 'test-key-1'
+const ES_KID = 'test-key-2'
 const SUB = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
 
 const server = setupServer()
 let rsPriv: CryptoKey       // matches the published JWKS
 let rsPrivOther: CryptoKey  // valid RS256 key NOT in the JWKS (bad signature)
-let esPriv: CryptoKey       // ES256 key (wrong alg)
+let esPriv: CryptoKey       // Supabase local JWKS-backed ES256 key
 
 beforeAll(async () => {
   const rs = await generateKeyPair('RS256')
@@ -403,10 +404,14 @@ beforeAll(async () => {
   jwk.kid = KID
   jwk.alg = 'RS256'
   jwk.use = 'sig'
+  const esJwk = await exportJWK(es.publicKey)
+  esJwk.kid = ES_KID
+  esJwk.alg = 'ES256'
+  esJwk.use = 'sig'
 
   server.use(
     http.get(`${SUPABASE_URL}/auth/v1/.well-known/jwks.json`, () =>
-      HttpResponse.json({ keys: [jwk] })),
+      HttpResponse.json({ keys: [jwk, esJwk] })),
   )
   server.listen({ onUnhandledRequest: 'error' })
 })
@@ -419,14 +424,15 @@ function req(token?: string): Request {
 }
 
 async function sign(
-  key: CryptoKey,
-  alg: 'RS256' | 'ES256',
+  key: CryptoKey | Uint8Array,
+  alg: 'RS256' | 'ES256' | 'HS256',
   claims: Record<string, unknown>,
   expSeconds?: number,
+  kid = KID,
 ) {
   const now = Math.floor(Date.now() / 1000)
   return await new SignJWT(claims)
-    .setProtectedHeader({ alg, kid: KID })
+    .setProtectedHeader({ alg, kid })
     .setIssuedAt(now)
     .setExpirationTime(expSeconds ?? now + 3600)
     .sign(key)
@@ -466,8 +472,18 @@ describe('resolvePrincipal', () => {
     expect(r).toEqual({ ok: false, code: 'invalid_token' })
   })
 
-  it('rejects a wrong algorithm (ES256)', async () => {
-    const token = await sign(esPriv, 'ES256', { iss: ISS, aud: 'authenticated', sub: SUB })
+  it('accepts Supabase asymmetric ES256 member tokens', async () => {
+    const token = await sign(esPriv, 'ES256', { iss: ISS, aud: 'authenticated', sub: SUB }, undefined, ES_KID)
+    const r = await resolvePrincipal(req(token), env)
+    expect(r.ok).toBe(true)
+  })
+
+  it('rejects a symmetric algorithm (HS256)', async () => {
+    const token = await sign(new TextEncoder().encode('super-secret-test-key'), 'HS256', {
+      iss: ISS,
+      aud: 'authenticated',
+      sub: SUB,
+    })
     const r = await resolvePrincipal(req(token), env)
     expect(r).toEqual({ ok: false, code: 'invalid_token' })
   })
@@ -529,7 +545,9 @@ export async function resolvePrincipal(req: Request, env: Env): Promise<Principa
     ;({ payload } = await jwtVerify(token, jwksFor(env.SUPABASE_URL), {
       issuer: `${env.SUPABASE_URL}/auth/v1`, // pin iss
       audience: 'authenticated',              // pin aud
-      algorithms: ['RS256'],                  // pin alg — reject alg-confusion / ES256 drift
+      // Accept only JWKS-backed asymmetric Supabase algs. Local Supabase currently
+      // signs ES256, hosted projects may use RS256; HS* stays rejected.
+      algorithms: ['RS256', 'ES256'],
     }))
   } catch (e) {
     if (e instanceof jose.JWTExpired) return { ok: false, code: 'expired_token' }

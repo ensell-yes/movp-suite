@@ -12,7 +12,11 @@ if [ -n "${SUPABASE_WORKDIR:-}" ]; then
 fi
 
 supabase_local() {
-  supabase "$@" "${SUPABASE_ARGS[@]}"
+  if [ ${#SUPABASE_ARGS[@]} -eq 0 ]; then
+    supabase "$@"
+  else
+    supabase "$@" "${SUPABASE_ARGS[@]}"
+  fi
 }
 
 json_get() {
@@ -26,6 +30,17 @@ post_graphql() {
     -H "apikey: $ANON_KEY" \
     -H "content-type: application/json" \
     -d "$body"
+}
+
+restart_project_kong() {
+  if ! command -v docker >/dev/null 2>&1; then
+    return 0
+  fi
+  local project_id
+  project_id="$(awk -F'"' '/^project_id =/ {print $2; exit}' supabase/config.toml)"
+  project_id="${project_id:-$(basename "$ROOT")}"
+  docker restart "supabase_kong_${project_id}" >/dev/null 2>&1 || true
+  sleep 2
 }
 
 echo "== [1] migrate + drift gate =="
@@ -65,6 +80,8 @@ eval "$(supabase_local status -o env | sed 's/^\([A-Z_]*\)=/export \1=/')"
 
 echo "== [7,8] vector-scale plan-shape + cross-tenant =="
 VS_DB_URL="$DB_URL" node scripts/check-vector-scale.mjs
+
+restart_project_kong
 
 echo "== mint a real member JWT via gotrue =="
 curl -sS "$API_URL/auth/v1/admin/users" \

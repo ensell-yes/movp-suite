@@ -1,4 +1,6 @@
-export type Cardinality = 'one-to-one' | 'one-to-many' | 'many-to-many'
+// 'many-to-one' / 'one-to-one' means this row holds a `<field>_id` FK column.
+// 'one-to-many' is the inverse side. 'many-to-many' uses the typed edges graph.
+export type Cardinality = 'one-to-one' | 'one-to-many' | 'many-to-one' | 'many-to-many'
 export type ReportingRole = 'dimension' | 'measure'
 export type FieldType =
   | 'text'
@@ -6,7 +8,9 @@ export type FieldType =
   | 'enum'
   | 'number'
   | 'boolean'
+  | 'date'
   | 'datetime'
+  | 'json'
   | 'uuid'
   | 'relation'
 

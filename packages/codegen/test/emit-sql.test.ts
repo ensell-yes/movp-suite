@@ -8,7 +8,11 @@ describe('emitSharedInfraSql', () => {
   it('creates shared search, graph, metadata, and queue infra', () => {
     expect(sql).toContain('create extension if not exists vector with schema extensions;')
     expect(sql).toContain('create schema if not exists movp_internal;')
+    expect(sql).toContain('create table if not exists movp_internal.movp_job_kind')
+    expect(sql).toContain("values ('embed'), ('webhook'), ('notify')")
+    expect(sql).toContain('kind text not null references movp_internal.movp_job_kind(kind)')
     expect(sql).toContain('create table if not exists movp_internal.movp_jobs')
+    expect(sql).not.toContain("check (kind" + " in ('embed', 'webhook', 'notify'))")
     expect(sql).toContain('unique (kind, idempotency_key)')
     expect(sql).toContain('embedding extensions.vector(384) not null')
     expect(sql).toContain('using hnsw (embedding extensions.vector_cosine_ops)')
