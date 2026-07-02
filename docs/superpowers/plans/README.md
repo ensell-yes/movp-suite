@@ -64,9 +64,32 @@ merged first** — Task reuses the `collab` service for discussion and extends `
    task surfaces, the Astro board/list/detail + inbox Assigned tab, and the e2e slice. **Precondition:
    01a + 01b merged.**
 
-> **The remaining app phases** (`app-02` CMS, `app-03` Campaigns, `app-04` Segmentation,
-> `app-06` Domain Workflows) are still ROADMAP/design altitude — each must be **expanded into a
-> bite-sized TDD series** (as Core Phase 1, Collaboration, and Task were) before code is written.
+**Phase 4 — CMS & Content Workflows (`app-02`) is EXPANDED and EXECUTABLE** (bite-sized TDD, four parts;
+hardened across six adversarial-review rounds — surface↔service contract reconciliation, scheduler/publish
+unification, factory-style stable errors, asset auth-before-read + presigned R2, and MCP/CLI asset-ctx
+wiring). **Precondition: Collaboration (05a + 05b) + Task (01a–01c) merged first** — CMS reuses the `collab`
+comment ops on `content_item`, extends `can_access_entity` + `search_fts`, and links editorial tasks via
+`edges`. Its hand-authored migrations start at `…000011` (after Task's `…000008–000010`). Execute **in order**:
+1. `2026-07-01-movp-app-02a-cms-model-versioning.md` — `content_type` (+ JSON field-schema), `content_item`,
+   immutable `content_revision` + the three revision pointers, and the **domain-computed canonical
+   `content_hash`** create/update INVOKER RPCs (migrations `…000011/000012`); adds `can_access_entity('content_item')`
+   + the `content_item` `search_fts` arm. ALL CMS collections are `internal: true`.
+2. `2026-07-01-movp-app-02b-cms-approval-publish.md` — `content_approval`/`_vote`/`content_publish_event`
+   state machine (single/multi), `has_content_capability` RLS gate, the 8 `content.*` lifecycle triggers +
+   demote-on-edit, and **HMAC-signed publish webhooks** (adds signing to the flows worker) (migrations
+   `…000013/000014`). **Precondition: 02a merged.**
+3. `2026-07-01-movp-app-02c-cms-scheduling-assets.md` — `content_schedule` + pg_cron scheduler worker
+   (publishes the PINNED revision), presigned-R2 `asset` upload (auth-before-read, checked writes,
+   `DomainCtx.accessToken`/`assetsFnUrl`), published-only curation, and the advisory SEO audit (migrations
+   `…000015/000016`). **Precondition: 02a + 02b merged.**
+4. `2026-07-01-movp-app-02d-cms-surfaces-frontend.md` — the GraphQL/MCP/CLI custom content ops (including the
+   concrete asset-ctx wiring across all three surfaces), the field-schema-driven Astro editor, revision diff,
+   approval queue, editorial calendar, and the `[content]` e2e slice. **No new migration.** **Precondition:
+   02a–02c merged.**
+
+> **The remaining app phases** (`app-03` Campaigns, `app-04` Segmentation, `app-06` Domain Workflows) are
+> still ROADMAP/design altitude — each must be **expanded into a bite-sized TDD series** (as Core Phase 1,
+> Collaboration, Task, and CMS were) before code is written.
 
 ## Per-task execution protocol
 
