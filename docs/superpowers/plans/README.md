@@ -43,10 +43,30 @@ Campaigns (`app-03`) → Segmentation (`app-04`) → Domain Workflows (`app-06`)
    single-recipient notify fan-out, and GraphQL/MCP/CLI custom surfaces (generic CRUD for the
    `internal` collab collections is suppressed). **Precondition: 05a merged first.**
 
-> **The remaining app phases** (`app-01` Task, `app-02` CMS, `app-03` Campaigns, `app-04`
-> Segmentation, `app-06` Domain Workflows) are still ROADMAP/design altitude — each must be
-> **expanded into a bite-sized TDD series** (as Core Phase 1 and Collaboration were) before
-> code is written.
+**Phase 3 — Task (`app-01`) is EXPANDED and EXECUTABLE** (bite-sized TDD, three parts; hardened
+across five adversarial-review rounds — child-row schema consistency, RLS delete/tenant policies,
+`task_revision` workspace-scoping, and detail-page scoping). **Precondition: Collaboration (05a + 05b)
+merged first** — Task reuses the `collab` service for discussion and extends `can_access_entity` +
+`inbox_feed`. Execute **in order**:
+1. `2026-07-01-movp-app-01a-task-data.md` — 9 config-first collections (`task` + per-workspace
+   `task_status_option`/`task_priority_option` + `task_revision` + assignment/observer/dependency/
+   status_history/attachment), FK relations (`status_id`/`priority_id`/`parent_id`), the
+   `can_access_entity('task')` arm, fine-grained RLS (immutable revisions, append-only history,
+   membership- + same-workspace-gated child rows, no-DELETE option tables), and a default-option
+   seeding trigger (migration `…000008`).
+2. `2026-07-01-movp-app-01b-task-lifecycle.md` — category-keyed status transitions
+   (`completed`/`reopened`/`status_changed` + history), `task.*` event triggers, `dependency_blocked`
+   recompute, `emit_due_soon()`, an `emit_event` notify-guard, per-recipient notify fan-out, and the
+   `inbox_feed` `assigned` tab (migration `…000009`). **Precondition: 01a merged.**
+3. `2026-07-01-movp-app-01c-task-services.md` — `create_task_with_revision` /
+   `update_task_description` INVOKER RPCs (migration `…000010`), `makeTaskService` + the two generic
+   option-table services wired into `createDomain`, a `comments` read query, GraphQL/MCP/CLI custom
+   task surfaces, the Astro board/list/detail + inbox Assigned tab, and the e2e slice. **Precondition:
+   01a + 01b merged.**
+
+> **The remaining app phases** (`app-02` CMS, `app-03` Campaigns, `app-04` Segmentation,
+> `app-06` Domain Workflows) are still ROADMAP/design altitude — each must be **expanded into a
+> bite-sized TDD series** (as Core Phase 1, Collaboration, and Task were) before code is written.
 
 ## Per-task execution protocol
 
