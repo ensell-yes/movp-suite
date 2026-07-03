@@ -282,11 +282,9 @@ describe('segmentation GraphQL surface', () => {
     expect(JSON.stringify(res.data)).not.toContain('pii@example.com')
   })
 
-  it('snapshotDiff computes added (B\\A) and removed (A\\B) subject sets + counts', async () => {
-    // Stub returns the SAME rows for every .from('segment_snapshot_member'); the resolver must
-    // distinguish A vs B by the snapshot_id it filters on — so we seed two calls via two tables?
-    // Instead the resolver reads twice; keep the stub simple by returning the union and letting
-    // the resolver's own filter split them — here we assert the resolver's set math on distinct seeds.
+  it('snapshotDiff returns full counts while capping returned arrays', async () => {
+    // Regression pin: snapshotDiff must NOT cap the DB load. It needs both full frozen
+    // member sets to compute true counts, then slices only the returned arrays to CAP.
     type SnapChain = {
       select: () => SnapChain
       eq: (col: string, id: string) => SnapChain
@@ -296,15 +294,16 @@ describe('segmentation GraphQL surface', () => {
     const db = {
       from: (_t: string): SnapChain => {
         const byCall: Record<string, unknown[]> = {
-          A: [{ subject_ref: 'x' }, { subject_ref: 'y' }],
-          B: [{ subject_ref: 'y' }, { subject_ref: 'z' }],
+          A: [{ subject_ref: 'removed' }],
+          B: Array.from({ length: 501 }, (_v, i) => ({ subject_ref: `u-${String(i).padStart(3, '0')}` })),
         }
-        // The resolver calls `.eq('snapshot_id', id).limit(CAP)`; capture id to pick the set.
+        // Capture `.eq('snapshot_id', id)` to pick the frozen snapshot set. A `.limit(CAP)` call
+        // would recreate the old undercount bug, so make that fail loudly.
         let picked: unknown[] = []
         const chain: SnapChain = {
           select: () => chain,
           eq: (_c, id) => { picked = byCall[id] ?? []; return chain },
-          limit: () => chain,
+          limit: () => { throw new Error('snapshotDiff must not cap the DB load') },
           then: (resolve) => resolve({ data: picked }),
         }
         return chain
@@ -317,8 +316,8 @@ describe('segmentation GraphQL surface', () => {
     })
     expect(res.errors).toBeUndefined()
     const d = (res.data as { snapshotDiff: { added: string[]; removed: string[]; addedCount: number; removedCount: number } }).snapshotDiff
-    expect(d.added).toEqual(['z']); expect(d.removed).toEqual(['x'])
-    expect(d.addedCount).toBe(1); expect(d.removedCount).toBe(1)
+    expect(d.addedCount).toBe(501); expect(d.added).toHaveLength(500)
+    expect(d.removed).toEqual(['removed']); expect(d.removedCount).toBe(1)
   })
 
   it('previewMatchingCount THROWS (never reports 0) when the preview RPC fails', async () => {
@@ -708,7 +707,7 @@ Add the guarded block immediately after the campaign custom block (still inside 
     )
   }
 ```
-> **Reconciliation note (read before typing).** (1) The `segmentMembers` keyset pagination uses `.gt('subject_ref', after)` — if the committed `ctx.db` client lacks `.gt`, use `.range(offset, offset+limit)` with a numeric cursor. (2) `segmentSummaries` uses PostgREST aggregate selects (`member_count:count()`, `last_finished_at:finished_at.max()`) grouped by `segment_id`; if the deployment disables aggregate functions, replace each with a BOUNDED per-segment read (`{ count: 'exact', head: true }` head request / an ordered `.limit(1)`) — never restore the full-table JS fold. (3) `createSegmentRuleVersion` reads the current max `version` then inserts `version = max + 1`; if Parts A/B/C ship a DB-side version-assign trigger, drop the read and let the trigger assign it (keep the `segment_id` FK set — that is the whole point). (4) `evidence.event_ids` is Part B's assumed key — reconcile if Part B named it differently, but NEVER select `properties`. (5) `snapshotDiff` and the subject reads are `.limit(CAP)`-bounded (CAP = 500), so the diff/audience is exact up to CAP members and a bounded sample beyond — surface that bound in the UI rather than implying an exact count.
+> **Reconciliation note (read before typing).** (1) The `segmentMembers` keyset pagination uses `.gt('subject_ref', after)` — if the committed `ctx.db` client lacks `.gt`, use `.range(offset, offset+limit)` with a numeric cursor. (2) `segmentSummaries` uses PostgREST aggregate selects (`member_count:count()`, `last_finished_at:finished_at.max()`) grouped by `segment_id`; if the deployment disables aggregate functions, replace each with a BOUNDED per-segment read (`{ count: 'exact', head: true }` head request / an ordered `.limit(1)`) — never restore the full-table JS fold. (3) `createSegmentRuleVersion` reads the current max `version` then inserts `version = max + 1`; if Parts A/B/C ship a DB-side version-assign trigger, drop the read and let the trigger assign it (keep the `segment_id` FK set — that is the whole point). (4) `evidence.event_ids` is Part B's assumed key — reconcile if Part B named it differently, but NEVER select `properties`. (5) `segmentMembers` subject reads are `.limit(CAP)`-bounded (CAP = 500). `snapshotDiff` intentionally loads the full frozen member sets so added/removed counts are exact, then caps only the returned arrays at CAP; the UI must label arrays as samples when counts exceed the displayed length.
 
 - [ ] **Step 5: Run the test + typecheck + the existing schema gate**
 
