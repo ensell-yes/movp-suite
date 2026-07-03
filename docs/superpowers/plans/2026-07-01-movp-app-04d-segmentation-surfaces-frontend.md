@@ -538,9 +538,12 @@ Add the guarded block immediately after the campaign custom block (still inside 
         args: { snapshotAId: t.arg.id({ required: true }), snapshotBId: t.arg.id({ required: true }) },
         resolve: async (_r: unknown, a: any, ctx: GraphQLContext): Promise<DiffShape> => {
           const load = async (snapId: string): Promise<Set<string>> => {
-            // F7: bound the QUERY, not just the response — cap rows the DB returns per snapshot at CAP.
+            // A correct diff needs BOTH full member sets — you cannot compute a true added/removed COUNT
+            // from capped sets. This on-demand read is bounded by the snapshot's frozen size (≤ the segment
+            // size at snapshot time), not an unbounded hot-path scan, so we load the full subject_ref set for
+            // counting and cap only the RETURNED arrays below (full counts + bounded arrays; contract holds).
             const { data, error } = await ctx.db
-              .from('segment_snapshot_member').select('subject_ref').eq('snapshot_id', snapId).limit(CAP)
+              .from('segment_snapshot_member').select('subject_ref').eq('snapshot_id', snapId)
             if (error) throw new Error('segment.read_failed: field=snapshotDiff code=snapshot_member')
             return new Set(((data ?? []) as Array<{ subject_ref: string }>).map((r) => r.subject_ref))
           }

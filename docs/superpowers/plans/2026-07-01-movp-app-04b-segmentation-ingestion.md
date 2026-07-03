@@ -106,7 +106,7 @@ Expected shape: the migration applies, `segmentation_ingest_test.sql .. ok` (all
 Create `supabase/tests/segmentation_ingest_test.sql`. `plan(12)`. All fixture UUIDs are hex so they parse as `uuid`. The RPC is `SECURITY DEFINER`, so calling it as the table owner exercises the real code path (the security boundary is the KEY, not the caller's role).
 ```sql
 begin;
-select plan(12);
+select plan(13);
 
 -- ── shared seed (as the table owner; RLS bypassed) ──────────────────────────
 insert into public.workspace (id, name) values
@@ -177,6 +177,18 @@ $$, '54000', null, 'a batch over 500 events is rejected (batch_too_large)');
 select throws_ok($$
   select public.ingest_platform_event('not-a-real-key', '[]'::jsonb)
 $$, '28000', null, 'an unknown/inactive api key is rejected');
+
+-- ── an UNEXPECTED insert fault must FAIL LOUD, not be silently dropped (the handler is NARROW;
+--    only expected data-shape errors drop — anything else propagates and aborts the batch) ──
+create function pg_temp.pe_boom() returns trigger language plpgsql as $b$
+  begin raise exception 'unexpected platform_event fault' using errcode = 'P0001'; end;
+$b$;
+create trigger pe_boom_tg before insert on public.platform_event for each row execute function pg_temp.pe_boom();
+select throws_ok($$
+  select public.ingest_platform_event('rawkey-w1',
+    '[{"event_type":"x","subject_type":"user","subject_ref":"s","occurred_at":"2026-07-01T00:00:00Z"}]'::jsonb)
+$$, 'P0001', null, 'an UNEXPECTED insert fault propagates (fails loud) — a VALID event is never silently dropped');
+drop trigger pe_boom_tg on public.platform_event;
 
 select * from finish();
 rollback;
@@ -281,10 +293,10 @@ begin
       n_bad := n_bad + 1;
       continue;
     end if;
-    -- Per-row INSERT wrapped so a single-row failure DROPS (counted), never aborts the
-    -- whole batch. platform_event.subject_type is NOT NULL (Part A) -> coalesce to 'user'
-    -- when the event omits it; the RPC's own occurred_at cast above only guards the cast,
-    -- so the INSERT needs its OWN handler for any residual NOT NULL / type failure.
+    -- Per-row INSERT wrapped with a NARROW handler: only EXPECTED data-shape errors (not_null/check/
+    -- text-repr/datetime) DROP the single row (counted) and continue; any UNEXPECTED error propagates and
+    -- aborts the batch loudly (never a silent loss of valid events — see the handler note below).
+    -- subject_type is coalesced to 'user' (Part A NOT NULL) so the expected 23502 can't fire here anyway.
     begin
       insert into public.platform_event
         (workspace_id, event_type, subject_type, subject_ref, actor_ref, source, properties, occurred_at, ingested_at)
@@ -292,9 +304,14 @@ begin
         (v_ws, v_type, coalesce(v_event->>'subject_type', 'user'), v_subject_ref, v_event->>'actor_ref',
          'external', v_props, v_occurred, now());                   -- workspace = v_ws (the KEY's), never the payload
       n_ok := n_ok + 1;
-    exception when others then
-      n_bad := n_bad + 1;                                           -- a per-row failure is a DROP, not a batch abort
-      continue;
+    exception
+      when not_null_violation or check_violation or invalid_text_representation or datetime_field_overflow then
+        n_bad := n_bad + 1;                                         -- EXPECTED data-shape error → DROP (counted), batch continues
+        continue;
+      -- NOTE: `when others` is intentionally NOT caught — an UNEXPECTED insert failure (schema drift, a
+      -- new constraint/trigger, a DB fault) on an already-validated event must NOT be silently dropped.
+      -- It propagates and aborts the batch loudly (the caller sees a hard error + can retry) rather than
+      -- losing valid events. Expected malformed input is already dropped by the pre-insert shape check above.
     end;
   end loop;
 
@@ -790,10 +807,10 @@ git commit -m "test(e2e): add external-ingestion slice (JWT + API-key paths)"
 
 - **Spec coverage (Part B scope):** the `movp_internal.ingest_key` registry + `mint_ingest_key` (raw-once, service-role-only) + `ingest_platform_event` (workspace-from-key, bounded, `{inserted,dropped}`) with pgTAP (Task 1); the pure `ingest-bounds.ts` + Vitest (Task 2); the `ingest` edge fn (JWT path via RLS-bound `principal.db`, API-key path via the service-role RPC) + the verbatim `_shared` bounds copy + its own `deno.json` import map (mirror graphql) + the registered `'ingest'` obs surface + per-failure `@movp/obs` emit + `verify_jwt=false` + the integration check (Task 3); the e2e `[ingest]` slice driving both paths (Task 4). Every SQL/domain task is TDD (red → green) and ends with a machine-checkable gate: SQL tasks run `supabase db reset && supabase test db && node scripts/check-definer-audit.mjs && supabase db diff` + a targeted grep; the domain task runs Vitest + `check-boundary.sh` + a grep; the edge task runs a served-function integration check + a `diff`/grep gate.
 - **`ingest_key` columns (verbatim):** `id uuid pk default gen_random_uuid()`, `workspace_id uuid not null references public.workspace(id) on delete cascade`, `key_hash text not null unique` (= `encode(extensions.digest(raw,'sha256'),'hex')`), `label text`, `active boolean not null default true`, `created_at timestamptz not null default now()`. RLS enabled with no policies; `revoke all … from anon, authenticated`; `grant all … to service_role` (mirrors `movp_internal.webhooks`).
-- **`ingest_platform_event` signature + return:** `public.ingest_platform_event(api_key text, events jsonb) returns jsonb` → `jsonb_build_object('inserted', n_ok, 'dropped', n_bad)`. It resolves `workspace_id` from `ingest_key` by `encode(extensions.digest(api_key,'sha256'),'hex')` (active only; else raise `28000`), caps the batch at 500 (raise `54000`), drops per-event on missing `event_type`/`subject_ref`/`occurred_at` or `octet_length(properties::text) > 16384`, and stamps every insert with `source='external'`, `ingested_at=now()`, `subject_type = coalesce(events->>'subject_type','user')` (satisfies `platform_event.subject_type` NOT NULL from Part A), and the KEY's `workspace_id` — never `events->>'workspace_id'`. The per-row `INSERT` is wrapped in `begin … exception when others then n_bad := n_bad + 1; continue; end;` so a single-row failure is a counted DROP, never a whole-batch abort (the RPC's `occurred_at` cast handler guards only the cast — the INSERT needs its own).
+- **`ingest_platform_event` signature + return:** `public.ingest_platform_event(api_key text, events jsonb) returns jsonb` → `jsonb_build_object('inserted', n_ok, 'dropped', n_bad)`. It resolves `workspace_id` from `ingest_key` by `encode(extensions.digest(api_key,'sha256'),'hex')` (active only; else raise `28000`), caps the batch at 500 (raise `54000`), drops per-event on missing `event_type`/`subject_ref`/`occurred_at` or `octet_length(properties::text) > 16384`, and stamps every insert with `source='external'`, `ingested_at=now()`, `subject_type = coalesce(events->>'subject_type','user')` (satisfies `platform_event.subject_type` NOT NULL from Part A), and the KEY's `workspace_id` — never `events->>'workspace_id'`. The per-row `INSERT` is wrapped in a NARROW handler (`exception when not_null_violation or check_violation or invalid_text_representation or datetime_field_overflow then n_bad := n_bad + 1; continue`) so an EXPECTED data-shape error is a counted DROP, never a whole-batch abort — but an UNEXPECTED fault (schema drift, a new constraint/trigger, a DB fault) is NOT caught: it propagates and aborts the batch loudly rather than silently losing valid events (pinned by a `throws_ok 'P0001'` fixture-trigger test). `plan(13)` includes that fail-loud assertion.
 - **Two auth modes (both server-resolved workspace):** (1) **JWT** — `Authorization: Bearer <jwt>` → `resolvePrincipal(req, env)` (fail-closed; 401 on `!ok`) → insert under `principal.db` where RLS `with check public.is_workspace_member(workspace_id)` rejects a non-member write (403 on `42501`); `source='external'`. (2) **API-key** — `x-ingest-key: <raw_key>` and NO JWT → service-role client → `rpc('ingest_platform_event', { api_key, events })`, which derives the workspace from the hashed key. A client `workspace_id` is never trusted on the API-key path.
 - **Bound constants:** `INGEST_MAX_BATCH = 500`, `INGEST_MAX_PROP_BYTES = 16 * 1024` (16384). Measured on serialized bytes: `new TextEncoder().encode(JSON.stringify(properties)).length` in TS (a web standard present in BOTH Node/vitest and Deno with no polyfill — `Buffer` is deliberately avoided as it is not a Deno global), `octet_length((properties)::text)` in SQL (a superset discriminator — never under-counts a real oversize; not claimed byte-for-byte identical to the client's exact JSON).
-- **Correctness / self-consistency:** the pgTAP calls the RPC ONCE into a temp table so `inserted`/`dropped` read one result; event #1 carries `workspace_id=W2` to prove the payload id is ignored (2 rows in W1, 0 in W2); event #2 OMITS `subject_type` to prove the `coalesce(...,'user')` default lands (asserted `subject_type='user'`), so a missing value never aborts the batch; the oversized event uses `repeat('x',20000)` (> 16 KiB); `plan(12)` matches the twelve assertions. `octet_length` / `length` / `encode` / `jsonb_*` are pg_catalog (unqualified is correct even under `search_path=''`); pgcrypto (`digest`, `gen_random_bytes`) is `extensions`-qualified.
+- **Correctness / self-consistency:** the pgTAP calls the RPC ONCE into a temp table so `inserted`/`dropped` read one result; event #1 carries `workspace_id=W2` to prove the payload id is ignored (2 rows in W1, 0 in W2); event #2 OMITS `subject_type` to prove the `coalesce(...,'user')` default lands (asserted `subject_type='user'`), so a missing value never aborts the batch; the oversized event uses `repeat('x',20000)` (> 16 KiB); a `throws_ok 'P0001'` fixture-trigger asserts an unexpected fault fails loud (not a silent drop); `plan(13)` matches the thirteen assertions. `octet_length` / `length` / `encode` / `jsonb_*` are pg_catalog (unqualified is correct even under `search_path=''`); pgcrypto (`digest`, `gen_random_bytes`) is `extensions`-qualified.
 - **Safety / observability:** both RPCs are hardened `SECURITY DEFINER` (`set search_path=''`, fully qualified, `execute` revoked from public/anon/authenticated and granted to service_role only) and pass `check-definer-audit.mjs`. Keys are stored hashed (raw emitted once, never logged); `mint_ingest_key` is service-role-only (a member cannot self-issue). The edge fn is fail-closed (401 on `!principal.ok`), rejects non-member writes loudly (403), rejects an ambiguous both-credentials request (400 `ambiguous_auth`, so an `x-ingest-key` is never silently ignored in favour of a JWT), and branches every DB error on SQLSTATE (`error.code`), NOT `error.message` (28000→401, 54000→413, 42501→403). It emits a structured `@movp/obs` event (`surface: 'ingest'`, correlated `trace_id`/`request_id`) on EVERY failure branch and on a partial-drops summary — field NAMES + a bounded `error_code` only, never the key, `body`, `properties`, or `x-ingest-key`; there is NO raw `console.*` (a content-discipline grep asserts those identifiers never appear on an `emit`/`console` line, and `'ingest'` is registered in the obs `Surface` union so `emit` does not fire an enum violation). `ingest_key` lives in the private `movp_internal` schema with RLS on and no policies.
 - **Reliability / efficiency / performance:** malformed/oversized events are dropped (never buffered), the batch is capped before any insert, and oversize is rejected with `413`/`54000`. The JWT path uses a single atomic batch insert (a non-member row rejects the whole batch — a loud, safe 403, not a partial write); the API-key path pre-filters on the edge (defense in depth) and the RPC re-validates authoritatively. The key lookup is a single unique-index hit on `key_hash`. No new event type, no async fan-out, no codegen — `supabase db diff` stays empty.
 - **Deferred (intentional):** no key rotation/revocation UI (a key is deactivated by setting `active=false`, filtered out of the lookup); no per-key rate limit (a follow-up if abuse appears); no domain `SegmentationService.ingest()` method (ingestion is edge-fn + RPC only — `ingest-bounds.ts` is unit-tested in the domain but the write path is the endpoint). None are needed for the DB/edge deliverable.

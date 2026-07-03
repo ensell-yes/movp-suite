@@ -131,8 +131,9 @@ Core→Collaboration→Task→CMS→Campaigns chain); its hand-authored migratio
 4. `2026-07-01-movp-app-04d-segmentation-surfaces-frontend.md` — codegen-generic surfaces + custom reads
    (`previewMatchingCount` reusing the safe compiler, `segmentMembershipExplained`, `snapshotDiff`), four Astro
    templates (island→`/api` pattern), BI/ML metadata verification, and the `[segmentation]` e2e slice.
-   **No new migration** (one tiny read RPC). **Precondition: 04a–04c merged.** (The `campaign→segment` audience
-   seam is DEFERRED to a future campaign-targeting flow.)
+   **No codegen migration** — adds one tiny read RPC (`preview_segment_predicate`) only if Part C didn't
+   already expose it. **Precondition: 04a–04c merged.** (The `campaign→segment` audience seam is DEFERRED to a
+   future campaign-targeting flow.)
 
 > **The remaining app phase** (`app-06` Domain Workflows) is still ROADMAP/design altitude — it must be
 > **expanded into a bite-sized TDD series** (as every prior phase was) before code is written. It consumes
