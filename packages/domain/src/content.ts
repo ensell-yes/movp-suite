@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import type { ContentItemRow, ContentRevisionRow, ContentTypeRow } from './generated/types.ts'
+import type { ContentApprovalRow, ContentItemRow, ContentRevisionRow, ContentTypeRow } from './generated/types.ts'
 import type { ContentService, DomainCtx } from './types.ts'
 
 const DEFAULT_PAGE = 20
@@ -235,6 +235,72 @@ export function makeContentService(ctx: DomainCtx): ContentService {
         items,
         nextCursor: rows.length > first && last ? encodeCursor(String(last.revision_number)) : null,
       }
+    },
+
+    async submitForApproval(input) {
+      const { data, error } = await ctx.db.rpc('submit_for_approval', {
+        p_item_id: input.itemId,
+        p_policy: input.policy ?? 'single',
+        p_approvals_required: input.approvalsRequired ?? 1,
+      })
+      if (error) fail('submitForApproval', error.code)
+      return data as ContentItemRow
+    },
+
+    async decideApproval(input) {
+      const { data, error } = await ctx.db.rpc('decide_approval', {
+        p_approval_id: input.approvalId,
+        p_vote: input.vote,
+      })
+      if (error) fail('decideApproval', error.code)
+      return data as ContentApprovalRow
+    },
+
+    async publish(input) {
+      const { data, error } = await ctx.db.rpc('publish_content', { p_item_id: input.itemId })
+      if (error) fail('publish', error.code)
+      return data as ContentItemRow
+    },
+
+    async unpublish(input) {
+      const { data, error } = await ctx.db.rpc('unpublish_content', { p_item_id: input.itemId })
+      if (error) fail('unpublish', error.code)
+      return data as ContentItemRow
+    },
+
+    async getPublished(id) {
+      const { data: item, error: itemError } = await ctx.db
+        .from('content_item')
+        .select('*')
+        .eq('id', id)
+        .maybeSingle()
+      if (itemError) fail('getPublished', itemError.code)
+      const row = item as ContentItemRow | null
+      if (!row?.published_revision_id) return null
+
+      const { data: revision, error: revisionError } = await ctx.db
+        .from('content_revision')
+        .select('*')
+        .eq('id', row.published_revision_id)
+        .maybeSingle()
+      if (revisionError) fail('getPublished', revisionError.code)
+      if (!revision) return null
+      return { item: row, revision: revision as ContentRevisionRow }
+    },
+
+    async listApprovals(args) {
+      const first = clamp(args.first ?? DEFAULT_PAGE, 1, MAX_PAGE)
+      let query = ctx.db.from('content_approval').select('*').eq('workspace_id', args.workspaceId)
+      if (args.itemId) query = query.eq('content_item_id', args.itemId)
+      if (args.state) query = query.eq('state', args.state)
+      query = query.order('id', { ascending: true }).limit(first + 1)
+      if (args.after) query = query.gt('id', decodeCursor(args.after))
+      const { data, error } = await query
+      if (error) fail('listApprovals', error.code)
+      const rows = (data ?? []) as ContentApprovalRow[]
+      const items = rows.length > first ? rows.slice(0, first) : rows
+      const last = items.at(-1)
+      return { items, nextCursor: rows.length > first && last ? encodeCursor(last.id) : null }
     },
   }
 }

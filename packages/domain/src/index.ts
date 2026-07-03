@@ -23,6 +23,7 @@ export type {
 } from './types.ts'
 export type {
   CommentRow,
+  ContentApprovalRow,
   ContentItemRow,
   ContentRevisionRow,
   ContentTypeRow,

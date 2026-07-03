@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type {
   CommentRow,
+  ContentApprovalRow,
   ContentItemRow,
   ContentRevisionRow,
   ContentTypeRow,
@@ -144,6 +145,12 @@ export interface ContentService {
   get(id: string): Promise<ContentItemRow | null>
   list(a: { workspaceId: string; contentTypeId?: string; status?: string; first?: number; after?: string | null }): Promise<Page<ContentItemRow>>
   listRevisions(a: { itemId: string; first?: number; after?: string | null }): Promise<Page<ContentRevisionRow>>
+  submitForApproval(i: { itemId: string; policy?: 'single' | 'multi' | 'moderation'; approvalsRequired?: number }): Promise<ContentItemRow>
+  decideApproval(i: { approvalId: string; vote: 'approve' | 'reject' }): Promise<ContentApprovalRow>
+  publish(i: { itemId: string }): Promise<ContentItemRow>
+  unpublish(i: { itemId: string }): Promise<ContentItemRow>
+  getPublished(id: string): Promise<{ item: ContentItemRow; revision: ContentRevisionRow } | null>
+  listApprovals(a: { workspaceId: string; itemId?: string; state?: 'pending' | 'approved' | 'rejected' | 'superseded'; first?: number; after?: string | null }): Promise<Page<ContentApprovalRow>>
 }
 
 export interface Domain {
