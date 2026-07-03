@@ -584,3 +584,572 @@ on conflict (collection_name, name) do update set
   reporting_role = excluded.reporting_role,
   searchable = excluded.searchable,
   embeddable = excluded.embeddable;
+
+
+create table if not exists public.task_status_option (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id uuid not null references public.workspace(id) on delete cascade,
+  label text not null,
+  category text not null check (category in ('backlog', 'active', 'blocked', 'done')),
+  color text,
+  sort_order numeric,
+  is_default boolean,
+  is_active boolean,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+alter table public.task_status_option enable row level security;
+grant select, insert, update, delete on public.task_status_option to authenticated;
+grant select, insert, update, delete on public.task_status_option to service_role;
+create policy task_status_option_rw on public.task_status_option for all to authenticated
+  using (public.is_workspace_member(workspace_id))
+  with check (public.is_workspace_member(workspace_id));
+
+
+
+create or replace function public.task_status_option_delete_chunks()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  delete from public.search_chunk where source_table = 'task_status_option' and source_id = old.id;
+  return old;
+end;
+$$;
+revoke all on function public.task_status_option_delete_chunks() from public, anon, authenticated;
+
+create trigger task_status_option_delete_chunks_tg
+  after delete on public.task_status_option
+  for each row execute function public.task_status_option_delete_chunks();
+
+insert into public.movp_collections (name, label, label_plural, workspace_scoped)
+values ('task_status_option', 'Task Status Option', 'Task Status Options', true)
+on conflict (name) do update set label = excluded.label, label_plural = excluded.label_plural, workspace_scoped = excluded.workspace_scoped;
+
+insert into public.movp_fields (collection_name, name, type, label, cardinality, reporting_role, searchable, embeddable)
+values
+  ('task_status_option', 'label', 'text', 'Label', null, null, false, false),
+  ('task_status_option', 'category', 'enum', 'Category', null, 'dimension', false, false),
+  ('task_status_option', 'color', 'text', 'Color', null, null, false, false),
+  ('task_status_option', 'sort_order', 'number', 'Sort Order', null, null, false, false),
+  ('task_status_option', 'is_default', 'boolean', 'Is Default', null, null, false, false),
+  ('task_status_option', 'is_active', 'boolean', 'Is Active', null, null, false, false)
+on conflict (collection_name, name) do update set
+  type = excluded.type,
+  label = excluded.label,
+  cardinality = excluded.cardinality,
+  reporting_role = excluded.reporting_role,
+  searchable = excluded.searchable,
+  embeddable = excluded.embeddable;
+
+
+create table if not exists public.task_priority_option (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id uuid not null references public.workspace(id) on delete cascade,
+  label text not null,
+  rank numeric not null,
+  color text,
+  is_default boolean,
+  is_active boolean,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+alter table public.task_priority_option enable row level security;
+grant select, insert, update, delete on public.task_priority_option to authenticated;
+grant select, insert, update, delete on public.task_priority_option to service_role;
+create policy task_priority_option_rw on public.task_priority_option for all to authenticated
+  using (public.is_workspace_member(workspace_id))
+  with check (public.is_workspace_member(workspace_id));
+
+
+
+create or replace function public.task_priority_option_delete_chunks()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  delete from public.search_chunk where source_table = 'task_priority_option' and source_id = old.id;
+  return old;
+end;
+$$;
+revoke all on function public.task_priority_option_delete_chunks() from public, anon, authenticated;
+
+create trigger task_priority_option_delete_chunks_tg
+  after delete on public.task_priority_option
+  for each row execute function public.task_priority_option_delete_chunks();
+
+insert into public.movp_collections (name, label, label_plural, workspace_scoped)
+values ('task_priority_option', 'Task Priority Option', 'Task Priority Options', true)
+on conflict (name) do update set label = excluded.label, label_plural = excluded.label_plural, workspace_scoped = excluded.workspace_scoped;
+
+insert into public.movp_fields (collection_name, name, type, label, cardinality, reporting_role, searchable, embeddable)
+values
+  ('task_priority_option', 'label', 'text', 'Label', null, null, false, false),
+  ('task_priority_option', 'rank', 'number', 'Rank', null, null, false, false),
+  ('task_priority_option', 'color', 'text', 'Color', null, null, false, false),
+  ('task_priority_option', 'is_default', 'boolean', 'Is Default', null, null, false, false),
+  ('task_priority_option', 'is_active', 'boolean', 'Is Active', null, null, false, false)
+on conflict (collection_name, name) do update set
+  type = excluded.type,
+  label = excluded.label,
+  cardinality = excluded.cardinality,
+  reporting_role = excluded.reporting_role,
+  searchable = excluded.searchable,
+  embeddable = excluded.embeddable;
+
+
+create table if not exists public.task (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id uuid not null references public.workspace(id) on delete cascade,
+  title text not null,
+  start_date date,
+  due_date date,
+  current_revision_id uuid,
+  dependency_blocked boolean,
+  completed_at timestamptz,
+  due_soon_notified_at timestamptz,
+  status_id uuid not null references public.task_status_option(id) on delete cascade,
+  priority_id uuid not null references public.task_priority_option(id) on delete cascade,
+  parent_id uuid references public.task(id) on delete set null,
+  search_vector tsvector,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+alter table public.task enable row level security;
+grant select, insert, update, delete on public.task to authenticated;
+grant select, insert, update, delete on public.task to service_role;
+create policy task_rw on public.task for all to authenticated
+  using (public.is_workspace_member(workspace_id))
+  with check (public.is_workspace_member(workspace_id));
+
+create or replace function public.task_search_vector_update()
+returns trigger
+language plpgsql
+as $$
+begin
+  new.search_vector := to_tsvector('english', coalesce(new.title, ''));
+  return new;
+end;
+$$;
+
+create trigger task_search_vector_tg
+  before insert or update on public.task
+  for each row execute function public.task_search_vector_update();
+
+create index task_search_idx on public.task using gin (search_vector);
+
+
+create or replace function public.task_delete_chunks()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  delete from public.search_chunk where source_table = 'task' and source_id = old.id;
+  return old;
+end;
+$$;
+revoke all on function public.task_delete_chunks() from public, anon, authenticated;
+
+create trigger task_delete_chunks_tg
+  after delete on public.task
+  for each row execute function public.task_delete_chunks();
+
+insert into public.movp_collections (name, label, label_plural, workspace_scoped)
+values ('task', 'Task', 'Tasks', true)
+on conflict (name) do update set label = excluded.label, label_plural = excluded.label_plural, workspace_scoped = excluded.workspace_scoped;
+
+insert into public.movp_fields (collection_name, name, type, label, cardinality, reporting_role, searchable, embeddable)
+values
+  ('task', 'title', 'text', 'Title', null, null, true, false),
+  ('task', 'status', 'relation', 'Status', 'many-to-one', null, false, false),
+  ('task', 'priority', 'relation', 'Priority', 'many-to-one', null, false, false),
+  ('task', 'parent', 'relation', 'Parent Task', 'many-to-one', null, false, false),
+  ('task', 'start_date', 'date', 'Start Date', null, null, false, false),
+  ('task', 'due_date', 'date', 'Due Date', null, null, false, false),
+  ('task', 'current_revision_id', 'uuid', 'Current Revision', null, null, false, false),
+  ('task', 'dependency_blocked', 'boolean', 'Dependency Blocked', null, null, false, false),
+  ('task', 'completed_at', 'datetime', 'Completed At', null, null, false, false),
+  ('task', 'due_soon_notified_at', 'datetime', 'Due Soon Notified At', null, null, false, false)
+on conflict (collection_name, name) do update set
+  type = excluded.type,
+  label = excluded.label,
+  cardinality = excluded.cardinality,
+  reporting_role = excluded.reporting_role,
+  searchable = excluded.searchable,
+  embeddable = excluded.embeddable;
+
+
+create table if not exists public.task_revision (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id uuid not null references public.workspace(id) on delete cascade,
+  body text not null,
+  content_hash text not null,
+  author_id uuid not null,
+  task_id uuid not null references public.task(id) on delete cascade,
+  search_vector tsvector,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+alter table public.task_revision enable row level security;
+grant select, insert, update, delete on public.task_revision to authenticated;
+grant select, insert, update, delete on public.task_revision to service_role;
+create policy task_revision_rw on public.task_revision for all to authenticated
+  using (public.is_workspace_member(workspace_id))
+  with check (public.is_workspace_member(workspace_id));
+
+create or replace function public.task_revision_search_vector_update()
+returns trigger
+language plpgsql
+as $$
+begin
+  new.search_vector := to_tsvector('english', coalesce(new.body, ''));
+  return new;
+end;
+$$;
+
+create trigger task_revision_search_vector_tg
+  before insert or update on public.task_revision
+  for each row execute function public.task_revision_search_vector_update();
+
+create index task_revision_search_idx on public.task_revision using gin (search_vector);
+
+create or replace function public.task_revision_body_enqueue_embed()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_hash text;
+begin
+  v_hash := encode(extensions.digest(coalesce(new.body, ''), 'sha256'), 'hex');
+  if tg_op = 'UPDATE' and v_hash = encode(extensions.digest(coalesce(old.body, ''), 'sha256'), 'hex') then
+    return new;
+  end if;
+
+  insert into movp_internal.movp_jobs (kind, idempotency_key, payload, workspace_id)
+  values (
+    'embed',
+    'task_revision' || ':' || new.id::text || ':body:' || v_hash,
+    jsonb_build_object('source_table', 'task_revision', 'source_id', new.id, 'field', 'body', 'content_hash', v_hash),
+    new.workspace_id
+  )
+  on conflict (kind, idempotency_key) do nothing;
+  return new;
+end;
+$$;
+revoke all on function public.task_revision_body_enqueue_embed() from public, anon, authenticated;
+
+create trigger task_revision_body_enqueue_embed_tg
+  after insert or update on public.task_revision
+  for each row execute function public.task_revision_body_enqueue_embed();
+
+create or replace function public.task_revision_delete_chunks()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  delete from public.search_chunk where source_table = 'task_revision' and source_id = old.id;
+  return old;
+end;
+$$;
+revoke all on function public.task_revision_delete_chunks() from public, anon, authenticated;
+
+create trigger task_revision_delete_chunks_tg
+  after delete on public.task_revision
+  for each row execute function public.task_revision_delete_chunks();
+
+insert into public.movp_collections (name, label, label_plural, workspace_scoped)
+values ('task_revision', 'Task Revision', 'Task Revisions', true)
+on conflict (name) do update set label = excluded.label, label_plural = excluded.label_plural, workspace_scoped = excluded.workspace_scoped;
+
+insert into public.movp_fields (collection_name, name, type, label, cardinality, reporting_role, searchable, embeddable)
+values
+  ('task_revision', 'task', 'relation', 'Task', 'many-to-one', null, false, false),
+  ('task_revision', 'body', 'richText', 'Body', null, null, true, true),
+  ('task_revision', 'content_hash', 'text', 'Content Hash', null, null, false, false),
+  ('task_revision', 'author_id', 'uuid', 'Author', null, null, false, false)
+on conflict (collection_name, name) do update set
+  type = excluded.type,
+  label = excluded.label,
+  cardinality = excluded.cardinality,
+  reporting_role = excluded.reporting_role,
+  searchable = excluded.searchable,
+  embeddable = excluded.embeddable;
+
+
+create table if not exists public.task_assignment (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id uuid not null references public.workspace(id) on delete cascade,
+  assignee_user_id uuid not null,
+  role text not null default 'owner' check (role in ('owner')),
+  task_id uuid not null references public.task(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+alter table public.task_assignment enable row level security;
+grant select, insert, update, delete on public.task_assignment to authenticated;
+grant select, insert, update, delete on public.task_assignment to service_role;
+create policy task_assignment_rw on public.task_assignment for all to authenticated
+  using (public.is_workspace_member(workspace_id))
+  with check (public.is_workspace_member(workspace_id));
+
+
+
+create or replace function public.task_assignment_delete_chunks()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  delete from public.search_chunk where source_table = 'task_assignment' and source_id = old.id;
+  return old;
+end;
+$$;
+revoke all on function public.task_assignment_delete_chunks() from public, anon, authenticated;
+
+create trigger task_assignment_delete_chunks_tg
+  after delete on public.task_assignment
+  for each row execute function public.task_assignment_delete_chunks();
+
+insert into public.movp_collections (name, label, label_plural, workspace_scoped)
+values ('task_assignment', 'Task Assignment', 'Task Assignments', true)
+on conflict (name) do update set label = excluded.label, label_plural = excluded.label_plural, workspace_scoped = excluded.workspace_scoped;
+
+insert into public.movp_fields (collection_name, name, type, label, cardinality, reporting_role, searchable, embeddable)
+values
+  ('task_assignment', 'task', 'relation', 'Task', 'many-to-one', null, false, false),
+  ('task_assignment', 'assignee_user_id', 'uuid', 'Assignee', null, null, false, false),
+  ('task_assignment', 'role', 'enum', 'Role', null, null, false, false)
+on conflict (collection_name, name) do update set
+  type = excluded.type,
+  label = excluded.label,
+  cardinality = excluded.cardinality,
+  reporting_role = excluded.reporting_role,
+  searchable = excluded.searchable,
+  embeddable = excluded.embeddable;
+
+
+create table if not exists public.task_observer (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id uuid not null references public.workspace(id) on delete cascade,
+  observer_user_id uuid not null,
+  task_id uuid not null references public.task(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+alter table public.task_observer enable row level security;
+grant select, insert, update, delete on public.task_observer to authenticated;
+grant select, insert, update, delete on public.task_observer to service_role;
+create policy task_observer_rw on public.task_observer for all to authenticated
+  using (public.is_workspace_member(workspace_id))
+  with check (public.is_workspace_member(workspace_id));
+
+
+
+create or replace function public.task_observer_delete_chunks()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  delete from public.search_chunk where source_table = 'task_observer' and source_id = old.id;
+  return old;
+end;
+$$;
+revoke all on function public.task_observer_delete_chunks() from public, anon, authenticated;
+
+create trigger task_observer_delete_chunks_tg
+  after delete on public.task_observer
+  for each row execute function public.task_observer_delete_chunks();
+
+insert into public.movp_collections (name, label, label_plural, workspace_scoped)
+values ('task_observer', 'Task Observer', 'Task Observers', true)
+on conflict (name) do update set label = excluded.label, label_plural = excluded.label_plural, workspace_scoped = excluded.workspace_scoped;
+
+insert into public.movp_fields (collection_name, name, type, label, cardinality, reporting_role, searchable, embeddable)
+values
+  ('task_observer', 'task', 'relation', 'Task', 'many-to-one', null, false, false),
+  ('task_observer', 'observer_user_id', 'uuid', 'Observer', null, null, false, false)
+on conflict (collection_name, name) do update set
+  type = excluded.type,
+  label = excluded.label,
+  cardinality = excluded.cardinality,
+  reporting_role = excluded.reporting_role,
+  searchable = excluded.searchable,
+  embeddable = excluded.embeddable;
+
+
+create table if not exists public.task_dependency (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id uuid not null references public.workspace(id) on delete cascade,
+  task_id uuid not null references public.task(id) on delete cascade,
+  blocker_id uuid not null references public.task(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+alter table public.task_dependency enable row level security;
+grant select, insert, update, delete on public.task_dependency to authenticated;
+grant select, insert, update, delete on public.task_dependency to service_role;
+create policy task_dependency_rw on public.task_dependency for all to authenticated
+  using (public.is_workspace_member(workspace_id))
+  with check (public.is_workspace_member(workspace_id));
+
+
+
+create or replace function public.task_dependency_delete_chunks()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  delete from public.search_chunk where source_table = 'task_dependency' and source_id = old.id;
+  return old;
+end;
+$$;
+revoke all on function public.task_dependency_delete_chunks() from public, anon, authenticated;
+
+create trigger task_dependency_delete_chunks_tg
+  after delete on public.task_dependency
+  for each row execute function public.task_dependency_delete_chunks();
+
+insert into public.movp_collections (name, label, label_plural, workspace_scoped)
+values ('task_dependency', 'Task Dependency', 'Task Dependencies', true)
+on conflict (name) do update set label = excluded.label, label_plural = excluded.label_plural, workspace_scoped = excluded.workspace_scoped;
+
+insert into public.movp_fields (collection_name, name, type, label, cardinality, reporting_role, searchable, embeddable)
+values
+  ('task_dependency', 'task', 'relation', 'Task', 'many-to-one', null, false, false),
+  ('task_dependency', 'blocker', 'relation', 'Blocker', 'many-to-one', null, false, false)
+on conflict (collection_name, name) do update set
+  type = excluded.type,
+  label = excluded.label,
+  cardinality = excluded.cardinality,
+  reporting_role = excluded.reporting_role,
+  searchable = excluded.searchable,
+  embeddable = excluded.embeddable;
+
+
+create table if not exists public.task_status_history (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id uuid not null references public.workspace(id) on delete cascade,
+  from_status_id uuid,
+  to_status_id uuid not null,
+  changed_by uuid not null,
+  task_id uuid not null references public.task(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+alter table public.task_status_history enable row level security;
+grant select, insert, update, delete on public.task_status_history to authenticated;
+grant select, insert, update, delete on public.task_status_history to service_role;
+create policy task_status_history_rw on public.task_status_history for all to authenticated
+  using (public.is_workspace_member(workspace_id))
+  with check (public.is_workspace_member(workspace_id));
+
+
+
+create or replace function public.task_status_history_delete_chunks()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  delete from public.search_chunk where source_table = 'task_status_history' and source_id = old.id;
+  return old;
+end;
+$$;
+revoke all on function public.task_status_history_delete_chunks() from public, anon, authenticated;
+
+create trigger task_status_history_delete_chunks_tg
+  after delete on public.task_status_history
+  for each row execute function public.task_status_history_delete_chunks();
+
+insert into public.movp_collections (name, label, label_plural, workspace_scoped)
+values ('task_status_history', 'Task Status History', 'Task Status History', true)
+on conflict (name) do update set label = excluded.label, label_plural = excluded.label_plural, workspace_scoped = excluded.workspace_scoped;
+
+insert into public.movp_fields (collection_name, name, type, label, cardinality, reporting_role, searchable, embeddable)
+values
+  ('task_status_history', 'task', 'relation', 'Task', 'many-to-one', null, false, false),
+  ('task_status_history', 'from_status_id', 'uuid', 'From Status', null, null, false, false),
+  ('task_status_history', 'to_status_id', 'uuid', 'To Status', null, null, false, false),
+  ('task_status_history', 'changed_by', 'uuid', 'Changed By', null, null, false, false)
+on conflict (collection_name, name) do update set
+  type = excluded.type,
+  label = excluded.label,
+  cardinality = excluded.cardinality,
+  reporting_role = excluded.reporting_role,
+  searchable = excluded.searchable,
+  embeddable = excluded.embeddable;
+
+
+create table if not exists public.task_attachment (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id uuid not null references public.workspace(id) on delete cascade,
+  r2_key text not null,
+  filename text not null,
+  content_type text,
+  bytes numeric,
+  uploaded_by uuid not null,
+  task_id uuid not null references public.task(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+alter table public.task_attachment enable row level security;
+grant select, insert, update, delete on public.task_attachment to authenticated;
+grant select, insert, update, delete on public.task_attachment to service_role;
+create policy task_attachment_rw on public.task_attachment for all to authenticated
+  using (public.is_workspace_member(workspace_id))
+  with check (public.is_workspace_member(workspace_id));
+
+
+
+create or replace function public.task_attachment_delete_chunks()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  delete from public.search_chunk where source_table = 'task_attachment' and source_id = old.id;
+  return old;
+end;
+$$;
+revoke all on function public.task_attachment_delete_chunks() from public, anon, authenticated;
+
+create trigger task_attachment_delete_chunks_tg
+  after delete on public.task_attachment
+  for each row execute function public.task_attachment_delete_chunks();
+
+insert into public.movp_collections (name, label, label_plural, workspace_scoped)
+values ('task_attachment', 'Task Attachment', 'Task Attachments', true)
+on conflict (name) do update set label = excluded.label, label_plural = excluded.label_plural, workspace_scoped = excluded.workspace_scoped;
+
+insert into public.movp_fields (collection_name, name, type, label, cardinality, reporting_role, searchable, embeddable)
+values
+  ('task_attachment', 'task', 'relation', 'Task', 'many-to-one', null, false, false),
+  ('task_attachment', 'r2_key', 'text', 'R2 Key', null, null, false, false),
+  ('task_attachment', 'filename', 'text', 'Filename', null, null, false, false),
+  ('task_attachment', 'content_type', 'text', 'Content Type', null, null, false, false),
+  ('task_attachment', 'bytes', 'number', 'Bytes', null, null, false, false),
+  ('task_attachment', 'uploaded_by', 'uuid', 'Uploaded By', null, null, false, false)
+on conflict (collection_name, name) do update set
+  type = excluded.type,
+  label = excluded.label,
+  cardinality = excluded.cardinality,
+  reporting_role = excluded.reporting_role,
+  searchable = excluded.searchable,
+  embeddable = excluded.embeddable;

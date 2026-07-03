@@ -175,3 +175,255 @@ export interface ShareLinkUpdate {
   created_by?: string
   expires_at?: string
 }
+
+export interface TaskStatusOptionRow {
+  id: string
+  workspace_id: string
+  label: string
+  category: 'backlog' | 'active' | 'blocked' | 'done'
+  color: string | null
+  sort_order: number | null
+  is_default: boolean | null
+  is_active: boolean | null
+  created_at: string
+  updated_at: string
+}
+
+export interface TaskStatusOptionCreate {
+  workspace_id: string
+  label: string
+  category: 'backlog' | 'active' | 'blocked' | 'done'
+  color?: string
+  sort_order?: number
+  is_default?: boolean
+  is_active?: boolean
+}
+
+export interface TaskStatusOptionUpdate {
+  label?: string
+  category?: 'backlog' | 'active' | 'blocked' | 'done'
+  color?: string
+  sort_order?: number
+  is_default?: boolean
+  is_active?: boolean
+}
+
+export interface TaskPriorityOptionRow {
+  id: string
+  workspace_id: string
+  label: string
+  rank: number
+  color: string | null
+  is_default: boolean | null
+  is_active: boolean | null
+  created_at: string
+  updated_at: string
+}
+
+export interface TaskPriorityOptionCreate {
+  workspace_id: string
+  label: string
+  rank: number
+  color?: string
+  is_default?: boolean
+  is_active?: boolean
+}
+
+export interface TaskPriorityOptionUpdate {
+  label?: string
+  rank?: number
+  color?: string
+  is_default?: boolean
+  is_active?: boolean
+}
+
+export interface TaskRow {
+  id: string
+  workspace_id: string
+  title: string
+  start_date: string | null
+  due_date: string | null
+  current_revision_id: string | null
+  dependency_blocked: boolean | null
+  completed_at: string | null
+  due_soon_notified_at: string | null
+  status_id: string
+  priority_id: string
+  parent_id: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface TaskCreate {
+  workspace_id: string
+  title: string
+  start_date?: string
+  due_date?: string
+  current_revision_id?: string
+  dependency_blocked?: boolean
+  completed_at?: string
+  due_soon_notified_at?: string
+  status_id: string
+  priority_id: string
+  parent_id?: string
+}
+
+export interface TaskUpdate {
+  title?: string
+  start_date?: string
+  due_date?: string
+  current_revision_id?: string
+  dependency_blocked?: boolean
+  completed_at?: string
+  due_soon_notified_at?: string
+  status_id?: string
+  priority_id?: string
+  parent_id?: string
+}
+
+export interface TaskRevisionRow {
+  id: string
+  workspace_id: string
+  body: string
+  content_hash: string
+  author_id: string
+  task_id: string
+  created_at: string
+  updated_at: string
+}
+
+export interface TaskRevisionCreate {
+  workspace_id: string
+  body: string
+  content_hash: string
+  author_id: string
+  task_id: string
+}
+
+export interface TaskRevisionUpdate {
+  body?: string
+  content_hash?: string
+  author_id?: string
+  task_id?: string
+}
+
+export interface TaskAssignmentRow {
+  id: string
+  workspace_id: string
+  assignee_user_id: string
+  role: 'owner'
+  task_id: string
+  created_at: string
+  updated_at: string
+}
+
+export interface TaskAssignmentCreate {
+  workspace_id: string
+  assignee_user_id: string
+  role?: 'owner'
+  task_id: string
+}
+
+export interface TaskAssignmentUpdate {
+  assignee_user_id?: string
+  role?: 'owner'
+  task_id?: string
+}
+
+export interface TaskObserverRow {
+  id: string
+  workspace_id: string
+  observer_user_id: string
+  task_id: string
+  created_at: string
+  updated_at: string
+}
+
+export interface TaskObserverCreate {
+  workspace_id: string
+  observer_user_id: string
+  task_id: string
+}
+
+export interface TaskObserverUpdate {
+  observer_user_id?: string
+  task_id?: string
+}
+
+export interface TaskDependencyRow {
+  id: string
+  workspace_id: string
+  task_id: string
+  blocker_id: string
+  created_at: string
+  updated_at: string
+}
+
+export interface TaskDependencyCreate {
+  workspace_id: string
+  task_id: string
+  blocker_id: string
+}
+
+export interface TaskDependencyUpdate {
+  task_id?: string
+  blocker_id?: string
+}
+
+export interface TaskStatusHistoryRow {
+  id: string
+  workspace_id: string
+  from_status_id: string | null
+  to_status_id: string
+  changed_by: string
+  task_id: string
+  created_at: string
+  updated_at: string
+}
+
+export interface TaskStatusHistoryCreate {
+  workspace_id: string
+  from_status_id?: string
+  to_status_id: string
+  changed_by: string
+  task_id: string
+}
+
+export interface TaskStatusHistoryUpdate {
+  from_status_id?: string
+  to_status_id?: string
+  changed_by?: string
+  task_id?: string
+}
+
+export interface TaskAttachmentRow {
+  id: string
+  workspace_id: string
+  r2_key: string
+  filename: string
+  content_type: string | null
+  bytes: number | null
+  uploaded_by: string
+  task_id: string
+  created_at: string
+  updated_at: string
+}
+
+export interface TaskAttachmentCreate {
+  workspace_id: string
+  r2_key: string
+  filename: string
+  content_type?: string
+  bytes?: number
+  uploaded_by: string
+  task_id: string
+}
+
+export interface TaskAttachmentUpdate {
+  r2_key?: string
+  filename?: string
+  content_type?: string
+  bytes?: number
+  uploaded_by?: string
+  task_id?: string
+}
