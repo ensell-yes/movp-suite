@@ -14,6 +14,7 @@ import type {
 } from './generated/types.ts'
 import { makeCollabService } from './collab.ts'
 import { makeCollectionService } from './collection.ts'
+import { makeContentService } from './content.ts'
 import { makeGraphService } from './graph.ts'
 import { runSearch } from './search.ts'
 import { makeTaskService } from './task.ts'
@@ -26,6 +27,7 @@ export function createDomain(ctx: DomainCtx, opts: { embedder?: EmbeddingProvide
     task_status_option: makeCollectionService<TaskStatusOptionRow, TaskStatusOptionCreate, TaskStatusOptionUpdate>(ctx, { table: 'task_status_option' }),
     task_priority_option: makeCollectionService<TaskPriorityOptionRow, TaskPriorityOptionCreate, TaskPriorityOptionUpdate>(ctx, { table: 'task_priority_option' }),
     task: makeTaskService(ctx),
+    content: makeContentService(ctx),
     search: (args) => runSearch(ctx, opts.embedder, args),
     graph: makeGraphService(ctx),
     collab: makeCollabService(ctx),

@@ -96,6 +96,9 @@ importers:
       '@supabase/supabase-js':
         specifier: ^2.45.0
         version: 2.110.0
+      zod:
+        specifier: ^3.23.8
+        version: 3.25.76
     devDependencies:
       vitest:
         specifier: ^3.2.6
