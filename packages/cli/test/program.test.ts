@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { createDomain } from '@movp/domain'
 import { buildProgram } from '../src/index.ts'
 
 const created = { id: 'n1', workspace_id: 'w', title: 'Hello' }
@@ -12,6 +13,10 @@ const inbox = vi.fn(async () => [
 const taskCreate = vi.fn(async () => ({ id: 't1', title: 'Ship it' }))
 const taskList = vi.fn(async () => ({ items: [{ id: 't1' }], nextCursor: null }))
 const taskBoard = vi.fn(async () => [{ status: { id: 's1' }, tasks: [{ id: 't1' }] }])
+const contentCreate = vi.fn(async () => ({ id: 'ci1', slug: 'hello' }))
+const contentList = vi.fn(async () => ({ items: [{ id: 'ci1' }], nextCursor: null }))
+const contentPublish = vi.fn(async () => ({ id: 'ci1', status: 'published' }))
+const contentIssueAsset = vi.fn(async () => ({ uploadUrl: 'https://r2/put', assetId: 'a1', r2Key: 'w/a1' }))
 
 function crud() {
   return {
@@ -24,7 +29,7 @@ function crud() {
 }
 
 vi.mock('@movp/domain', () => ({
-  createDomain: () => ({
+  createDomain: vi.fn(() => ({
     note: {
       create: noteCreate,
       get: vi.fn(async () => created),
@@ -67,7 +72,32 @@ vi.mock('@movp/domain', () => ({
       updateDescription: vi.fn(async () => ({ id: 't1' })),
       attach: vi.fn(),
     },
-  }),
+    content: {
+      createType: vi.fn(async () => ({ id: 'ct1' })),
+      create: contentCreate,
+      update: vi.fn(async () => ({ id: 'ci1' })),
+      get: vi.fn(async () => ({ id: 'ci1' })),
+      list: contentList,
+      listTypes: vi.fn(async () => ({ items: [{ id: 'ct1' }], nextCursor: null })),
+      listRevisions: vi.fn(async () => ({ items: [{ id: 'r1' }], nextCursor: null })),
+      listApprovals: vi.fn(async () => ({ items: [{ id: 'ap1' }], nextCursor: null })),
+      submitForApproval: vi.fn(async () => ({ id: 'ci1', status: 'in_review' })),
+      decideApproval: vi.fn(async () => ({ id: 'ap1', content_item_id: 'ci1', state: 'approved', approved_revision_id: 'r2' })),
+      publish: contentPublish,
+      unpublish: vi.fn(async () => ({ id: 'ci1', status: 'archived' })),
+      getPublished: vi.fn(async () => ({ item: { id: 'ci1' }, revision: { id: 'r2', data: { headline: 'v2' }, content_hash: 'h2' } })),
+      schedule: vi.fn(async () => ({ id: 'sch1', content_item_id: 'ci1', revision_id: 'r2', action: 'publish', state: 'scheduled' })),
+      runSeoAudit: vi.fn(async () => ({ score: 88, checklist: [] })),
+      issueAssetUpload: contentIssueAsset,
+      finalizeAsset: vi.fn(async () => ({ id: 'a1', r2_key: 'w/a1', mime: 'image/png', size_bytes: 10 })),
+      createCollection: vi.fn(),
+      addToCollection: vi.fn(),
+      reorderCollection: vi.fn(),
+      linkAsset: vi.fn(),
+      linkItem: vi.fn(),
+      linkEditorialTask: vi.fn(),
+    },
+  })),
 }))
 
 function program(opts: Partial<Parameters<typeof buildProgram>[0]> = {}) {
@@ -188,5 +218,92 @@ describe('movp CLI', () => {
     expect(top).toEqual(expect.arrayContaining(['task', 'task_status_option', 'task_priority_option']))
     const task = cmd.commands.find((c) => c.name() === 'task')
     expect(task?.commands.map((s) => s.name())).toEqual(['create', 'list', 'board', 'assign', 'transition', 'depend', 'describe'])
+  })
+
+  it('content create routes to content.create with parsed JSON data', async () => {
+    const { cmd, out } = program()
+    await cmd.parseAsync([
+      'node',
+      'movp',
+      'content',
+      'create',
+      '--workspace',
+      'w',
+      '--type',
+      'ct1',
+      '--slug',
+      'hello',
+      '--data',
+      '{"headline":"Hi"}',
+    ])
+    expect(contentCreate).toHaveBeenCalledWith({ workspaceId: 'w', contentTypeId: 'ct1', slug: 'hello', data: { headline: 'Hi' } })
+    expect(out[0]).toContain('ci1')
+  })
+
+  it('content list and content publish print results', async () => {
+    const { cmd, out } = program()
+    await cmd.parseAsync(['node', 'movp', 'content', 'list', '--workspace', 'w'])
+    expect(contentList).toHaveBeenCalledWith({ workspaceId: 'w', contentTypeId: undefined, status: undefined })
+    expect(out[0]).toContain('ci1')
+
+    const p2 = program()
+    await p2.cmd.parseAsync(['node', 'movp', 'content', 'publish', '--item', 'ci1'])
+    expect(contentPublish).toHaveBeenCalledWith({ itemId: 'ci1' })
+    expect(p2.out[0]).toContain('published')
+  })
+
+  it('content asset-upload routes to issueAssetUpload and forwards asset ctx', async () => {
+    vi.mocked(createDomain).mockClear()
+    const ctx = {
+      db: {} as never,
+      userId: 'u',
+      accessToken: 'test',
+      assetsFnUrl: 'http://localhost:54321/functions/v1/content-assets',
+    }
+    const { cmd, out } = program({ resolveCtx: () => ctx })
+    await cmd.parseAsync([
+      'node',
+      'movp',
+      'content',
+      'asset-upload',
+      '--workspace',
+      'w',
+      '--filename',
+      'x.png',
+      '--mime',
+      'image/png',
+      '--size-bytes',
+      '10',
+    ])
+    expect(contentIssueAsset).toHaveBeenCalledWith({ workspaceId: 'w', filename: 'x.png', mime: 'image/png', sizeBytes: 10 })
+    expect(out[0]).toContain('r2/put')
+    expect(vi.mocked(createDomain)).toHaveBeenCalledWith(expect.objectContaining({
+      accessToken: 'test',
+      assetsFnUrl: 'http://localhost:54321/functions/v1/content-assets',
+    }))
+  })
+
+  it('surfaces the custom content group but no generic CRUD group for internal CMS collections', () => {
+    const { cmd } = program()
+    const top = cmd.commands.map((c) => c.name())
+    expect(top).not.toContain('content_item')
+    expect(top).not.toContain('content_revision')
+    expect(top).toContain('content')
+    const content = cmd.commands.find((c) => c.name() === 'content')
+    expect(content?.commands.map((s) => s.name())).toEqual([
+      'create-type',
+      'create',
+      'update',
+      'list',
+      'approvals',
+      'get',
+      'submit',
+      'decide',
+      'publish',
+      'unpublish',
+      'schedule',
+      'seo-audit',
+      'asset-upload',
+    ])
   })
 })

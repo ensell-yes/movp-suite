@@ -3,6 +3,8 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 export interface CliCtx {
   db: SupabaseClient
   userId: string
+  accessToken?: string
+  assetsFnUrl?: string
 }
 
 export function decodeSub(jwt: string): string {
@@ -25,7 +27,7 @@ export function resolveCliCtx(env: Record<string, string | undefined> = process.
       global: { headers: { Authorization: `Bearer ${accessToken}` } },
       auth: { persistSession: false },
     })
-    return { db, userId: decodeSub(accessToken) }
+    return { db, userId: decodeSub(accessToken), accessToken, assetsFnUrl: `${url}/functions/v1/content-assets` }
   }
 
   const serviceRole = env.MOVP_SERVICE_ROLE_KEY
@@ -34,7 +36,7 @@ export function resolveCliCtx(env: Record<string, string | undefined> = process.
     if (!userId) throw new Error('MOVP_USER_ID is required in service-role mode')
     console.error('[movp] WARNING: service-role mode: RLS is BYPASSED. Local admin only.')
     const db = createClient(url, serviceRole, { auth: { persistSession: false } })
-    return { db, userId }
+    return { db, userId, assetsFnUrl: `${url}/functions/v1/content-assets` }
   }
 
   throw new Error(

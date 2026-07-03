@@ -228,6 +228,144 @@ export function buildProgram(opts: BuildProgramOpts = {}): Command {
       out(JSON.stringify(await domain.task.updateDescription(o.task, o.body)))
     })
 
+  const contentCmd = program.command('content').description('Manage CMS content')
+  contentCmd
+    .command('create-type')
+    .requiredOption('--workspace <id>', 'workspace id')
+    .requiredOption('--key <key>', 'content type key')
+    .requiredOption('--label <label>', 'display label')
+    .requiredOption('--field-schema <json>', 'field schema JSON')
+    .action(async (o: { workspace: string; key: string; label: string; fieldSchema: string }) => {
+      const domain = createDomain(resolveCtx())
+      out(JSON.stringify(await domain.content.createType({
+        workspaceId: o.workspace,
+        key: o.key,
+        label: o.label,
+        fieldSchema: JSON.parse(o.fieldSchema),
+      })))
+    })
+  contentCmd
+    .command('create')
+    .requiredOption('--workspace <id>', 'workspace id')
+    .requiredOption('--type <id>', 'content type id')
+    .requiredOption('--slug <slug>', 'slug')
+    .requiredOption('--data <json>', 'content data JSON')
+    .action(async (o: { workspace: string; type: string; slug: string; data: string }) => {
+      const domain = createDomain(resolveCtx())
+      out(JSON.stringify(await domain.content.create({
+        workspaceId: o.workspace,
+        contentTypeId: o.type,
+        slug: o.slug,
+        data: JSON.parse(o.data),
+      })))
+    })
+  contentCmd
+    .command('update')
+    .requiredOption('--item <id>', 'content item id')
+    .requiredOption('--data <json>', 'content data JSON')
+    .action(async (o: { item: string; data: string }) => {
+      const domain = createDomain(resolveCtx())
+      out(JSON.stringify(await domain.content.update({ itemId: o.item, data: JSON.parse(o.data) })))
+    })
+  contentCmd
+    .command('list')
+    .requiredOption('--workspace <id>', 'workspace id')
+    .option('--type <id>', 'content type id')
+    .option('--status <status>', 'status')
+    .action(async (o: { workspace: string; type?: string; status?: string }) => {
+      const domain = createDomain(resolveCtx())
+      out(JSON.stringify(await domain.content.list({ workspaceId: o.workspace, contentTypeId: o.type, status: o.status })))
+    })
+  contentCmd
+    .command('approvals')
+    .requiredOption('--workspace <id>', 'workspace id')
+    .option('--item <id>', 'content item id')
+    .option('--state <state>', 'approval state')
+    .action(async (o: { workspace: string; item?: string; state?: string }) => {
+      const domain = createDomain(resolveCtx())
+      out(JSON.stringify(await domain.content.listApprovals({
+        workspaceId: o.workspace,
+        itemId: o.item,
+        state: o.state as 'pending' | 'approved' | 'rejected' | 'superseded' | undefined,
+      })))
+    })
+  contentCmd
+    .command('get')
+    .requiredOption('--item <id>', 'content item id')
+    .action(async (o: { item: string }) => {
+      const domain = createDomain(resolveCtx())
+      out(JSON.stringify(await domain.content.get(o.item)))
+    })
+  contentCmd
+    .command('submit')
+    .requiredOption('--item <id>', 'content item id')
+    .action(async (o: { item: string }) => {
+      const domain = createDomain(resolveCtx())
+      out(JSON.stringify(await domain.content.submitForApproval({ itemId: o.item })))
+    })
+  contentCmd
+    .command('decide')
+    .requiredOption('--approval <id>', 'approval id')
+    .requiredOption('--vote <approve|reject>', 'vote')
+    .action(async (o: { approval: string; vote: string }) => {
+      const domain = createDomain(resolveCtx())
+      out(JSON.stringify(await domain.content.decideApproval({
+        approvalId: o.approval,
+        vote: o.vote as 'approve' | 'reject',
+      })))
+    })
+  contentCmd
+    .command('publish')
+    .requiredOption('--item <id>', 'content item id')
+    .action(async (o: { item: string }) => {
+      const domain = createDomain(resolveCtx())
+      out(JSON.stringify(await domain.content.publish({ itemId: o.item })))
+    })
+  contentCmd
+    .command('unpublish')
+    .requiredOption('--item <id>', 'content item id')
+    .action(async (o: { item: string }) => {
+      const domain = createDomain(resolveCtx())
+      out(JSON.stringify(await domain.content.unpublish({ itemId: o.item })))
+    })
+  contentCmd
+    .command('schedule')
+    .requiredOption('--item <id>', 'content item id')
+    .requiredOption('--action <publish|unpublish>', 'schedule action')
+    .requiredOption('--revision <id>', 'pinned revision id')
+    .requiredOption('--run-at <iso>', 'run time')
+    .action(async (o: { item: string; action: string; revision: string; runAt: string }) => {
+      const domain = createDomain(resolveCtx())
+      out(JSON.stringify(await domain.content.schedule({
+        itemId: o.item,
+        action: o.action as 'publish' | 'unpublish',
+        revisionId: o.revision,
+        runAt: o.runAt,
+      })))
+    })
+  contentCmd
+    .command('seo-audit')
+    .requiredOption('--item <id>', 'content item id')
+    .action(async (o: { item: string }) => {
+      const domain = createDomain(resolveCtx())
+      out(JSON.stringify(await domain.content.runSeoAudit({ itemId: o.item })))
+    })
+  contentCmd
+    .command('asset-upload')
+    .requiredOption('--workspace <id>', 'workspace id')
+    .requiredOption('--filename <name>', 'file name')
+    .requiredOption('--mime <mime>', 'MIME type')
+    .requiredOption('--size-bytes <n>', 'declared byte size', (v) => parseInt(v, 10))
+    .action(async (o: { workspace: string; filename: string; mime: string; sizeBytes: number }) => {
+      const domain = createDomain(resolveCtx())
+      out(JSON.stringify(await domain.content.issueAssetUpload({
+        workspaceId: o.workspace,
+        filename: o.filename,
+        mime: o.mime,
+        sizeBytes: o.sizeBytes,
+      })))
+    })
+
   program
     .command('search <query>')
     .requiredOption('--workspace <id>', 'workspace id')
