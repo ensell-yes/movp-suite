@@ -84,3 +84,92 @@ $$;
 
 revoke all on function public.can_access_entity(text, uuid, uuid) from public, anon;
 grant execute on function public.can_access_entity(text, uuid, uuid) to authenticated;
+
+-- RLS overrides: tighten the internal task tables.
+-- KEEP the generated task_rw is_workspace_member policy for public.task.
+
+drop policy if exists task_revision_rw on public.task_revision;
+create policy task_revision_select on public.task_revision for select to authenticated
+  using (public.is_workspace_member(workspace_id));
+create policy task_revision_insert on public.task_revision for insert to authenticated
+  with check (public.is_workspace_member(workspace_id));
+
+drop policy if exists task_status_history_rw on public.task_status_history;
+create policy task_status_history_select on public.task_status_history for select to authenticated
+  using (public.is_workspace_member(workspace_id));
+create policy task_status_history_insert on public.task_status_history for insert to authenticated
+  with check (public.is_workspace_member(workspace_id));
+
+drop policy if exists task_assignment_rw on public.task_assignment;
+create policy task_assignment_select on public.task_assignment for select to authenticated
+  using (public.is_workspace_member(workspace_id));
+create policy task_assignment_insert on public.task_assignment for insert to authenticated
+  with check (
+    public.is_workspace_member(task_assignment.workspace_id)
+    and public.can_access_entity('task', task_assignment.task_id, task_assignment.workspace_id)
+    and exists (
+      select 1 from public.workspace_membership m
+      where m.workspace_id = task_assignment.workspace_id
+        and m.user_id = task_assignment.assignee_user_id
+    )
+  );
+create policy task_assignment_delete on public.task_assignment for delete to authenticated
+  using (public.is_workspace_member(workspace_id));
+
+drop policy if exists task_observer_rw on public.task_observer;
+create policy task_observer_select on public.task_observer for select to authenticated
+  using (public.is_workspace_member(workspace_id));
+create policy task_observer_insert on public.task_observer for insert to authenticated
+  with check (
+    public.is_workspace_member(task_observer.workspace_id)
+    and public.can_access_entity('task', task_observer.task_id, task_observer.workspace_id)
+    and exists (
+      select 1 from public.workspace_membership m
+      where m.workspace_id = task_observer.workspace_id
+        and m.user_id = task_observer.observer_user_id
+    )
+  );
+create policy task_observer_delete on public.task_observer for delete to authenticated
+  using (public.is_workspace_member(workspace_id));
+
+drop policy if exists task_dependency_rw on public.task_dependency;
+create policy task_dependency_select on public.task_dependency for select to authenticated
+  using (public.is_workspace_member(workspace_id));
+create policy task_dependency_insert on public.task_dependency for insert to authenticated
+  with check (
+    public.is_workspace_member(task_dependency.workspace_id)
+    and public.can_access_entity('task', task_dependency.task_id, task_dependency.workspace_id)
+    and public.can_access_entity('task', task_dependency.blocker_id, task_dependency.workspace_id)
+  );
+create policy task_dependency_delete on public.task_dependency for delete to authenticated
+  using (public.is_workspace_member(workspace_id));
+
+drop policy if exists task_attachment_rw on public.task_attachment;
+create policy task_attachment_select on public.task_attachment for select to authenticated
+  using (public.is_workspace_member(workspace_id));
+create policy task_attachment_insert on public.task_attachment for insert to authenticated
+  with check (
+    public.can_access_entity('task', task_attachment.task_id, task_attachment.workspace_id)
+    and task_attachment.uploaded_by = (select auth.uid())
+  );
+create policy task_attachment_delete on public.task_attachment for delete to authenticated
+  using (
+    public.is_workspace_member(task_attachment.workspace_id)
+    and task_attachment.uploaded_by = (select auth.uid())
+  );
+
+drop policy if exists task_status_option_rw on public.task_status_option;
+create policy task_status_option_select on public.task_status_option for select to authenticated
+  using (public.is_workspace_member(workspace_id));
+create policy task_status_option_insert on public.task_status_option for insert to authenticated
+  with check (public.is_workspace_member(workspace_id));
+create policy task_status_option_update on public.task_status_option for update to authenticated
+  using (public.is_workspace_member(workspace_id)) with check (public.is_workspace_member(workspace_id));
+
+drop policy if exists task_priority_option_rw on public.task_priority_option;
+create policy task_priority_option_select on public.task_priority_option for select to authenticated
+  using (public.is_workspace_member(workspace_id));
+create policy task_priority_option_insert on public.task_priority_option for insert to authenticated
+  with check (public.is_workspace_member(workspace_id));
+create policy task_priority_option_update on public.task_priority_option for update to authenticated
+  using (public.is_workspace_member(workspace_id)) with check (public.is_workspace_member(workspace_id));
