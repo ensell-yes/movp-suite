@@ -1,0 +1,42 @@
+---
+import Base from '../../layouts/Base.astro'
+import AuthFailure from '../../components/states/AuthFailure.astro'
+import ErrorRetry from '../../components/states/ErrorRetry.astro'
+import EmptyState from '../../components/states/EmptyState.astro'
+import { readServerEnv } from '../../lib/env.ts'
+import { getSessionToken } from '../../lib/session.ts'
+import { gqlRequest, clampFirst } from '../../lib/graphql.ts'
+import { TASKS_QUERY, type TaskPage } from '../../lib/task-queries.ts'
+
+const token = getSessionToken(Astro.cookies)
+let state: 'auth' | 'error' | 'empty' | 'ok' = 'auth'
+let tasks: TaskPage['items'] = []
+
+if (token) {
+  const { graphqlEndpoint, workspaceId } = readServerEnv()
+  const first = clampFirst(Number(Astro.url.searchParams.get('first') ?? '') || undefined)
+  const r = await gqlRequest<{ tasks: TaskPage }>({ endpoint: graphqlEndpoint, token }, TASKS_QUERY, { workspaceId, first })
+  if (!r.ok) state = 'error'
+  else {
+    tasks = r.data.tasks.items
+    state = tasks.length === 0 ? 'empty' : 'ok'
+  }
+}
+---
+<Base title="Tasks">
+  <h1 tabindex="-1" id="tasks-heading">Tasks</h1>
+  <p><a href="/tasks/board">Board</a> <a href="/inbox?tab=assigned">Assigned inbox</a></p>
+  {state === 'auth' && <AuthFailure resource="tasks" />}
+  {state === 'error' && <ErrorRetry message="Could not load tasks." retryHref={Astro.url.pathname + Astro.url.search} />}
+  {state === 'empty' && <EmptyState message="No tasks yet." />}
+  {state === 'ok' && (
+    <ul data-testid="tasks-list">
+      {tasks.map((task) => (
+        <li>
+          <a href={`/tasks/${task.id}`}>{task.title}</a>
+          <small>{task.due_date ? ` due ${task.due_date}` : ''}</small>
+        </li>
+      ))}
+    </ul>
+  )}
+</Base>

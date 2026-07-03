@@ -1,0 +1,45 @@
+---
+import Base from '../../layouts/Base.astro'
+import AuthFailure from '../../components/states/AuthFailure.astro'
+import ErrorRetry from '../../components/states/ErrorRetry.astro'
+import EmptyState from '../../components/states/EmptyState.astro'
+import { readServerEnv } from '../../lib/env.ts'
+import { getSessionToken } from '../../lib/session.ts'
+import { gqlRequest } from '../../lib/graphql.ts'
+import { TASK_BOARD_QUERY, type TaskBoardColumn } from '../../lib/task-queries.ts'
+
+const token = getSessionToken(Astro.cookies)
+let state: 'auth' | 'error' | 'empty' | 'ok' = 'auth'
+let columns: TaskBoardColumn[] = []
+
+if (token) {
+  const { graphqlEndpoint, workspaceId } = readServerEnv()
+  const r = await gqlRequest<{ taskBoard: TaskBoardColumn[] }>({ endpoint: graphqlEndpoint, token }, TASK_BOARD_QUERY, { workspaceId })
+  if (!r.ok) state = 'error'
+  else {
+    columns = r.data.taskBoard
+    state = columns.length === 0 ? 'empty' : 'ok'
+  }
+}
+---
+<Base title="Task Board">
+  <h1 tabindex="-1" id="task-board-heading">Task Board</h1>
+  <p><a href="/tasks">List</a></p>
+  {state === 'auth' && <AuthFailure resource="task board" />}
+  {state === 'error' && <ErrorRetry message="Could not load the task board." retryHref={Astro.url.pathname} />}
+  {state === 'empty' && <EmptyState message="No task statuses yet." />}
+  {state === 'ok' && (
+    <section data-testid="task-board" class="board" aria-label="Task board columns">
+      {columns.map((col) => (
+        <section class="board-column" aria-labelledby={`status-${col.status.id}`}>
+          <h2 id={`status-${col.status.id}`}>{col.status.label}</h2>
+          {col.tasks.length === 0 ? <p>No tasks</p> : (
+            <ul>
+              {col.tasks.map((task) => <li><a href={`/tasks/${task.id}`}>{task.title}</a></li>)}
+            </ul>
+          )}
+        </section>
+      ))}
+    </section>
+  )}
+</Base>

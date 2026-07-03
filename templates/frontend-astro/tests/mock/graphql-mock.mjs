@@ -18,6 +18,32 @@ const notes = [
     updated_at: '2026-07-01T00:00:00Z',
   },
 ]
+const tasks = [
+  {
+    id: 't1',
+    title: 'Ship task',
+    status_id: 's1',
+    priority_id: 'p1',
+    parent_id: null,
+    description: 'Task body text',
+    due_date: '2026-07-10',
+    dependency_blocked: false,
+    completed_at: null,
+  },
+  {
+    id: 't2',
+    title: 'Write subtask',
+    status_id: 's1',
+    priority_id: 'p1',
+    parent_id: 't1',
+    description: 'Subtask body',
+    due_date: null,
+    dependency_blocked: false,
+    completed_at: null,
+  },
+]
+const statuses = [{ id: 's1', label: 'Todo', category: 'backlog', sort_order: 0 }]
+const comments = [{ id: 'c1', body: 'Looks good', author_id: 'u2', created_at: '2026-07-01T00:00:00Z' }]
 
 createServer(async (req, res) => {
   const url = new URL(req.url ?? '/', `http://127.0.0.1:${port}`)
@@ -47,6 +73,28 @@ createServer(async (req, res) => {
         ? []
         : [{ collection: 'note', id: 'n1', title: 'First note', snippet: 'Body text', score: 0.91 }]
     return json(res, 200, { data: { search: hits } })
+  }
+  if (query.includes('query Tasks') || query.includes('query Subtasks')) {
+    const parentId = parsed.variables?.parentId
+    const items = scenario === 'empty' ? [] : tasks.filter((task) => (parentId ? task.parent_id === parentId : task.parent_id === null))
+    return json(res, 200, { data: { tasks: { items, nextCursor: null } } })
+  }
+  if (query.includes('query TaskBoard')) {
+    return json(res, 200, {
+      data: {
+        taskBoard: scenario === 'empty' ? [] : statuses.map((status) => ({ status, tasks: tasks.filter((task) => task.parent_id === null) })),
+      },
+    })
+  }
+  if (query.includes('query Task')) {
+    return json(res, 200, { data: { task: scenario === 'empty' ? null : tasks.find((task) => task.id === parsed.variables?.id) ?? null } })
+  }
+  if (query.includes('query Comments')) {
+    return json(res, 200, { data: { comments: scenario === 'empty' ? [] : comments } })
+  }
+  if (query.includes('query Inbox')) {
+    const inbox = scenario === 'empty' ? [] : [{ kind: 'task.assigned', entity_type: 'task', entity_id: 't1', ref_id: 'a1', created_at: '2026-07-01T00:00:00Z' }]
+    return json(res, 200, { data: { inbox } })
   }
   return json(res, 200, { data: {} })
 }).listen(port, '127.0.0.1')

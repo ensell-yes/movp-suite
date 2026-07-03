@@ -1,0 +1,46 @@
+---
+import Base from '../layouts/Base.astro'
+import AuthFailure from '../components/states/AuthFailure.astro'
+import ErrorRetry from '../components/states/ErrorRetry.astro'
+import EmptyState from '../components/states/EmptyState.astro'
+import { readServerEnv } from '../lib/env.ts'
+import { getSessionToken } from '../lib/session.ts'
+import { gqlRequest } from '../lib/graphql.ts'
+import { INBOX_QUERY, type InboxItem } from '../lib/task-queries.ts'
+
+const tabs = ['all', 'mentions', 'saved', 'assigned'] as const
+const requested = Astro.url.searchParams.get('tab') ?? 'all'
+const active = tabs.includes(requested as typeof tabs[number]) ? requested : 'all'
+const token = getSessionToken(Astro.cookies)
+let state: 'auth' | 'error' | 'empty' | 'ok' = 'auth'
+let items: InboxItem[] = []
+
+if (token) {
+  const { graphqlEndpoint, workspaceId } = readServerEnv()
+  const r = await gqlRequest<{ inbox: InboxItem[] }>({ endpoint: graphqlEndpoint, token }, INBOX_QUERY, { workspaceId, tab: active })
+  if (!r.ok) state = 'error'
+  else {
+    items = r.data.inbox
+    state = items.length === 0 ? 'empty' : 'ok'
+  }
+}
+---
+<Base title="Inbox">
+  <h1 tabindex="-1" id="inbox-heading">Inbox</h1>
+  <nav aria-label="Inbox tabs">
+    {tabs.map((tab) => <a href={`/inbox?tab=${tab}`} aria-current={active === tab ? 'page' : undefined}>{tab}</a>)}
+  </nav>
+  {state === 'auth' && <AuthFailure resource="inbox" />}
+  {state === 'error' && <ErrorRetry message="Could not load inbox." retryHref={Astro.url.pathname + Astro.url.search} />}
+  {state === 'empty' && <EmptyState message="No inbox items." />}
+  {state === 'ok' && (
+    <ul data-testid="inbox-list">
+      {items.map((item) => (
+        <li>
+          <a href={item.entity_type === 'task' ? `/tasks/${item.entity_id}` : '#'}>{item.kind}</a>
+          <small>{item.created_at}</small>
+        </li>
+      ))}
+    </ul>
+  )}
+</Base>
