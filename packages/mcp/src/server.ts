@@ -8,6 +8,8 @@ export interface McpCtx {
   db: SupabaseClient
   userId: string
   embedder?: EmbeddingProvider
+  accessToken?: string
+  assetsFnUrl?: string
 }
 
 type AnyService = CollectionService<Record<string, unknown>, Record<string, unknown>, Record<string, unknown>>
@@ -33,7 +35,12 @@ function text(value: unknown) {
 
 export function buildMcpServer(schema: MovpSchema, ctx: McpCtx): McpServer {
   const server = new McpServer({ name: 'movp', version: '0.1.0' })
-  const domain = createDomain({ db: ctx.db, userId: ctx.userId }, { embedder: ctx.embedder })
+  const domain = createDomain({
+    db: ctx.db,
+    userId: ctx.userId,
+    accessToken: ctx.accessToken,
+    assetsFnUrl: ctx.assetsFnUrl,
+  }, { embedder: ctx.embedder })
 
   for (const c of schema.collections) {
     if (c.internal) continue
@@ -270,6 +277,139 @@ export function buildMcpServer(schema: MovpSchema, ctx: McpCtx): McpServer {
       inputSchema: { taskId: z.string(), body: z.string() },
     },
     async ({ taskId, body }) => text(await domain.task.updateDescription(taskId, body)),
+  )
+
+  server.registerTool(
+    'content.create_type',
+    {
+      title: 'Create content type',
+      description: 'Define a content type with a JSON field schema',
+      inputSchema: { workspaceId: z.string(), key: z.string(), label: z.string(), fieldSchema: z.string() },
+    },
+    async ({ workspaceId, key, label, fieldSchema }) =>
+      text(await domain.content.createType({ workspaceId, key, label, fieldSchema: JSON.parse(fieldSchema) })),
+  )
+
+  server.registerTool(
+    'content.create',
+    {
+      title: 'Create content',
+      description: 'Create a content item with JSON data',
+      inputSchema: { workspaceId: z.string(), contentTypeId: z.string(), slug: z.string(), data: z.string() },
+    },
+    async ({ workspaceId, contentTypeId, slug, data }) =>
+      text(await domain.content.create({ workspaceId, contentTypeId, slug, data: JSON.parse(data) })),
+  )
+
+  server.registerTool(
+    'content.update',
+    {
+      title: 'Update content',
+      description: 'Update a content item with JSON data',
+      inputSchema: { id: z.string(), data: z.string() },
+    },
+    async ({ id, data }) => text(await domain.content.update({ itemId: id, data: JSON.parse(data) })),
+  )
+
+  server.registerTool(
+    'content.get',
+    { title: 'Get content', description: 'Fetch a content item by id', inputSchema: { id: z.string() } },
+    async ({ id }) => text(await domain.content.get(id)),
+  )
+
+  server.registerTool(
+    'content.list',
+    {
+      title: 'List content',
+      description: 'List content items',
+      inputSchema: {
+        workspaceId: z.string(),
+        contentTypeId: z.string().optional(),
+        status: z.string().optional(),
+        first: z.number().optional(),
+      },
+    },
+    async ({ workspaceId, contentTypeId, status, first }) =>
+      text(await domain.content.list({ workspaceId, contentTypeId, status, first })),
+  )
+
+  server.registerTool(
+    'content.submit_for_approval',
+    {
+      title: 'Submit content for approval',
+      description: 'Submit a content item for approval',
+      inputSchema: { itemId: z.string() },
+    },
+    async ({ itemId }) => text(await domain.content.submitForApproval({ itemId })),
+  )
+
+  server.registerTool(
+    'content.decide_approval',
+    {
+      title: 'Decide content approval',
+      description: 'Approve or reject a pending content approval',
+      inputSchema: { approvalId: z.string(), vote: z.enum(['approve', 'reject']) },
+    },
+    async ({ approvalId, vote }) => text(await domain.content.decideApproval({ approvalId, vote })),
+  )
+
+  server.registerTool(
+    'content.publish',
+    { title: 'Publish content', description: 'Publish content', inputSchema: { itemId: z.string() } },
+    async ({ itemId }) => text(await domain.content.publish({ itemId })),
+  )
+
+  server.registerTool(
+    'content.unpublish',
+    { title: 'Unpublish content', description: 'Unpublish content', inputSchema: { itemId: z.string() } },
+    async ({ itemId }) => text(await domain.content.unpublish({ itemId })),
+  )
+
+  server.registerTool(
+    'content.schedule',
+    {
+      title: 'Schedule content',
+      description: 'Schedule a pinned content revision for publish or unpublish',
+      inputSchema: {
+        itemId: z.string(),
+        action: z.enum(['publish', 'unpublish']),
+        revisionId: z.string(),
+        runAt: z.string(),
+      },
+    },
+    async ({ itemId, action, revisionId, runAt }) =>
+      text(await domain.content.schedule({ itemId, action, revisionId, runAt })),
+  )
+
+  server.registerTool(
+    'content.run_seo_audit',
+    { title: 'Run content SEO audit', description: 'Run advisory SEO audit', inputSchema: { itemId: z.string() } },
+    async ({ itemId }) => text(await domain.content.runSeoAudit({ itemId })),
+  )
+
+  server.registerTool(
+    'content.issue_asset_upload',
+    {
+      title: 'Issue content asset upload',
+      description: 'Create a bounded presigned asset upload URL',
+      inputSchema: { workspaceId: z.string(), filename: z.string(), mime: z.string(), sizeBytes: z.number() },
+    },
+    async ({ workspaceId, filename, mime, sizeBytes }) =>
+      text(await domain.content.issueAssetUpload({ workspaceId, filename, mime, sizeBytes })),
+  )
+
+  server.registerTool(
+    'content.list_approvals',
+    {
+      title: 'List content approvals',
+      description: 'List content approvals',
+      inputSchema: {
+        workspaceId: z.string(),
+        itemId: z.string().optional(),
+        state: z.enum(['pending', 'approved', 'rejected', 'superseded']).optional(),
+      },
+    },
+    async ({ workspaceId, itemId, state }) => text(await domain.content.listApprovals({ workspaceId, itemId, state })),
   )
 
   return server

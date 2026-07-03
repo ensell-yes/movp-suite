@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { schema } from '@movp/core-schema'
+import { createDomain } from '@movp/domain'
 import { buildMcpServer } from '../src/index.ts'
 
 const created = { id: 'n1', workspace_id: 'w', title: 'Hello' }
@@ -12,6 +13,9 @@ const inbox = vi.fn(async () => [
 ])
 const taskCreate = vi.fn(async () => ({ id: 't1', title: 'Ship it', status_id: 's1' }))
 const taskBoard = vi.fn(async () => [{ status: { id: 's1', label: 'Todo' }, tasks: [{ id: 't1' }] }])
+const contentCreate = vi.fn(async () => ({ id: 'ci1', slug: 'hello', status: 'draft' }))
+const contentPublish = vi.fn(async () => ({ id: 'ci1', status: 'published' }))
+const contentIssueAsset = vi.fn(async () => ({ uploadUrl: 'https://r2/put', assetId: 'a1', r2Key: 'w/a1' }))
 
 function crud() {
   return {
@@ -24,7 +28,7 @@ function crud() {
 }
 
 vi.mock('@movp/domain', () => ({
-  createDomain: () => ({
+  createDomain: vi.fn(() => ({
     note: crud(),
     tag: crud(),
     task_status_option: crud(),
@@ -55,7 +59,32 @@ vi.mock('@movp/domain', () => ({
       updateDescription: vi.fn(async () => ({ id: 't1' })),
       attach: vi.fn(),
     },
-  }),
+    content: {
+      createType: vi.fn(async () => ({ id: 'ct1', key: 'article' })),
+      create: contentCreate,
+      update: vi.fn(async () => ({ id: 'ci1' })),
+      get: vi.fn(async () => ({ id: 'ci1' })),
+      list: vi.fn(async () => ({ items: [{ id: 'ci1' }], nextCursor: null })),
+      listTypes: vi.fn(async () => ({ items: [{ id: 'ct1' }], nextCursor: null })),
+      listRevisions: vi.fn(async () => ({ items: [{ id: 'r1' }], nextCursor: null })),
+      listApprovals: vi.fn(async () => ({ items: [{ id: 'ap1' }], nextCursor: null })),
+      submitForApproval: vi.fn(async () => ({ id: 'ci1', status: 'in_review' })),
+      decideApproval: vi.fn(async () => ({ id: 'ap1', content_item_id: 'ci1', state: 'approved', approved_revision_id: 'r2' })),
+      publish: contentPublish,
+      unpublish: vi.fn(async () => ({ id: 'ci1', status: 'draft' })),
+      getPublished: vi.fn(async () => ({ item: { id: 'ci1' }, revision: { id: 'r2', data: { headline: 'v2' }, content_hash: 'h2' } })),
+      schedule: vi.fn(async () => ({ id: 'sch1', content_item_id: 'ci1', revision_id: 'r2', action: 'publish', state: 'scheduled' })),
+      runSeoAudit: vi.fn(async () => ({ score: 88, checklist: [{ rule: 'title_length', pass: true }] })),
+      issueAssetUpload: contentIssueAsset,
+      finalizeAsset: vi.fn(async () => ({ id: 'a1', r2_key: 'w/a1', mime: 'image/png', size_bytes: 10 })),
+      createCollection: vi.fn(),
+      addToCollection: vi.fn(),
+      reorderCollection: vi.fn(),
+      linkAsset: vi.fn(),
+      linkItem: vi.fn(),
+      linkEditorialTask: vi.fn(),
+    },
+  })),
 }))
 
 describe('buildMcpServer', () => {
@@ -149,5 +178,59 @@ describe('buildMcpServer', () => {
     const boardRes = await client.callTool({ name: 'task.board', arguments: { workspaceId: 'w' } })
     expect(taskBoard).toHaveBeenCalledWith({ workspaceId: 'w' })
     expect(JSON.stringify(boardRes.content)).toContain('s1')
+  })
+
+  it('registers and calls the custom content tools', async () => {
+    vi.mocked(createDomain).mockClear()
+    const client = new Client({ name: 'test', version: '0.0.0' })
+    const server = buildMcpServer(schema, {
+      db: {} as never,
+      userId: 'u',
+      accessToken: 'test',
+      assetsFnUrl: 'http://localhost:54321/functions/v1/content-assets',
+    })
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)])
+
+    const names = (await client.listTools()).tools.map((t) => t.name)
+    expect(names).toEqual(expect.arrayContaining([
+      'content.create_type',
+      'content.create',
+      'content.update',
+      'content.get',
+      'content.list',
+      'content.submit_for_approval',
+      'content.decide_approval',
+      'content.publish',
+      'content.unpublish',
+      'content.schedule',
+      'content.run_seo_audit',
+      'content.issue_asset_upload',
+      'content.list_approvals',
+    ]))
+    expect(names).not.toContain('content_item.create')
+    expect(names).not.toContain('content_revision.create')
+
+    const createRes = await client.callTool({
+      name: 'content.create',
+      arguments: { workspaceId: 'w', contentTypeId: 'ct1', slug: 'hello', data: '{"headline":"Hi"}' },
+    })
+    expect(contentCreate).toHaveBeenCalledWith({ workspaceId: 'w', contentTypeId: 'ct1', slug: 'hello', data: { headline: 'Hi' } })
+    expect(JSON.stringify(createRes.content)).toContain('ci1')
+
+    const publishRes = await client.callTool({ name: 'content.publish', arguments: { itemId: 'ci1' } })
+    expect(contentPublish).toHaveBeenCalledWith({ itemId: 'ci1' })
+    expect(JSON.stringify(publishRes.content)).toContain('published')
+
+    const assetRes = await client.callTool({
+      name: 'content.issue_asset_upload',
+      arguments: { workspaceId: 'w', filename: 'x.png', mime: 'image/png', sizeBytes: 10 },
+    })
+    expect(contentIssueAsset).toHaveBeenCalledWith({ workspaceId: 'w', filename: 'x.png', mime: 'image/png', sizeBytes: 10 })
+    expect(JSON.stringify(assetRes.content)).toContain('r2/put')
+    expect(vi.mocked(createDomain)).toHaveBeenCalledWith(
+      expect.objectContaining({ accessToken: 'test', assetsFnUrl: 'http://localhost:54321/functions/v1/content-assets' }),
+      expect.anything(),
+    )
   })
 })

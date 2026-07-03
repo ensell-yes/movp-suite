@@ -27,7 +27,13 @@ Deno.serve(async (req: Request): Promise<Response> => {
     })
   }
 
-  const server = buildMcpServer(schema, { db: principal.db, userId: principal.userId, embedder: new GteSmallProvider() })
+  const server = buildMcpServer(schema, {
+    db: principal.db,
+    userId: principal.userId,
+    embedder: new GteSmallProvider(),
+    accessToken: req.headers.get('Authorization')?.replace(/^Bearer\s+/i, ''),
+    assetsFnUrl: `${env.SUPABASE_URL}/functions/v1/content-assets`,
+  })
   const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined })
   await server.connect(transport)
   return await transport.handleRequest(req)
