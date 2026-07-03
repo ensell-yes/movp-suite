@@ -1,5 +1,8 @@
 import { comment } from './collections/comment.ts'
+import { contentApproval } from './collections/content_approval.ts'
+import { contentApprovalVote } from './collections/content_approval_vote.ts'
 import { contentItem } from './collections/content_item.ts'
+import { contentPublishEvent } from './collections/content_publish_event.ts'
 import { contentRevision } from './collections/content_revision.ts'
 import { contentType } from './collections/content_type.ts'
 import { mention } from './collections/mention.ts'
@@ -39,4 +42,7 @@ export const schema = defineSchema([
   contentType,
   contentItem,
   contentRevision,
+  contentApproval,
+  contentApprovalVote,
+  contentPublishEvent,
 ])

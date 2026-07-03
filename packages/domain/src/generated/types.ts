@@ -529,3 +529,93 @@ export interface ContentRevisionUpdate {
   content_item_id?: string
   parent_id?: string
 }
+
+export interface ContentApprovalRow {
+  id: string
+  workspace_id: string
+  state: 'pending' | 'approved' | 'rejected' | 'superseded'
+  policy: 'single' | 'multi' | 'moderation'
+  approvals_required: number
+  approved_content_hash: string | null
+  decided_at: string | null
+  decided_by: string | null
+  content_item_id: string
+  approved_revision_id: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface ContentApprovalCreate {
+  workspace_id: string
+  state?: 'pending' | 'approved' | 'rejected' | 'superseded'
+  policy: 'single' | 'multi' | 'moderation'
+  approvals_required?: number
+  approved_content_hash?: string
+  decided_at?: string
+  decided_by?: string
+  content_item_id: string
+  approved_revision_id?: string
+}
+
+export interface ContentApprovalUpdate {
+  state?: 'pending' | 'approved' | 'rejected' | 'superseded'
+  policy?: 'single' | 'multi' | 'moderation'
+  approvals_required?: number
+  approved_content_hash?: string
+  decided_at?: string
+  decided_by?: string
+  content_item_id?: string
+  approved_revision_id?: string
+}
+
+export interface ContentApprovalVoteRow {
+  id: string
+  workspace_id: string
+  voter_id: string
+  vote: 'approve' | 'reject'
+  approval_id: string
+  created_at: string
+  updated_at: string
+}
+
+export interface ContentApprovalVoteCreate {
+  workspace_id: string
+  voter_id: string
+  vote: 'approve' | 'reject'
+  approval_id: string
+}
+
+export interface ContentApprovalVoteUpdate {
+  voter_id?: string
+  vote?: 'approve' | 'reject'
+  approval_id?: string
+}
+
+export interface ContentPublishEventRow {
+  id: string
+  workspace_id: string
+  action: 'publish' | 'unpublish'
+  content_hash: string
+  actor_id: string
+  content_item_id: string
+  revision_id: string
+  created_at: string
+  updated_at: string
+}
+
+export interface ContentPublishEventCreate {
+  workspace_id: string
+  action: 'publish' | 'unpublish'
+  content_hash: string
+  actor_id: string
+  content_item_id: string
+  revision_id: string
+}
+
+export interface ContentPublishEventUpdate {
+  action?: 'publish' | 'unpublish'
+  content_hash?: string
+  actor_id?: string
+  content_item_id?: string
+  revision_id?: string
+}

@@ -1380,3 +1380,176 @@ on conflict (collection_name, name) do update set
   reporting_role = excluded.reporting_role,
   searchable = excluded.searchable,
   embeddable = excluded.embeddable;
+
+
+create table if not exists public.content_approval (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id uuid not null references public.workspace(id) on delete cascade,
+  state text not null default 'pending' check (state in ('pending', 'approved', 'rejected', 'superseded')),
+  policy text not null check (policy in ('single', 'multi', 'moderation')),
+  approvals_required numeric not null default 1,
+  approved_content_hash text,
+  decided_at timestamptz,
+  decided_by uuid,
+  content_item_id uuid not null references public.content_item(id) on delete cascade,
+  approved_revision_id uuid references public.content_revision(id) on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+alter table public.content_approval enable row level security;
+grant select, insert, update, delete on public.content_approval to authenticated;
+grant select, insert, update, delete on public.content_approval to service_role;
+create policy content_approval_rw on public.content_approval for all to authenticated
+  using (public.is_workspace_member(workspace_id))
+  with check (public.is_workspace_member(workspace_id));
+
+
+
+create or replace function public.content_approval_delete_chunks()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  delete from public.search_chunk where source_table = 'content_approval' and source_id = old.id;
+  return old;
+end;
+$$;
+revoke all on function public.content_approval_delete_chunks() from public, anon, authenticated;
+
+create trigger content_approval_delete_chunks_tg
+  after delete on public.content_approval
+  for each row execute function public.content_approval_delete_chunks();
+
+insert into public.movp_collections (name, label, label_plural, workspace_scoped)
+values ('content_approval', 'Content Approval', 'Content Approvals', true)
+on conflict (name) do update set label = excluded.label, label_plural = excluded.label_plural, workspace_scoped = excluded.workspace_scoped;
+
+insert into public.movp_fields (collection_name, name, type, label, cardinality, reporting_role, searchable, embeddable)
+values
+  ('content_approval', 'content_item', 'relation', 'Content Item', 'many-to-one', null, false, false),
+  ('content_approval', 'state', 'enum', 'State', null, 'dimension', false, false),
+  ('content_approval', 'policy', 'enum', 'Policy', null, 'dimension', false, false),
+  ('content_approval', 'approvals_required', 'number', 'Approvals Required', null, null, false, false),
+  ('content_approval', 'approved_revision', 'relation', 'Approved Revision', 'many-to-one', null, false, false),
+  ('content_approval', 'approved_content_hash', 'text', 'Approved Content Hash', null, null, false, false),
+  ('content_approval', 'decided_at', 'datetime', 'Decided At', null, null, false, false),
+  ('content_approval', 'decided_by', 'uuid', 'Decided By', null, null, false, false)
+on conflict (collection_name, name) do update set
+  type = excluded.type,
+  label = excluded.label,
+  cardinality = excluded.cardinality,
+  reporting_role = excluded.reporting_role,
+  searchable = excluded.searchable,
+  embeddable = excluded.embeddable;
+
+
+create table if not exists public.content_approval_vote (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id uuid not null references public.workspace(id) on delete cascade,
+  voter_id uuid not null,
+  vote text not null check (vote in ('approve', 'reject')),
+  approval_id uuid not null references public.content_approval(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+alter table public.content_approval_vote enable row level security;
+grant select, insert, update, delete on public.content_approval_vote to authenticated;
+grant select, insert, update, delete on public.content_approval_vote to service_role;
+create policy content_approval_vote_rw on public.content_approval_vote for all to authenticated
+  using (public.is_workspace_member(workspace_id))
+  with check (public.is_workspace_member(workspace_id));
+
+
+
+create or replace function public.content_approval_vote_delete_chunks()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  delete from public.search_chunk where source_table = 'content_approval_vote' and source_id = old.id;
+  return old;
+end;
+$$;
+revoke all on function public.content_approval_vote_delete_chunks() from public, anon, authenticated;
+
+create trigger content_approval_vote_delete_chunks_tg
+  after delete on public.content_approval_vote
+  for each row execute function public.content_approval_vote_delete_chunks();
+
+insert into public.movp_collections (name, label, label_plural, workspace_scoped)
+values ('content_approval_vote', 'Content Approval Vote', 'Content Approval Votes', true)
+on conflict (name) do update set label = excluded.label, label_plural = excluded.label_plural, workspace_scoped = excluded.workspace_scoped;
+
+insert into public.movp_fields (collection_name, name, type, label, cardinality, reporting_role, searchable, embeddable)
+values
+  ('content_approval_vote', 'approval', 'relation', 'Approval', 'many-to-one', null, false, false),
+  ('content_approval_vote', 'voter_id', 'uuid', 'Voter', null, null, false, false),
+  ('content_approval_vote', 'vote', 'enum', 'Vote', null, null, false, false)
+on conflict (collection_name, name) do update set
+  type = excluded.type,
+  label = excluded.label,
+  cardinality = excluded.cardinality,
+  reporting_role = excluded.reporting_role,
+  searchable = excluded.searchable,
+  embeddable = excluded.embeddable;
+
+
+create table if not exists public.content_publish_event (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id uuid not null references public.workspace(id) on delete cascade,
+  action text not null check (action in ('publish', 'unpublish')),
+  content_hash text not null,
+  actor_id uuid not null,
+  content_item_id uuid not null references public.content_item(id) on delete cascade,
+  revision_id uuid not null references public.content_revision(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+alter table public.content_publish_event enable row level security;
+grant select, insert, update, delete on public.content_publish_event to authenticated;
+grant select, insert, update, delete on public.content_publish_event to service_role;
+create policy content_publish_event_rw on public.content_publish_event for all to authenticated
+  using (public.is_workspace_member(workspace_id))
+  with check (public.is_workspace_member(workspace_id));
+
+
+
+create or replace function public.content_publish_event_delete_chunks()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  delete from public.search_chunk where source_table = 'content_publish_event' and source_id = old.id;
+  return old;
+end;
+$$;
+revoke all on function public.content_publish_event_delete_chunks() from public, anon, authenticated;
+
+create trigger content_publish_event_delete_chunks_tg
+  after delete on public.content_publish_event
+  for each row execute function public.content_publish_event_delete_chunks();
+
+insert into public.movp_collections (name, label, label_plural, workspace_scoped)
+values ('content_publish_event', 'Content Publish Event', 'Content Publish Events', true)
+on conflict (name) do update set label = excluded.label, label_plural = excluded.label_plural, workspace_scoped = excluded.workspace_scoped;
+
+insert into public.movp_fields (collection_name, name, type, label, cardinality, reporting_role, searchable, embeddable)
+values
+  ('content_publish_event', 'content_item', 'relation', 'Content Item', 'many-to-one', null, false, false),
+  ('content_publish_event', 'action', 'enum', 'Action', null, 'dimension', false, false),
+  ('content_publish_event', 'revision', 'relation', 'Revision', 'many-to-one', null, false, false),
+  ('content_publish_event', 'content_hash', 'text', 'Content Hash', null, null, false, false),
+  ('content_publish_event', 'actor_id', 'uuid', 'Actor', null, null, false, false)
+on conflict (collection_name, name) do update set
+  type = excluded.type,
+  label = excluded.label,
+  cardinality = excluded.cardinality,
+  reporting_role = excluded.reporting_role,
+  searchable = excluded.searchable,
+  embeddable = excluded.embeddable;
