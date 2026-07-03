@@ -135,3 +135,71 @@ drop trigger if exists task_status_transition_tg on public.task;
 create trigger task_status_transition_tg
   after update of status_id on public.task
   for each row execute function public.task_status_transition();
+
+-- recompute_task_blocked: recompute dependency_blocked; emit on false->true.
+create or replace function public.recompute_task_blocked(t uuid)
+returns void language plpgsql security definer set search_path = '' as $$
+declare
+  was_blocked boolean;
+  now_blocked boolean;
+  ws          uuid;
+  ttitle      text;
+  r           record;
+begin
+  select dependency_blocked, workspace_id, title into was_blocked, ws, ttitle
+    from public.task where id = t;
+  if not found then return; end if;
+
+  select exists (
+    select 1
+      from public.task_dependency d
+      join public.task bt on bt.id = d.blocker_id
+      join public.task_status_option so on so.id = bt.status_id
+     where d.task_id = t and so.category <> 'done'
+  ) into now_blocked;
+
+  if now_blocked is distinct from was_blocked then
+    update public.task set dependency_blocked = now_blocked where id = t;
+    if now_blocked then
+      for r in select recipient from public.task_notify_recipients(t) loop
+        perform public.emit_event('task.dependency_blocked', ws,
+          jsonb_build_object('id', t::text || ':' || r.recipient::text,
+                             'entity_type','task','entity_id', t::text,
+                             'recipient_user_id', r.recipient, 'title', ttitle),
+          gen_random_uuid()::text);
+      end loop;
+    end if;
+  end if;
+end; $$;
+revoke all on function public.recompute_task_blocked(uuid) from public, anon, authenticated;
+
+create or replace function public.task_dependency_recompute()
+returns trigger language plpgsql security definer set search_path = '' as $$
+begin
+  if tg_op = 'DELETE' then
+    perform public.recompute_task_blocked(old.task_id);
+    return old;
+  end if;
+  perform public.recompute_task_blocked(new.task_id);
+  return new;
+end; $$;
+revoke all on function public.task_dependency_recompute() from public, anon, authenticated;
+drop trigger if exists task_dependency_recompute_tg on public.task_dependency;
+create trigger task_dependency_recompute_tg
+  after insert or delete on public.task_dependency
+  for each row execute function public.task_dependency_recompute();
+
+create or replace function public.task_status_recompute_dependents()
+returns trigger language plpgsql security definer set search_path = '' as $$
+declare r record;
+begin
+  for r in select distinct d.task_id from public.task_dependency d where d.blocker_id = new.id loop
+    perform public.recompute_task_blocked(r.task_id);
+  end loop;
+  return new;
+end; $$;
+revoke all on function public.task_status_recompute_dependents() from public, anon, authenticated;
+drop trigger if exists task_status_recompute_dependents_tg on public.task;
+create trigger task_status_recompute_dependents_tg
+  after update of status_id on public.task
+  for each row execute function public.task_status_recompute_dependents();
