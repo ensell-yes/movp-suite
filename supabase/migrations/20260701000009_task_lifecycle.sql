@@ -203,3 +203,37 @@ drop trigger if exists task_status_recompute_dependents_tg on public.task;
 create trigger task_status_recompute_dependents_tg
   after update of status_id on public.task
   for each row execute function public.task_status_recompute_dependents();
+
+-- emit_due_soon: notify owners+observers of tasks due within one day.
+create or replace function public.emit_due_soon()
+returns void language plpgsql security definer set search_path = '' as $$
+declare
+  t record;
+  r record;
+begin
+  for t in
+    select tk.id, tk.workspace_id, tk.title
+      from public.task tk
+      join public.task_status_option so on so.id = tk.status_id
+     where tk.due_date is not null
+       and tk.due_date <= (current_date + 1)
+       and so.category <> 'done'
+       and tk.due_soon_notified_at is null
+  loop
+    for r in select recipient from public.task_notify_recipients(t.id) loop
+      perform public.emit_event('task.due_soon', t.workspace_id,
+        jsonb_build_object('id', t.id::text || ':' || r.recipient::text,
+                           'entity_type','task','entity_id', t.id::text,
+                           'recipient_user_id', r.recipient, 'title', t.title),
+        gen_random_uuid()::text);
+    end loop;
+    update public.task set due_soon_notified_at = now() where id = t.id;
+  end loop;
+end; $$;
+revoke all on function public.emit_due_soon() from public, anon, authenticated;
+
+-- DEPLOY-TIME CRON (documentation only; not applied by this migration).
+-- Schedule out-of-band so `supabase db diff` stays empty and no secret is
+-- committed. At deploy time, with service credentials sourced outside git:
+--   select cron.schedule('task-due-soon', '*/15 * * * *', $cron$ select public.emit_due_soon(); $cron$);
+-- pgTAP/e2e call `select public.emit_due_soon();` directly.

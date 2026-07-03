@@ -1,5 +1,5 @@
 begin;
-select plan(18);
+select plan(21);
 
 -- Shared seed (as the table owner; RLS bypassed).
 insert into public.workspace (id, name) values
@@ -124,6 +124,27 @@ select is((select dependency_blocked from public.task where id='00000004-0000-00
 select is((select count(*)::int from movp_internal.movp_events
            where type='task.dependency_blocked' and payload->>'entity_id'='00000004-0000-0000-0000-000000000000'),
           2, 'unblocking emits no new task.dependency_blocked event');
+
+-- Task 5: emit_due_soon (T5 due tomorrow, status active).
+insert into public.task (id, workspace_id, title, status_id, priority_id, due_date) values
+  ('00000005-0000-0000-0000-000000000000','11111111-1111-1111-1111-111111111111',
+   'Due Soon Task','0000000a-0000-0000-0000-000000000000','0000000e-0000-0000-0000-000000000000', current_date + 1);
+insert into public.task_assignment (workspace_id, task_id, assignee_user_id, role) values
+  ('11111111-1111-1111-1111-111111111111','00000005-0000-0000-0000-000000000000',
+   'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','owner');
+insert into public.task_observer (workspace_id, task_id, observer_user_id) values
+  ('11111111-1111-1111-1111-111111111111','00000005-0000-0000-0000-000000000000',
+   'dddddddd-dddd-dddd-dddd-dddddddddddd');
+select public.emit_due_soon();
+select is((select count(*)::int from movp_internal.movp_events
+           where type='task.due_soon' and payload->>'entity_id'='00000005-0000-0000-0000-000000000000'),
+          2, 'emit_due_soon emits task.due_soon per recipient');
+select isnt((select due_soon_notified_at from public.task where id='00000005-0000-0000-0000-000000000000'),
+            null, 'due_soon_notified_at is stamped after the scan');
+select public.emit_due_soon();
+select is((select count(*)::int from movp_internal.movp_events
+           where type='task.due_soon' and payload->>'entity_id'='00000005-0000-0000-0000-000000000000'),
+          2, 're-scanning emits no further task.due_soon');
 
 select * from finish();
 rollback;
