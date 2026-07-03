@@ -1,5 +1,5 @@
 begin;
-select plan(2);
+select plan(6);
 
 -- Shared seed (as the table owner; RLS bypassed).
 insert into public.workspace (id, name) values
@@ -34,6 +34,32 @@ select public.emit_event('task.created','11111111-1111-1111-1111-111111111111',
 select is((select count(*)::int from movp_internal.movp_jobs
            where kind='notify' and idempotency_key like 'task.created:%'),
           0, 'an event with no recipient enqueues no notify job');
+
+-- Task 2: insert-event triggers (task.created/assigned/observer_added).
+insert into public.task (id, workspace_id, title, status_id, priority_id) values
+  ('00000002-0000-0000-0000-000000000000','11111111-1111-1111-1111-111111111111',
+   'Task Two','0000000a-0000-0000-0000-000000000000','0000000e-0000-0000-0000-000000000000');
+insert into public.task_assignment (workspace_id, task_id, assignee_user_id, role) values
+  ('11111111-1111-1111-1111-111111111111','00000002-0000-0000-0000-000000000000',
+   'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','owner');
+insert into public.task_observer (workspace_id, task_id, observer_user_id) values
+  ('11111111-1111-1111-1111-111111111111','00000002-0000-0000-0000-000000000000',
+   'dddddddd-dddd-dddd-dddd-dddddddddddd');
+select is((select count(*)::int from movp_internal.movp_events
+           where type='task.created' and payload->>'id'='00000002-0000-0000-0000-000000000000'),
+          1, 'inserting a task emits task.created (audit-only)');
+select is((select count(*)::int from movp_internal.movp_events
+           where type='task.assigned' and payload->>'entity_id'='00000002-0000-0000-0000-000000000000'
+             and payload->>'recipient_user_id'='aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'),
+          1, 'task_assignment insert emits task.assigned carrying recipient_user_id');
+select is((select count(*)::int from movp_internal.movp_events
+           where type='task.observer_added' and payload->>'entity_id'='00000002-0000-0000-0000-000000000000'
+             and payload->>'recipient_user_id'='dddddddd-dddd-dddd-dddd-dddddddddddd'),
+          1, 'task_observer insert emits task.observer_added carrying recipient_user_id');
+select is((select count(*)::int from movp_internal.movp_jobs
+           where kind='notify' and idempotency_key='task.assigned:00000002-0000-0000-0000-000000000000:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+             and payload->>'recipient_user_id'='aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'),
+          1, 'the task.assigned notify job uses a per-recipient idempotency key');
 
 select * from finish();
 rollback;
