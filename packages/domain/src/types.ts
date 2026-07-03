@@ -4,6 +4,7 @@ import type {
   ContentApprovalRow,
   ContentItemRow,
   ContentRevisionRow,
+  ContentScheduleRow,
   ContentTypeRow,
   NoteCreate,
   NoteRow,
@@ -151,6 +152,7 @@ export interface ContentService {
   unpublish(i: { itemId: string }): Promise<ContentItemRow>
   getPublished(id: string): Promise<{ item: ContentItemRow; revision: ContentRevisionRow } | null>
   listApprovals(a: { workspaceId: string; itemId?: string; state?: 'pending' | 'approved' | 'rejected' | 'superseded'; first?: number; after?: string | null }): Promise<Page<ContentApprovalRow>>
+  schedule(i: { itemId: string; action: 'publish' | 'unpublish'; revisionId: string; runAt: string }): Promise<ContentScheduleRow>
 }
 
 export interface Domain {

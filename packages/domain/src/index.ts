@@ -26,6 +26,7 @@ export type {
   ContentApprovalRow,
   ContentItemRow,
   ContentRevisionRow,
+  ContentScheduleRow,
   ContentTypeRow,
   NoteCreate,
   NoteRow,

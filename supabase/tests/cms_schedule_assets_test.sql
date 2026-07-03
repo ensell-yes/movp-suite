@@ -1,5 +1,5 @@
 begin;
-select plan(17);
+select plan(24);
 
 insert into public.workspace (id, name) values
   ('11111111-1111-1111-1111-111111111111','W1');
@@ -71,6 +71,40 @@ select throws_ok($$
   insert into public.content_seo (workspace_id, content_item_id)
   values ('11111111-1111-1111-1111-111111111111','00000001-0000-0000-0000-000000000000')
 $$, '23505', null, 'content_seo(content_item_id) is unique (one SEO row per item)');
+
+insert into public.content_schedule (id, workspace_id, content_item_id, action, revision_id, run_at, scheduled_by, state) values
+  ('000000e2-0000-0000-0000-000000000000','11111111-1111-1111-1111-111111111111',
+   '00000002-0000-0000-0000-000000000000','publish','000000a2-0000-0000-0000-000000000000',
+   now() - interval '1 minute','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','scheduled');
+select count(*) from public.claim_due_schedules(50);
+select public.run_scheduled_publish('000000e2-0000-0000-0000-000000000000');
+select is((select count(*)::int from public.content_publish_event
+           where content_item_id='00000002-0000-0000-0000-000000000000'
+             and revision_id='000000a2-0000-0000-0000-000000000000' and action='publish'),
+          1, 'a due schedule appends exactly one content_publish_event for the PINNED revision');
+select is((select status from public.content_item where id='00000002-0000-0000-0000-000000000000'),
+          'published', 'the scheduled publish advances content_item.status to published');
+select is((select count(*)::int from public.claim_due_schedules(50)), 0,
+          'a second claim finds nothing due (the row is already fired)');
+select is((select count(*)::int from public.content_publish_event
+           where content_item_id='00000002-0000-0000-0000-000000000000'
+             and revision_id='000000a2-0000-0000-0000-000000000000' and action='publish'),
+          1, 'a re-run claims nothing (fired) so the publish is exactly-once');
+select is((select count(*)::int from movp_internal.movp_events
+           where type='content.published' and payload->>'id'='00000002-0000-0000-0000-000000000000'),
+          1, 'exactly one content.published event');
+
+insert into public.content_schedule (id, workspace_id, content_item_id, action, revision_id, run_at, scheduled_by, state) values
+  ('000000e3-0000-0000-0000-000000000000','11111111-1111-1111-1111-111111111111',
+   '00000002-0000-0000-0000-000000000000','unpublish','000000a2-0000-0000-0000-000000000000',
+   now() - interval '1 minute','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','scheduled');
+select count(*) from public.claim_due_schedules(50);
+select public.run_scheduled_publish('000000e3-0000-0000-0000-000000000000');
+select is((select status from public.content_item where id='00000002-0000-0000-0000-000000000000'),
+          'archived', 'a scheduled unpublish sets content_item.status to archived');
+select is((select count(*)::int from movp_internal.movp_events
+           where type='content.unpublished' and payload->>'id'='00000002-0000-0000-0000-000000000000'),
+          1, 'a scheduled unpublish emits exactly one content.unpublished event');
 
 select * from finish();
 rollback;

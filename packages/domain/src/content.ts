@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import type { ContentApprovalRow, ContentItemRow, ContentRevisionRow, ContentTypeRow } from './generated/types.ts'
+import type { ContentApprovalRow, ContentItemRow, ContentRevisionRow, ContentScheduleRow, ContentTypeRow } from './generated/types.ts'
 import type { ContentService, DomainCtx } from './types.ts'
 
 const DEFAULT_PAGE = 20
@@ -301,6 +301,27 @@ export function makeContentService(ctx: DomainCtx): ContentService {
       const items = rows.length > first ? rows.slice(0, first) : rows
       const last = items.at(-1)
       return { items, nextCursor: rows.length > first && last ? encodeCursor(last.id) : null }
+    },
+
+    async schedule(input) {
+      const { data: item, error: itemError } = await ctx.db
+        .from('content_item')
+        .select('workspace_id')
+        .eq('id', input.itemId)
+        .single()
+      if (itemError) fail('schedule', itemError.code)
+      if (!item) throw new Error('domain.content.schedule: item_not_found')
+
+      const { data, error } = await ctx.db.from('content_schedule').insert({
+        workspace_id: (item as { workspace_id: string }).workspace_id,
+        content_item_id: input.itemId,
+        action: input.action,
+        revision_id: input.revisionId,
+        run_at: input.runAt,
+        scheduled_by: ctx.userId,
+      }).select('*').single()
+      if (error) fail('schedule', error.code)
+      return data as ContentScheduleRow
     },
   }
 }
