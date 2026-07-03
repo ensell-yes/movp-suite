@@ -200,6 +200,31 @@ echo "== [collab] a user.mentioned notify job carries recipient_user_id =="
 MENTION_JOBS="$(psql "$DB_URL" -tAc "select count(*) from movp_internal.movp_jobs where kind='notify' and payload->>'event'='user.mentioned' and payload ? 'recipient_user_id';")"
 [ "$(echo "$MENTION_JOBS" | tr -d '[:space:]')" -ge 1 ] || { echo "no user.mentioned notify job with recipient_user_id (got $MENTION_JOBS)"; exit 1; }
 
+echo "== [task] create a task (workspace defaults applied) =="
+TASK="$(post_graphql "{\"query\":\"mutation{createTask(workspaceId:\\\"$WS\\\", title:\\\"E2E task\\\"){id status_id current_revision_id}}\"}")"
+TASK_ID="$(echo "$TASK" | json_get data.createTask.id)"
+[ -n "$TASK_ID" ] || { echo "createTask failed: $TASK"; exit 1; }
+
+echo "== [task] assign USER2 -> a task.assigned notify job carries recipient_user_id =="
+post_graphql "{\"query\":\"mutation{assignTask(taskId:\\\"$TASK_ID\\\", userId:\\\"$USER2_ID\\\")}\"}" >/dev/null
+ASSIGN_JOBS="$(psql "$DB_URL" -tAc "select count(*) from movp_internal.movp_jobs where kind='notify' and payload->>'event'='task.assigned' and payload->>'recipient_user_id'='$USER2_ID';")"
+[ "$(echo "$ASSIGN_JOBS" | tr -d '[:space:]')" -ge 1 ] || { echo "no task.assigned notify for USER2 (got $ASSIGN_JOBS)"; exit 1; }
+
+echo "== [task] inbox Assigned lists the task for USER2 (queried AS USER2) =="
+INBOX="$(curl -sS "$API_URL/functions/v1/graphql" \
+  -H "Authorization: Bearer $TOKEN2" -H "apikey: $ANON_KEY" -H "content-type: application/json" \
+  -d "{\"query\":\"query{inbox(workspaceId:\\\"$WS\\\", tab:\\\"assigned\\\"){entity_id}}\"}")"
+echo "$INBOX" | grep -q "$TASK_ID" || { echo "inbox assigned did not include the task: $INBOX"; exit 1; }
+
+echo "== [task] transition to a done-category status -> completed_at + history + task.completed =="
+DONE_ID="$(psql "$DB_URL" -tAc "select id from public.task_status_option where workspace_id='$WS' and category='done' limit 1;" | tr -d '[:space:]')"
+[ -n "$DONE_ID" ] || { echo "no done-category status option seeded for WS"; exit 1; }
+post_graphql "{\"query\":\"mutation{transitionTask(taskId:\\\"$TASK_ID\\\", statusId:\\\"$DONE_ID\\\"){id completed_at}}\"}" | grep -q 'completed_at' || { echo "transition failed"; exit 1; }
+HIST="$(psql "$DB_URL" -tAc "select count(*) from public.task_status_history where task_id='$TASK_ID';")"
+[ "$(echo "$HIST" | tr -d '[:space:]')" -ge 1 ] || { echo "no task_status_history row (got $HIST)"; exit 1; }
+COMPLETED="$(psql "$DB_URL" -tAc "select count(*) from movp_internal.movp_events where type='task.completed' and payload->>'entity_id'='$TASK_ID';")"
+[ "$(echo "$COMPLETED" | tr -d '[:space:]')" -ge 1 ] || { echo "no task.completed event (got $COMPLETED)"; exit 1; }
+
 echo "== [8] internal not exposed via PostgREST API =="
 REST="$(curl -sS -o /dev/null -w '%{http_code}' "$API_URL/rest/v1/movp_jobs" -H "apikey: $ANON_KEY")"
 [ "$REST" = "404" ] || [ "$REST" = "401" ] || { echo "movp_jobs reachable via REST ($REST)"; exit 1; }
