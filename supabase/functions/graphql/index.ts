@@ -30,5 +30,11 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
   const url = new URL(req.url)
   const yogaReq = new Request(new URL(`/graphql${url.search}`, url.origin), req)
-  return yoga.handleRequest(yogaReq, { db: principal.db, userId: principal.userId, embedder: new GteSmallProvider() })
+  return yoga.handleRequest(yogaReq, {
+    db: principal.db,
+    userId: principal.userId,
+    embedder: new GteSmallProvider(),
+    accessToken: req.headers.get('Authorization')?.replace(/^Bearer\s+/i, ''),
+    assetsFnUrl: `${env.SUPABASE_URL}/functions/v1/content-assets`,
+  })
 })

@@ -5,6 +5,8 @@ export interface GraphQLContext {
   db: SupabaseClient
   userId: string
   embedder?: EmbeddingProvider
+  accessToken?: string
+  assetsFnUrl?: string
 }
 
 export type Row = { id: string; workspace_id: string; created_at: string; updated_at: string } & Record<

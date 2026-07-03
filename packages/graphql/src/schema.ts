@@ -38,7 +38,12 @@ function service(domain: Domain, name: string): CollectionService<Row, Record<st
 }
 
 function domainFrom(ctx: GraphQLContext): Domain {
-  return createDomain({ db: ctx.db, userId: ctx.userId }, { embedder: ctx.embedder })
+  return createDomain({
+    db: ctx.db,
+    userId: ctx.userId,
+    accessToken: ctx.accessToken,
+    assetsFnUrl: ctx.assetsFnUrl,
+  }, { embedder: ctx.embedder })
 }
 
 export function buildSchema(schema: MovpSchema): GraphQLSchema {
@@ -576,6 +581,400 @@ export function buildSchema(schema: MovpSchema): GraphQLSchema {
           })
           return page.items
         },
+      }),
+    )
+  }
+
+  if (refs.has('content_item')) {
+    const contentTypeRef = refs.get('content_type')
+    const contentItemRef = refs.get('content_item')
+    const contentRevisionRef = refs.get('content_revision')
+    const contentApprovalRef = refs.get('content_approval')
+    const contentScheduleRef = refs.get('content_schedule')
+    const contentCollectionRef = refs.get('content_collection')
+
+    contentTypeRef.implement({
+      fields: (t: any) => ({
+        id: t.exposeID('id', { complexity: 0 }),
+        workspace_id: t.exposeString('workspace_id', { complexity: 0 }),
+        key: t.string({ nullable: true, complexity: 0, resolve: (r: Row) => (r.key == null ? null : String(r.key)) }),
+        label: t.string({ nullable: true, complexity: 0, resolve: (r: Row) => (r.label == null ? null : String(r.label)) }),
+        field_schema: t.string({ nullable: true, complexity: 0, resolve: (r: Row) => (r.field_schema == null ? null : JSON.stringify(r.field_schema)) }),
+        created_at: t.exposeString('created_at', { complexity: 0 }),
+        updated_at: t.string({ nullable: true, complexity: 0, resolve: (r: Row) => (r.updated_at == null ? null : String(r.updated_at)) }),
+      }),
+    })
+
+    contentItemRef.implement({
+      fields: (t: any) => ({
+        id: t.exposeID('id', { complexity: 0 }),
+        workspace_id: t.exposeString('workspace_id', { complexity: 0 }),
+        content_type_id: t.string({ nullable: true, complexity: 0, resolve: (r: Row) => (r.content_type_id == null ? null : String(r.content_type_id)) }),
+        slug: t.string({ nullable: true, complexity: 0, resolve: (r: Row) => (r.slug == null ? null : String(r.slug)) }),
+        status: t.string({ nullable: true, complexity: 0, resolve: (r: Row) => (r.status == null ? null : String(r.status)) }),
+        search_text: t.string({ nullable: true, complexity: 0, resolve: (r: Row) => (r.search_text == null ? null : String(r.search_text)) }),
+        data: t.string({
+          nullable: true,
+          complexity: 5,
+          resolve: async (r: Row, _a: unknown, ctx: GraphQLContext) => {
+            if (r.data != null) return JSON.stringify(r.data)
+            if (r.current_revision_id == null) return null
+            const { data } = await ctx.db.from('content_revision').select('data').eq('id', String(r.current_revision_id)).maybeSingle()
+            const body = (data as { data?: unknown } | null)?.data
+            return body == null ? null : JSON.stringify(body)
+          },
+        }),
+        current_revision_id: t.string({ nullable: true, complexity: 0, resolve: (r: Row) => (r.current_revision_id == null ? null : String(r.current_revision_id)) }),
+        approved_revision_id: t.string({ nullable: true, complexity: 0, resolve: (r: Row) => (r.approved_revision_id == null ? null : String(r.approved_revision_id)) }),
+        published_revision_id: t.string({ nullable: true, complexity: 0, resolve: (r: Row) => (r.published_revision_id == null ? null : String(r.published_revision_id)) }),
+        created_at: t.exposeString('created_at', { complexity: 0 }),
+        updated_at: t.string({ nullable: true, complexity: 0, resolve: (r: Row) => (r.updated_at == null ? null : String(r.updated_at)) }),
+        content_type: t.field({
+          type: contentTypeRef,
+          nullable: true,
+          complexity: 5,
+          resolve: async (r: Row, _a: unknown, ctx: GraphQLContext) => {
+            if (r.content_type_id == null) return null
+            const { data } = await ctx.db.from('content_type').select('*').eq('id', String(r.content_type_id)).maybeSingle()
+            return (data as Row | null) ?? null
+          },
+        }),
+      }),
+    })
+
+    contentRevisionRef.implement({
+      fields: (t: any) => ({
+        id: t.exposeID('id', { complexity: 0 }),
+        workspace_id: t.exposeString('workspace_id', { complexity: 0 }),
+        content_item_id: t.string({ nullable: true, complexity: 0, resolve: (r: Row) => (r.content_item_id == null ? null : String(r.content_item_id)) }),
+        parent_id: t.string({ nullable: true, complexity: 0, resolve: (r: Row) => (r.parent_id == null ? null : String(r.parent_id)) }),
+        revision_number: t.int({ nullable: true, complexity: 0, resolve: (r: Row) => (r.revision_number == null ? null : Number(r.revision_number)) }),
+        data: t.string({ nullable: true, complexity: 0, resolve: (r: Row) => (r.data == null ? null : JSON.stringify(r.data)) }),
+        content_hash: t.string({ nullable: true, complexity: 0, resolve: (r: Row) => (r.content_hash == null ? null : String(r.content_hash)) }),
+        author_id: t.string({ nullable: true, complexity: 0, resolve: (r: Row) => (r.author_id == null ? null : String(r.author_id)) }),
+        created_at: t.exposeString('created_at', { complexity: 0 }),
+      }),
+    })
+
+    contentApprovalRef.implement({
+      fields: (t: any) => ({
+        id: t.exposeID('id', { complexity: 0 }),
+        content_item_id: t.string({ nullable: true, resolve: (r: Row) => (r.content_item_id == null ? null : String(r.content_item_id)) }),
+        state: t.string({ nullable: true, resolve: (r: Row) => (r.state == null ? null : String(r.state)) }),
+        approved_revision_id: t.string({ nullable: true, resolve: (r: Row) => (r.approved_revision_id == null ? null : String(r.approved_revision_id)) }),
+      }),
+    })
+
+    contentScheduleRef.implement({
+      fields: (t: any) => ({
+        id: t.exposeID('id', { complexity: 0 }),
+        content_item_id: t.string({ nullable: true, resolve: (r: Row) => (r.content_item_id == null ? null : String(r.content_item_id)) }),
+        action: t.string({ nullable: true, resolve: (r: Row) => (r.action == null ? null : String(r.action)) }),
+        revision_id: t.string({ nullable: true, resolve: (r: Row) => (r.revision_id == null ? null : String(r.revision_id)) }),
+        run_at: t.string({ nullable: true, resolve: (r: Row) => (r.run_at == null ? null : String(r.run_at)) }),
+        state: t.string({ nullable: true, resolve: (r: Row) => (r.state == null ? null : String(r.state)) }),
+      }),
+    })
+
+    contentCollectionRef.implement({
+      fields: (t: any) => ({
+        id: t.exposeID('id', { complexity: 0 }),
+        workspace_id: t.string({ nullable: true, resolve: (r: Row) => (r.workspace_id == null ? null : String(r.workspace_id)) }),
+        key: t.string({ nullable: true, resolve: (r: Row) => (r.key == null ? null : String(r.key)) }),
+        label: t.string({ nullable: true, resolve: (r: Row) => (r.label == null ? null : String(r.label)) }),
+        description: t.string({ nullable: true, resolve: (r: Row) => (r.description == null ? null : String(r.description)) }),
+        created_at: t.string({ nullable: true, resolve: (r: Row) => (r.created_at == null ? null : String(r.created_at)) }),
+      }),
+    })
+
+    const contentPage = builder.objectRef<Page<Row>>('ContentPage').implement({
+      fields: (t: any) => ({
+        items: t.field({ type: [contentItemRef], resolve: (p: Page<Row>) => p.items }),
+        nextCursor: t.string({ nullable: true, resolve: (p: Page<Row>) => p.nextCursor ?? null }),
+      }),
+    })
+    const publishedContent = builder.objectRef<{ item: Row; revision: Row }>('PublishedContent').implement({
+      fields: (t: any) => ({
+        item: t.field({ type: contentItemRef, resolve: (p: { item: Row }) => p.item }),
+        revision: t.field({ type: contentRevisionRef, resolve: (p: { revision: Row }) => p.revision }),
+      }),
+    })
+    const seoAudit = builder.objectRef<Row>('ContentSeoAudit').implement({
+      fields: (t: any) => ({
+        score: t.float({ nullable: true, resolve: (r: Row) => (r.score == null ? null : Number(r.score)) }),
+        checklist: t.string({ nullable: true, resolve: (r: Row) => (r.checklist == null ? null : JSON.stringify(r.checklist)) }),
+      }),
+    })
+    const assetUpload = builder.objectRef<{ uploadUrl: string; assetId: string; r2Key: string }>('ContentAssetUpload').implement({
+      fields: (t: any) => ({
+        uploadUrl: t.exposeString('uploadUrl'),
+        assetId: t.exposeID('assetId'),
+        r2Key: t.exposeString('r2Key'),
+      }),
+    })
+    const contentAsset = builder.objectRef<Row>('ContentAsset').implement({
+      fields: (t: any) => ({
+        id: t.exposeID('id'),
+        workspace_id: t.string({ nullable: true, resolve: (r: Row) => (r.workspace_id == null ? null : String(r.workspace_id)) }),
+        r2_key: t.string({ nullable: true, resolve: (r: Row) => (r.r2_key == null ? null : String(r.r2_key)) }),
+        filename: t.string({ nullable: true, resolve: (r: Row) => (r.filename == null ? null : String(r.filename)) }),
+        mime: t.string({ nullable: true, resolve: (r: Row) => (r.mime == null ? null : String(r.mime)) }),
+        size_bytes: t.int({ nullable: true, resolve: (r: Row) => (r.size_bytes == null ? null : Number(r.size_bytes)) }),
+        created_at: t.string({ nullable: true, resolve: (r: Row) => (r.created_at == null ? null : String(r.created_at)) }),
+      }),
+    })
+
+    builder.queryField('contentTypes', (t: any) =>
+      t.field({
+        type: [contentTypeRef],
+        complexity: 5,
+        args: { workspaceId: t.arg.id({ required: true }) },
+        resolve: async (_r: unknown, a: any, ctx: GraphQLContext) =>
+          (await domainFrom(ctx).content.listTypes({ workspaceId: String(a.workspaceId) })).items,
+      }),
+    )
+    builder.queryField('content', (t: any) =>
+      t.field({
+        type: contentPage,
+        complexity: (a: any) => ({ field: 1, multiplier: clampPageSize(a.first) }),
+        args: {
+          workspaceId: t.arg.id({ required: true }),
+          contentTypeId: t.arg.id({ required: false }),
+          status: t.arg.string({ required: false }),
+          first: t.arg.int({ required: false }),
+          after: t.arg.string({ required: false }),
+        },
+        resolve: (_r: unknown, a: any, ctx: GraphQLContext) =>
+          domainFrom(ctx).content.list({
+            workspaceId: String(a.workspaceId),
+            contentTypeId: a.contentTypeId ? String(a.contentTypeId) : undefined,
+            status: a.status ? String(a.status) : undefined,
+            first: clampPageSize(a.first),
+            after: a.after ?? undefined,
+          }),
+      }),
+    )
+    builder.queryField('contentItem', (t: any) =>
+      t.field({
+        type: contentItemRef,
+        nullable: true,
+        complexity: 1,
+        args: { id: t.arg.id({ required: true }) },
+        resolve: (_r: unknown, a: any, ctx: GraphQLContext) => domainFrom(ctx).content.get(String(a.id)),
+      }),
+    )
+    builder.queryField('contentRevisions', (t: any) =>
+      t.field({
+        type: [contentRevisionRef],
+        complexity: 10,
+        args: { itemId: t.arg.id({ required: true }) },
+        resolve: async (_r: unknown, a: any, ctx: GraphQLContext) =>
+          (await domainFrom(ctx).content.listRevisions({ itemId: String(a.itemId) })).items,
+      }),
+    )
+    builder.queryField('publishedContent', (t: any) =>
+      t.field({
+        type: publishedContent,
+        nullable: true,
+        complexity: 1,
+        args: { id: t.arg.id({ required: true }) },
+        resolve: (_r: unknown, a: any, ctx: GraphQLContext) => domainFrom(ctx).content.getPublished(String(a.id)),
+      }),
+    )
+    builder.queryField('contentApprovals', (t: any) =>
+      t.field({
+        type: [contentApprovalRef],
+        complexity: 5,
+        args: {
+          workspaceId: t.arg.id({ required: true }),
+          itemId: t.arg.id({ required: false }),
+          state: t.arg.string({ required: false }),
+        },
+        resolve: async (_r: unknown, a: any, ctx: GraphQLContext) =>
+          (await domainFrom(ctx).content.listApprovals({
+            workspaceId: String(a.workspaceId),
+            itemId: a.itemId ? String(a.itemId) : undefined,
+            state: a.state ? String(a.state) as 'pending' | 'approved' | 'rejected' | 'superseded' : undefined,
+          })).items,
+      }),
+    )
+
+    builder.mutationField('createContentType', (t: any) =>
+      t.field({
+        type: contentTypeRef,
+        complexity: 10,
+        args: {
+          workspaceId: t.arg.id({ required: true }),
+          key: t.arg.string({ required: true }),
+          label: t.arg.string({ required: true }),
+          fieldSchema: t.arg.string({ required: true }),
+        },
+        resolve: (_r: unknown, a: any, ctx: GraphQLContext) =>
+          domainFrom(ctx).content.createType({
+            workspaceId: String(a.workspaceId),
+            key: String(a.key),
+            label: String(a.label),
+            fieldSchema: JSON.parse(String(a.fieldSchema)),
+          }),
+      }),
+    )
+    builder.mutationField('createContent', (t: any) =>
+      t.field({
+        type: contentItemRef,
+        complexity: 10,
+        args: {
+          workspaceId: t.arg.id({ required: true }),
+          contentTypeId: t.arg.id({ required: true }),
+          slug: t.arg.string({ required: true }),
+          data: t.arg.string({ required: true }),
+        },
+        resolve: (_r: unknown, a: any, ctx: GraphQLContext) =>
+          domainFrom(ctx).content.create({
+            workspaceId: String(a.workspaceId),
+            contentTypeId: String(a.contentTypeId),
+            slug: String(a.slug),
+            data: JSON.parse(String(a.data)),
+          }),
+      }),
+    )
+    builder.mutationField('updateContent', (t: any) =>
+      t.field({
+        type: contentItemRef,
+        complexity: 10,
+        args: { id: t.arg.id({ required: true }), data: t.arg.string({ required: true }) },
+        resolve: (_r: unknown, a: any, ctx: GraphQLContext) =>
+          domainFrom(ctx).content.update({ itemId: String(a.id), data: JSON.parse(String(a.data)) }),
+      }),
+    )
+    builder.mutationField('submitForApproval', (t: any) =>
+      t.field({
+        type: contentItemRef,
+        complexity: 5,
+        args: { itemId: t.arg.id({ required: true }) },
+        resolve: (_r: unknown, a: any, ctx: GraphQLContext) => domainFrom(ctx).content.submitForApproval({ itemId: String(a.itemId) }),
+      }),
+    )
+    builder.mutationField('decideApproval', (t: any) =>
+      t.field({
+        type: contentApprovalRef,
+        complexity: 5,
+        args: { approvalId: t.arg.id({ required: true }), vote: t.arg.string({ required: true }) },
+        resolve: (_r: unknown, a: any, ctx: GraphQLContext) =>
+          domainFrom(ctx).content.decideApproval({ approvalId: String(a.approvalId), vote: String(a.vote) as 'approve' | 'reject' }),
+      }),
+    )
+    builder.mutationField('publishContent', (t: any) =>
+      t.field({
+        type: contentItemRef,
+        complexity: 10,
+        args: { itemId: t.arg.id({ required: true }) },
+        resolve: (_r: unknown, a: any, ctx: GraphQLContext) => domainFrom(ctx).content.publish({ itemId: String(a.itemId) }),
+      }),
+    )
+    builder.mutationField('unpublishContent', (t: any) =>
+      t.field({
+        type: contentItemRef,
+        complexity: 10,
+        args: { itemId: t.arg.id({ required: true }) },
+        resolve: (_r: unknown, a: any, ctx: GraphQLContext) => domainFrom(ctx).content.unpublish({ itemId: String(a.itemId) }),
+      }),
+    )
+    builder.mutationField('scheduleContent', (t: any) =>
+      t.field({
+        type: contentScheduleRef,
+        complexity: 5,
+        args: {
+          itemId: t.arg.id({ required: true }),
+          action: t.arg.string({ required: true }),
+          revisionId: t.arg.id({ required: true }),
+          runAt: t.arg.string({ required: true }),
+        },
+        resolve: (_r: unknown, a: any, ctx: GraphQLContext) =>
+          domainFrom(ctx).content.schedule({
+            itemId: String(a.itemId),
+            action: String(a.action) as 'publish' | 'unpublish',
+            revisionId: String(a.revisionId),
+            runAt: String(a.runAt),
+          }),
+      }),
+    )
+    builder.mutationField('createContentCollection', (t: any) =>
+      t.field({
+        type: contentCollectionRef,
+        complexity: 5,
+        args: {
+          workspaceId: t.arg.id({ required: true }),
+          key: t.arg.string({ required: true }),
+          label: t.arg.string({ required: true }),
+          description: t.arg.string({ required: false }),
+        },
+        resolve: (_r: unknown, a: any, ctx: GraphQLContext) =>
+          domainFrom(ctx).content.createCollection({
+            workspaceId: String(a.workspaceId),
+            key: String(a.key),
+            label: String(a.label),
+            description: a.description ?? undefined,
+          }),
+      }),
+    )
+    builder.mutationField('addToCollection', (t: any) =>
+      t.field({
+        type: 'Boolean',
+        complexity: 5,
+        args: { collectionId: t.arg.id({ required: true }), itemId: t.arg.id({ required: true }), position: t.arg.int({ required: false }) },
+        resolve: async (_r: unknown, a: any, ctx: GraphQLContext) => {
+          await domainFrom(ctx).content.addToCollection({ collectionId: String(a.collectionId), itemId: String(a.itemId), position: a.position ?? undefined })
+          return true
+        },
+      }),
+    )
+    builder.mutationField('runSeoAudit', (t: any) =>
+      t.field({
+        type: seoAudit,
+        complexity: 10,
+        args: { itemId: t.arg.id({ required: true }) },
+        resolve: (_r: unknown, a: any, ctx: GraphQLContext) =>
+          domainFrom(ctx).content.runSeoAudit({ itemId: String(a.itemId) }) as unknown as Promise<Row>,
+      }),
+    )
+    builder.mutationField('issueAssetUpload', (t: any) =>
+      t.field({
+        type: assetUpload,
+        complexity: 5,
+        args: {
+          workspaceId: t.arg.id({ required: true }),
+          filename: t.arg.string({ required: true }),
+          mime: t.arg.string({ required: true }),
+          sizeBytes: t.arg.int({ required: true }),
+        },
+        resolve: (_r: unknown, a: any, ctx: GraphQLContext) =>
+          domainFrom(ctx).content.issueAssetUpload({
+            workspaceId: String(a.workspaceId),
+            filename: String(a.filename),
+            mime: String(a.mime),
+            sizeBytes: Number(a.sizeBytes),
+          }),
+      }),
+    )
+    builder.mutationField('finalizeAsset', (t: any) =>
+      t.field({
+        type: contentAsset,
+        complexity: 5,
+        args: {
+          assetId: t.arg.id({ required: true }),
+          checksum: t.arg.string({ required: true }),
+          sizeBytes: t.arg.int({ required: true }),
+          width: t.arg.int({ required: false }),
+          height: t.arg.int({ required: false }),
+        },
+        resolve: (_r: unknown, a: any, ctx: GraphQLContext) =>
+          domainFrom(ctx).content.finalizeAsset({
+            assetId: String(a.assetId),
+            checksum: String(a.checksum),
+            sizeBytes: Number(a.sizeBytes),
+            width: a.width ?? undefined,
+            height: a.height ?? undefined,
+          }) as unknown as Promise<Row>,
       }),
     )
   }
