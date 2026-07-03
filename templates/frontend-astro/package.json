@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "astro dev",
     "build": "node scripts/build.mjs",
-    "typecheck": "astro check && tsc --noEmit",
+    "typecheck": "node scripts/typecheck.mjs",
     "test": "vitest run",
     "e2e": "playwright test",
     "preview": "wrangler dev"
