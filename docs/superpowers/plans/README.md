@@ -87,9 +87,32 @@ comment ops on `content_item`, extends `can_access_entity` + `search_fts`, and l
    approval queue, editorial calendar, and the `[content]` e2e slice. **No new migration.** **Precondition:
    02a–02c merged.**
 
-> **The remaining app phases** (`app-03` Campaigns, `app-04` Segmentation, `app-06` Domain Workflows) are
-> still ROADMAP/design altitude — each must be **expanded into a bite-sized TDD series** (as Core Phase 1,
-> Collaboration, Task, and CMS were) before code is written.
+**Phase 5 — Marketing Planning & Campaigns (`app-03`) is EXPANDED and EXECUTABLE** (bite-sized TDD, three
+parts; a REUSE-heavy marketing layer, hardened across three parallel adversarial-review rounds + a graph-write
+boundary pass). A `campaign_deliverable` is a THIN wrapper that links to a MOVP **Task** via an `implemented_by`
+edge (no schedule/status/assignee columns of its own — a no-duplication schema gate enforces this), its content
+is a CMS `content_item` via a `produces` edge, and stakeholder threads reuse Collaboration. **Precondition:
+Task (01a–01c) + CMS (02a–02d) merged first** (Campaigns bridges Task's `task.*` events, reuses the Task board,
+and links CMS content). Its hand-authored migrations start at `…000017` (after CMS's `…000016`). Execute **in order**:
+1. `2026-07-01-movp-app-03a-campaigns-data.md` — seven config-first (generically-surfaced) collections
+   (`marketing_plan`, `campaign`, `campaign_channel`, `campaign_deliverable`, `campaign_calendar_event`,
+   `campaign_metric` [the `value`=measure fact table], `campaign_segment` [dormant Phase-6 targeting seam]),
+   the `campaign.created`/`deliverable.created` audit triggers, owner-restricted edit-gating RLS, and the
+   no-duplication gate (migration `…000017`).
+2. `2026-07-01-movp-app-03b-campaigns-bridge-scans.md` — the `deliverable↔task` event **bridge** (DB triggers
+   on Task's own tables + a reverse `edges` lookup, since no event-subscription engine exists and `traverse_edges`
+   is forward-only), the `scan_campaigns()` date-scan (campaign started/ended + `deliverable.due_soon`), and the
+   `campaign` domain service (edge links with a validated graph-write boundary + batched `deliverableSchedules`)
+   (migration `…000018`). **Precondition: 03a merged.**
+3. `2026-07-01-movp-app-03c-campaigns-surfaces-frontend.md` — codegen-generic surfaces + the custom
+   `campaignDetail`/`deliverableSchedules` reads, five Astro templates (the deliverable board **reuses the Task
+   board**), reporting star-schema verification, and the `[campaigns]` e2e slice. **No new migration.**
+   **Precondition: 03a + 03b merged.**
+
+> **The remaining app phases** (`app-04` Segmentation, `app-06` Domain Workflows) are still ROADMAP/design
+> altitude — each must be **expanded into a bite-sized TDD series** (as Core Phase 1, Collaboration, Task, CMS,
+> and Campaigns were) before code is written. Segmentation (`app-04`) lands the `segment` collection that lights
+> up Campaigns' dormant `campaign↔segment` targeting seam.
 
 ## Per-task execution protocol
 
