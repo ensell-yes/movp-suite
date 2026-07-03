@@ -173,3 +173,30 @@ create policy task_priority_option_insert on public.task_priority_option for ins
   with check (public.is_workspace_member(workspace_id));
 create policy task_priority_option_update on public.task_priority_option for update to authenticated
   using (public.is_workspace_member(workspace_id)) with check (public.is_workspace_member(workspace_id));
+
+-- default-option seeding: every new workspace gets a starter set.
+create or replace function public.workspace_seed_task_options()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  insert into public.task_status_option (workspace_id, label, category, sort_order, is_default, is_active) values
+    (new.id, 'Backlog',     'backlog', 0, true,  true),
+    (new.id, 'In Progress', 'active',  1, false, true),
+    (new.id, 'Blocked',     'blocked', 2, false, true),
+    (new.id, 'Done',        'done',    3, false, true);
+  insert into public.task_priority_option (workspace_id, label, rank, is_default, is_active) values
+    (new.id, 'High',   3, false, true),
+    (new.id, 'Medium', 2, true,  true),
+    (new.id, 'Low',    1, false, true);
+  return new;
+end;
+$$;
+revoke all on function public.workspace_seed_task_options() from public, anon, authenticated;
+
+drop trigger if exists workspace_seed_task_options_tg on public.workspace;
+create trigger workspace_seed_task_options_tg
+  after insert on public.workspace
+  for each row execute function public.workspace_seed_task_options();

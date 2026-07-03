@@ -1,5 +1,5 @@
 begin;
-select plan(43);
+select plan(50);
 
 -- Base seed (as table owner; RLS bypassed).
 -- W1 members: A (owner), C (member). B is NOT a member of W1. W2 has no seeded members.
@@ -192,6 +192,32 @@ select is((select count(*)::int from public.task_dependency
            where task_id='70000000-0000-0000-0000-000000000001'
              and blocker_id='70000000-0000-0000-0000-000000000002'),
           0, 'a member can remove a dependency (DELETE policy present)');
+
+-- Task 5: default-option seeding trigger (read as table owner).
+reset role;
+insert into public.workspace (id, name)
+  values ('33333333-3333-3333-3333-333333333333', 'W3');
+select is((select count(*)::int from public.task_status_option
+           where workspace_id='33333333-3333-3333-3333-333333333333'),
+          4, 'new workspace is seeded with 4 status options');
+select is((select count(*)::int from public.task_priority_option
+           where workspace_id='33333333-3333-3333-3333-333333333333'),
+          3, 'new workspace is seeded with 3 priority options');
+select is((select count(distinct category)::int from public.task_status_option
+           where workspace_id='33333333-3333-3333-3333-333333333333'),
+          4, 'the four status categories are each present exactly once');
+select is((select count(*)::int from public.task_status_option
+           where workspace_id='33333333-3333-3333-3333-333333333333' and is_default),
+          1, 'exactly one default status option');
+select is((select category from public.task_status_option
+           where workspace_id='33333333-3333-3333-3333-333333333333' and is_default),
+          'backlog', 'the default status option is the backlog one');
+select is((select count(*)::int from public.task_priority_option
+           where workspace_id='33333333-3333-3333-3333-333333333333' and is_default),
+          1, 'exactly one default priority option');
+select is((select label from public.task_priority_option
+           where workspace_id='33333333-3333-3333-3333-333333333333' and is_default),
+          'Medium', 'the default priority option is Medium');
 
 select * from finish();
 rollback;
