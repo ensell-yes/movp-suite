@@ -117,7 +117,6 @@ describe('collab GraphQL surface', () => {
     expect(sdl).not.toMatch(/\bcreateMention\(/)
     expect(sdl).not.toMatch(/type Reaction\b/)
     expect(sdl).not.toMatch(/type Mention\b/)
-    expect(sdl).not.toMatch(/\bcomments\(/)
     expect(sdl).not.toMatch(/\breactions\(/)
     expect(sdl).toContain('createNote(')
   })

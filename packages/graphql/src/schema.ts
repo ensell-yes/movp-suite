@@ -9,14 +9,17 @@ import {
   type CollectionService,
   type Domain,
   type InboxItem,
+  type Page,
   type SearchHit,
+  type TaskBoardColumn,
+  type TaskRow,
 } from '@movp/domain'
 import { COMPLEXITY_BUDGET, DEPTH_LIMIT, clampPageSize } from './limits.ts'
 import { loadEdgeTargets } from './relations.ts'
 import type { GraphQLContext, Row } from './types.ts'
 
 function pascal(s: string): string {
-  return s.charAt(0).toUpperCase() + s.slice(1)
+  return s.split('_').map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join('')
 }
 
 function plural(s: string): string {
@@ -341,6 +344,238 @@ export function buildSchema(schema: MovpSchema): GraphQLSchema {
         args: { token: t.arg.string({ required: true }) },
         resolve: (_r: unknown, args: any, ctx: GraphQLContext) =>
           resolveShareLink({ db: ctx.db, userId: ctx.userId }, String(args.token)),
+      }),
+    )
+  }
+
+  if (refs.has('task')) {
+    const taskRef = refs.get('task')
+    const statusRef = refs.get('task_status_option')
+
+    taskRef.implement({
+      fields: (t: any) => ({
+        id: t.exposeID('id', { complexity: 0 }),
+        workspace_id: t.exposeString('workspace_id', { complexity: 0 }),
+        title: t.exposeString('title', { complexity: 0 }),
+        status_id: t.string({ nullable: true, complexity: 0, resolve: (r: Row) => (r.status_id == null ? null : String(r.status_id)) }),
+        priority_id: t.string({ nullable: true, complexity: 0, resolve: (r: Row) => (r.priority_id == null ? null : String(r.priority_id)) }),
+        parent_id: t.string({ nullable: true, complexity: 0, resolve: (r: Row) => (r.parent_id == null ? null : String(r.parent_id)) }),
+        current_revision_id: t.string({ nullable: true, complexity: 0, resolve: (r: Row) => (r.current_revision_id == null ? null : String(r.current_revision_id)) }),
+        start_date: t.string({ nullable: true, complexity: 0, resolve: (r: Row) => (r.start_date == null ? null : String(r.start_date)) }),
+        due_date: t.string({ nullable: true, complexity: 0, resolve: (r: Row) => (r.due_date == null ? null : String(r.due_date)) }),
+        completed_at: t.string({ nullable: true, complexity: 0, resolve: (r: Row) => (r.completed_at == null ? null : String(r.completed_at)) }),
+        dependency_blocked: t.boolean({ complexity: 0, resolve: (r: Row) => Boolean(r.dependency_blocked) }),
+        created_at: t.exposeString('created_at', { complexity: 0 }),
+        updated_at: t.exposeString('updated_at', { complexity: 0 }),
+        description: t.field({
+          type: 'String',
+          nullable: true,
+          complexity: 5,
+          resolve: async (r: Row, _a: unknown, ctx: GraphQLContext) => {
+            if (r.current_revision_id == null) return null
+            const { data } = await ctx.db.from('task_revision').select('body').eq('id', String(r.current_revision_id)).maybeSingle()
+            return (data as { body?: string } | null)?.body ?? null
+          },
+        }),
+      }),
+    })
+
+    const taskPage = builder.objectRef<Page<TaskRow>>('TaskPage').implement({
+      fields: (t: any) => ({
+        items: t.field({ type: [taskRef], resolve: (p: Page<TaskRow>) => p.items }),
+        nextCursor: t.string({ nullable: true, resolve: (p: Page<TaskRow>) => p.nextCursor ?? null }),
+      }),
+    })
+    const taskBoardColumn = builder.objectRef<TaskBoardColumn>('TaskBoardColumn').implement({
+      fields: (t: any) => ({
+        status: t.field({ type: statusRef, resolve: (c: TaskBoardColumn) => c.status }),
+        tasks: t.field({ type: [taskRef], resolve: (c: TaskBoardColumn) => c.tasks }),
+      }),
+    })
+
+    builder.queryField('task', (t: any) =>
+      t.field({
+        type: taskRef,
+        nullable: true,
+        complexity: 1,
+        args: { id: t.arg.id({ required: true }) },
+        resolve: (_r: unknown, args: any, ctx: GraphQLContext) => domainFrom(ctx).task.get(String(args.id)),
+      }),
+    )
+
+    builder.queryField('tasks', (t: any) =>
+      t.field({
+        type: taskPage,
+        complexity: (args: any) => ({ field: 1, multiplier: clampPageSize(args.first) }),
+        args: {
+          workspaceId: t.arg.id({ required: true }),
+          statusId: t.arg.id({ required: false }),
+          assigneeId: t.arg.id({ required: false }),
+          parentId: t.arg.id({ required: false }),
+          topLevel: t.arg.boolean({ required: false }),
+          first: t.arg.int({ required: false }),
+          after: t.arg.string({ required: false }),
+        },
+        resolve: (_r: unknown, args: any, ctx: GraphQLContext) =>
+          domainFrom(ctx).task.list({
+            workspaceId: String(args.workspaceId),
+            statusId: args.statusId ? String(args.statusId) : undefined,
+            assigneeId: args.assigneeId ? String(args.assigneeId) : undefined,
+            parentId: args.topLevel ? null : (args.parentId ? String(args.parentId) : undefined),
+            first: clampPageSize(args.first),
+            after: args.after ?? undefined,
+          }),
+      }),
+    )
+
+    builder.queryField('taskBoard', (t: any) =>
+      t.field({
+        type: [taskBoardColumn],
+        complexity: 10,
+        args: { workspaceId: t.arg.id({ required: true }) },
+        resolve: (_r: unknown, args: any, ctx: GraphQLContext) =>
+          domainFrom(ctx).task.board({ workspaceId: String(args.workspaceId) }),
+      }),
+    )
+
+    builder.mutationField('createTask', (t: any) =>
+      t.field({
+        type: taskRef,
+        complexity: 10,
+        args: {
+          workspaceId: t.arg.id({ required: true }),
+          title: t.arg.string({ required: true }),
+          description: t.arg.string({ required: false }),
+          statusId: t.arg.id({ required: false }),
+          priorityId: t.arg.id({ required: false }),
+          parentId: t.arg.id({ required: false }),
+          startDate: t.arg.string({ required: false }),
+          dueDate: t.arg.string({ required: false }),
+        },
+        resolve: (_r: unknown, args: any, ctx: GraphQLContext) =>
+          domainFrom(ctx).task.create({
+            workspaceId: String(args.workspaceId),
+            title: String(args.title),
+            description: args.description ?? undefined,
+            statusId: args.statusId ? String(args.statusId) : undefined,
+            priorityId: args.priorityId ? String(args.priorityId) : undefined,
+            parentId: args.parentId ? String(args.parentId) : undefined,
+            startDate: args.startDate ?? undefined,
+            dueDate: args.dueDate ?? undefined,
+          }),
+      }),
+    )
+
+    builder.mutationField('transitionTask', (t: any) =>
+      t.field({
+        type: taskRef,
+        complexity: 5,
+        args: { taskId: t.arg.id({ required: true }), statusId: t.arg.id({ required: true }) },
+        resolve: (_r: unknown, args: any, ctx: GraphQLContext) =>
+          domainFrom(ctx).task.transition({ taskId: String(args.taskId), statusId: String(args.statusId) }),
+      }),
+    )
+
+    builder.mutationField('updateTaskDescription', (t: any) =>
+      t.field({
+        type: taskRef,
+        complexity: 10,
+        args: { taskId: t.arg.id({ required: true }), body: t.arg.string({ required: true }) },
+        resolve: (_r: unknown, args: any, ctx: GraphQLContext) =>
+          domainFrom(ctx).task.updateDescription(String(args.taskId), String(args.body)),
+      }),
+    )
+
+    builder.mutationField('assignTask', (t: any) =>
+      t.field({
+        type: 'Boolean',
+        complexity: 5,
+        args: { taskId: t.arg.id({ required: true }), userId: t.arg.id({ required: true }) },
+        resolve: async (_r: unknown, a: any, ctx: GraphQLContext) => {
+          await domainFrom(ctx).task.assign({ taskId: String(a.taskId), userId: String(a.userId) })
+          return true
+        },
+      }),
+    )
+    builder.mutationField('unassignTask', (t: any) =>
+      t.field({
+        type: 'Boolean',
+        complexity: 5,
+        args: { taskId: t.arg.id({ required: true }), userId: t.arg.id({ required: true }) },
+        resolve: async (_r: unknown, a: any, ctx: GraphQLContext) => {
+          await domainFrom(ctx).task.unassign({ taskId: String(a.taskId), userId: String(a.userId) })
+          return true
+        },
+      }),
+    )
+    builder.mutationField('addTaskObserver', (t: any) =>
+      t.field({
+        type: 'Boolean',
+        complexity: 5,
+        args: { taskId: t.arg.id({ required: true }), userId: t.arg.id({ required: true }) },
+        resolve: async (_r: unknown, a: any, ctx: GraphQLContext) => {
+          await domainFrom(ctx).task.addObserver({ taskId: String(a.taskId), userId: String(a.userId) })
+          return true
+        },
+      }),
+    )
+    builder.mutationField('addTaskDependency', (t: any) =>
+      t.field({
+        type: 'Boolean',
+        complexity: 5,
+        args: { taskId: t.arg.id({ required: true }), blockerId: t.arg.id({ required: true }) },
+        resolve: async (_r: unknown, a: any, ctx: GraphQLContext) => {
+          await domainFrom(ctx).task.addDependency({ taskId: String(a.taskId), blockerId: String(a.blockerId) })
+          return true
+        },
+      }),
+    )
+    builder.mutationField('attachTask', (t: any) =>
+      t.field({
+        type: 'Boolean',
+        complexity: 5,
+        args: {
+          taskId: t.arg.id({ required: true }),
+          r2Key: t.arg.string({ required: true }),
+          filename: t.arg.string({ required: true }),
+          contentType: t.arg.string({ required: false }),
+          bytes: t.arg.int({ required: false }),
+        },
+        resolve: async (_r: unknown, a: any, ctx: GraphQLContext) => {
+          await domainFrom(ctx).task.attach({
+            taskId: String(a.taskId),
+            r2Key: String(a.r2Key),
+            filename: String(a.filename),
+            contentType: a.contentType ?? undefined,
+            bytes: a.bytes ?? undefined,
+          })
+          return true
+        },
+      }),
+    )
+
+    builder.queryField('comments', (t: any) =>
+      t.field({
+        type: [refs.get('comment')],
+        complexity: 10,
+        nullable: false,
+        args: {
+          workspaceId: t.arg.id({ required: true }),
+          entityType: t.arg.string({ required: true }),
+          entityId: t.arg.id({ required: true }),
+          first: t.arg.int({ required: false }),
+          after: t.arg.string({ required: false }),
+        },
+        resolve: async (_r: unknown, a: any, ctx: GraphQLContext) => {
+          const page = await domainFrom(ctx).collab.comment.listByEntity({
+            workspaceId: String(a.workspaceId),
+            entityType: String(a.entityType),
+            entityId: String(a.entityId),
+            first: a.first ?? undefined,
+            after: a.after ?? null,
+          })
+          return page.items
+        },
       }),
     )
   }
