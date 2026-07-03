@@ -71,3 +71,67 @@ revoke all on function public.task_observer_emit_event() from public, anon, auth
 drop trigger if exists task_observer_emit_event_tg on public.task_observer;
 create trigger task_observer_emit_event_tg after insert on public.task_observer
   for each row execute function public.task_observer_emit_event();
+
+-- task_notify_recipients: DISTINCT owner-assignees plus observers.
+create or replace function public.task_notify_recipients(t uuid)
+returns table(recipient uuid)
+language sql stable security definer set search_path = '' as $$
+  select ta.assignee_user_id from public.task_assignment ta
+    where ta.task_id = t and ta.role = 'owner'
+  union
+  select o.observer_user_id from public.task_observer o
+    where o.task_id = t;
+$$;
+revoke all on function public.task_notify_recipients(uuid) from public, anon, authenticated;
+
+-- task_status_transition: category-keyed completed/reopened/status_changed.
+create or replace function public.task_status_transition()
+returns trigger language plpgsql security definer set search_path = '' as $$
+declare
+  from_cat text;
+  to_cat   text;
+  r        record;
+begin
+  if new.status_id is not distinct from old.status_id then
+    return new;
+  end if;
+
+  select category into from_cat from public.task_status_option where id = old.status_id;
+  select category into to_cat   from public.task_status_option where id = new.status_id;
+
+  perform public.emit_event('task.status_changed', new.workspace_id,
+    jsonb_build_object('id', new.id, 'entity_type','task','entity_id', new.id,
+                       'from_status_id', old.status_id, 'to_status_id', new.status_id,
+                       'from_category', from_cat, 'to_category', to_cat),
+    gen_random_uuid()::text);
+
+  insert into public.task_status_history (workspace_id, task_id, from_status_id, to_status_id, changed_by)
+    values (new.workspace_id, new.id, old.status_id, new.status_id, (select auth.uid()));
+
+  if to_cat = 'done' and from_cat is distinct from 'done' then
+    update public.task set completed_at = now() where id = new.id;
+    for r in select recipient from public.task_notify_recipients(new.id) loop
+      perform public.emit_event('task.completed', new.workspace_id,
+        jsonb_build_object('id', new.id::text || ':' || r.recipient::text,
+                           'entity_type','task','entity_id', new.id::text,
+                           'recipient_user_id', r.recipient, 'title', new.title),
+        gen_random_uuid()::text);
+    end loop;
+  elsif from_cat = 'done' and to_cat is distinct from 'done' then
+    update public.task set completed_at = null where id = new.id;
+    for r in select recipient from public.task_notify_recipients(new.id) loop
+      perform public.emit_event('task.reopened', new.workspace_id,
+        jsonb_build_object('id', new.id::text || ':' || r.recipient::text,
+                           'entity_type','task','entity_id', new.id::text,
+                           'recipient_user_id', r.recipient, 'title', new.title),
+        gen_random_uuid()::text);
+    end loop;
+  end if;
+
+  return new;
+end; $$;
+revoke all on function public.task_status_transition() from public, anon, authenticated;
+drop trigger if exists task_status_transition_tg on public.task;
+create trigger task_status_transition_tg
+  after update of status_id on public.task
+  for each row execute function public.task_status_transition();

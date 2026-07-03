@@ -1,5 +1,5 @@
 begin;
-select plan(6);
+select plan(14);
 
 -- Shared seed (as the table owner; RLS bypassed).
 insert into public.workspace (id, name) values
@@ -60,6 +60,42 @@ select is((select count(*)::int from movp_internal.movp_jobs
            where kind='notify' and idempotency_key='task.assigned:00000002-0000-0000-0000-000000000000:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
              and payload->>'recipient_user_id'='aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'),
           1, 'the task.assigned notify job uses a per-recipient idempotency key');
+
+-- Task 3: status transition (label-agnostic: Shipped == category done).
+select is((select label from public.task_status_option where id='0000000d-0000-0000-0000-000000000000'),
+          'Shipped', 'the done-category option is labeled Shipped (transition keys on category, not label)');
+insert into public.task (id, workspace_id, title, status_id, priority_id) values
+  ('00000003-0000-0000-0000-000000000000','11111111-1111-1111-1111-111111111111',
+   'Task Three','0000000a-0000-0000-0000-000000000000','0000000e-0000-0000-0000-000000000000');
+insert into public.task_assignment (workspace_id, task_id, assignee_user_id, role) values
+  ('11111111-1111-1111-1111-111111111111','00000003-0000-0000-0000-000000000000',
+   'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','owner');
+insert into public.task_observer (workspace_id, task_id, observer_user_id) values
+  ('11111111-1111-1111-1111-111111111111','00000003-0000-0000-0000-000000000000',
+   'dddddddd-dddd-dddd-dddd-dddddddddddd');
+update public.task set status_id='0000000d-0000-0000-0000-000000000000'
+  where id='00000003-0000-0000-0000-000000000000';
+select is((select count(*)::int from movp_internal.movp_events
+           where type='task.completed' and payload->>'entity_id'='00000003-0000-0000-0000-000000000000'),
+          2, 'entering a done-category status emits task.completed per recipient');
+select isnt((select completed_at from public.task where id='00000003-0000-0000-0000-000000000000'),
+            null, 'completed_at is set on completion');
+select is((select count(*)::int from movp_internal.movp_events
+           where type='task.status_changed' and payload->>'entity_id'='00000003-0000-0000-0000-000000000000'),
+          1, 'the transition emits exactly one audit-only task.status_changed');
+select is((select count(*)::int from public.task_status_history
+           where task_id='00000003-0000-0000-0000-000000000000'),
+          1, 'a task_status_history row is written for the completion transition');
+update public.task set status_id='0000000a-0000-0000-0000-000000000000'
+  where id='00000003-0000-0000-0000-000000000000';
+select is((select count(*)::int from movp_internal.movp_events
+           where type='task.reopened' and payload->>'entity_id'='00000003-0000-0000-0000-000000000000'),
+          2, 'leaving a done-category status emits task.reopened per recipient');
+select is((select completed_at from public.task where id='00000003-0000-0000-0000-000000000000'),
+          null, 'completed_at is cleared on reopen');
+select is((select count(*)::int from public.task_status_history
+           where task_id='00000003-0000-0000-0000-000000000000'),
+          2, 'a second task_status_history row is written for the reopen transition');
 
 select * from finish();
 rollback;
