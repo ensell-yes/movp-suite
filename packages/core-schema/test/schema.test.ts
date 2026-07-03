@@ -42,6 +42,15 @@ describe('defineSchema aggregate', () => {
       'saved_item',
       'mention',
       'share_link',
+      'task_status_option',
+      'task_priority_option',
+      'task',
+      'task_revision',
+      'task_assignment',
+      'task_observer',
+      'task_dependency',
+      'task_status_history',
+      'task_attachment',
     ])
     expect(comment.internal).toBe(true)
   })
