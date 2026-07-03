@@ -9,6 +9,19 @@ const commentCreate = vi.fn(async () => ({ id: 'c1', body: 'hi' }))
 const inbox = vi.fn(async () => [
   { kind: 'user.mentioned', entity_type: 'note', entity_id: 'n1', ref_id: 'm1', created_at: 't', payload: {} },
 ])
+const taskCreate = vi.fn(async () => ({ id: 't1', title: 'Ship it' }))
+const taskList = vi.fn(async () => ({ items: [{ id: 't1' }], nextCursor: null }))
+const taskBoard = vi.fn(async () => [{ status: { id: 's1' }, tasks: [{ id: 't1' }] }])
+
+function crud() {
+  return {
+    create: vi.fn(),
+    get: vi.fn(),
+    list: vi.fn(),
+    update: vi.fn(),
+    delete: vi.fn(),
+  }
+}
 
 vi.mock('@movp/domain', () => ({
   createDomain: () => ({
@@ -26,6 +39,8 @@ vi.mock('@movp/domain', () => ({
       update: vi.fn(),
       delete: vi.fn(),
     },
+    task_status_option: crud(),
+    task_priority_option: crud(),
     search,
     graph: { link: vi.fn(), traverse: vi.fn() },
     collab: {
@@ -36,6 +51,21 @@ vi.mock('@movp/domain', () => ({
       unsave: vi.fn(),
       createShareLink: vi.fn(),
       inbox,
+    },
+    task: {
+      create: taskCreate,
+      get: vi.fn(),
+      list: taskList,
+      board: taskBoard,
+      assign: vi.fn(async () => undefined),
+      unassign: vi.fn(),
+      addObserver: vi.fn(),
+      removeObserver: vi.fn(),
+      transition: vi.fn(async () => ({ id: 't1', status_id: 's2' })),
+      addDependency: vi.fn(async () => undefined),
+      removeDependency: vi.fn(),
+      updateDescription: vi.fn(async () => ({ id: 't1' })),
+      attach: vi.fn(),
     },
   }),
 }))
@@ -122,5 +152,41 @@ describe('movp CLI', () => {
     expect(top).toEqual(expect.arrayContaining(['note', 'tag', 'inbox', 'comment']))
     const comment = cmd.commands.find((c) => c.name() === 'comment')
     expect(comment?.commands.map((s) => s.name())).toEqual(['add'])
+  })
+
+  it('task create routes to task.create', async () => {
+    const { cmd, out } = program()
+    await cmd.parseAsync(['node', 'movp', 'task', 'create', '--workspace', 'w', '--title', 'Ship it'])
+    expect(taskCreate).toHaveBeenCalledWith({
+      workspaceId: 'w',
+      title: 'Ship it',
+      description: undefined,
+      statusId: undefined,
+      priorityId: undefined,
+      parentId: undefined,
+      startDate: undefined,
+      dueDate: undefined,
+    })
+    expect(out[0]).toContain('t1')
+  })
+
+  it('task list and task board print results', async () => {
+    const { cmd, out } = program()
+    await cmd.parseAsync(['node', 'movp', 'task', 'list', '--workspace', 'w'])
+    expect(taskList).toHaveBeenCalledWith({ workspaceId: 'w', statusId: undefined, assigneeId: undefined })
+    expect(out[0]).toContain('t1')
+    const p2 = program()
+    await p2.cmd.parseAsync(['node', 'movp', 'task', 'board', '--workspace', 'w'])
+    expect(taskBoard).toHaveBeenCalledWith({ workspaceId: 'w' })
+    expect(p2.out[0]).toContain('s1')
+  })
+
+  it('surfaces the custom task group but no generic CRUD group for internal task/task_revision', () => {
+    const { cmd } = program()
+    const top = cmd.commands.map((c) => c.name())
+    expect(top).not.toContain('task_revision')
+    expect(top).toEqual(expect.arrayContaining(['task', 'task_status_option', 'task_priority_option']))
+    const task = cmd.commands.find((c) => c.name() === 'task')
+    expect(task?.commands.map((s) => s.name())).toEqual(['create', 'list', 'board', 'assign', 'transition', 'depend', 'describe'])
   })
 })

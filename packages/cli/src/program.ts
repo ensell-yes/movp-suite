@@ -149,6 +149,85 @@ export function buildProgram(opts: BuildProgramOpts = {}): Command {
       )
     })
 
+  const taskCmd = program.command('task').description('Manage tasks')
+  taskCmd
+    .command('create')
+    .requiredOption('--workspace <id>', 'workspace id')
+    .requiredOption('--title <text>', 'task title')
+    .option('--description <text>', 'initial description')
+    .option('--status <id>', 'status option id')
+    .option('--priority <id>', 'priority option id')
+    .option('--parent <id>', 'parent task id')
+    .option('--start <date>', 'start date')
+    .option('--due <date>', 'due date')
+    .action(async (o: { workspace: string; title: string; description?: string; status?: string; priority?: string; parent?: string; start?: string; due?: string }) => {
+      const domain = createDomain(resolveCtx())
+      out(
+        JSON.stringify(
+          await domain.task.create({
+            workspaceId: o.workspace,
+            title: o.title,
+            description: o.description,
+            statusId: o.status,
+            priorityId: o.priority,
+            parentId: o.parent,
+            startDate: o.start,
+            dueDate: o.due,
+          }),
+        ),
+      )
+    })
+  taskCmd
+    .command('list')
+    .requiredOption('--workspace <id>', 'workspace id')
+    .option('--status <id>', 'filter by status option id')
+    .option('--assignee <id>', 'filter by assignee user id')
+    .action(async (o: { workspace: string; status?: string; assignee?: string }) => {
+      const domain = createDomain(resolveCtx())
+      out(JSON.stringify(await domain.task.list({ workspaceId: o.workspace, statusId: o.status, assigneeId: o.assignee })))
+    })
+  taskCmd
+    .command('board')
+    .requiredOption('--workspace <id>', 'workspace id')
+    .action(async (o: { workspace: string }) => {
+      const domain = createDomain(resolveCtx())
+      out(JSON.stringify(await domain.task.board({ workspaceId: o.workspace })))
+    })
+  taskCmd
+    .command('assign')
+    .requiredOption('--task <id>', 'task id')
+    .requiredOption('--user <id>', 'assignee user id')
+    .action(async (o: { task: string; user: string }) => {
+      const domain = createDomain(resolveCtx())
+      await domain.task.assign({ taskId: o.task, userId: o.user })
+      out(JSON.stringify({ ok: true }))
+    })
+  taskCmd
+    .command('transition')
+    .requiredOption('--task <id>', 'task id')
+    .requiredOption('--status <id>', 'target status option id')
+    .action(async (o: { task: string; status: string }) => {
+      const domain = createDomain(resolveCtx())
+      out(JSON.stringify(await domain.task.transition({ taskId: o.task, statusId: o.status })))
+    })
+  taskCmd
+    .command('depend')
+    .requiredOption('--task <id>', 'blocked task id')
+    .requiredOption('--blocker <id>', 'blocking task id')
+    .action(async (o: { task: string; blocker: string }) => {
+      const domain = createDomain(resolveCtx())
+      await domain.task.addDependency({ taskId: o.task, blockerId: o.blocker })
+      out(JSON.stringify({ ok: true }))
+    })
+  taskCmd
+    .command('describe')
+    .requiredOption('--task <id>', 'task id')
+    .requiredOption('--body <text>', 'new description body')
+    .action(async (o: { task: string; body: string }) => {
+      const domain = createDomain(resolveCtx())
+      out(JSON.stringify(await domain.task.updateDescription(o.task, o.body)))
+    })
+
   program
     .command('search <query>')
     .requiredOption('--workspace <id>', 'workspace id')
