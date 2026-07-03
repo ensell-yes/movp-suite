@@ -1,5 +1,5 @@
 begin;
-select plan(21);
+select plan(23);
 
 -- Shared seed (as the table owner; RLS bypassed).
 insert into public.workspace (id, name) values
@@ -145,6 +145,18 @@ select public.emit_due_soon();
 select is((select count(*)::int from movp_internal.movp_events
            where type='task.due_soon' and payload->>'entity_id'='00000005-0000-0000-0000-000000000000'),
           2, 're-scanning emits no further task.due_soon');
+
+-- Task 6: inbox_feed assigned tab.
+select ok(
+  public.inbox_feed('11111111-1111-1111-1111-111111111111','assigned',20)
+    @> '[{"kind":"task.assigned","entity_type":"task","entity_id":"00000002-0000-0000-0000-000000000000"}]'::jsonb,
+  'the assignee A sees a task.assigned inbox item for Task Two');
+
+set local request.jwt.claims = '{"sub":"cccccccc-cccc-cccc-cccc-cccccccccccc"}';
+select is(
+  public.inbox_feed('11111111-1111-1111-1111-111111111111','assigned',20),
+  '[]'::jsonb,
+  'a member with no assignments sees an empty assigned feed');
 
 select * from finish();
 rollback;

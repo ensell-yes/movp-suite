@@ -237,3 +237,104 @@ revoke all on function public.emit_due_soon() from public, anon, authenticated;
 -- committed. At deploy time, with service credentials sourced outside git:
 --   select cron.schedule('task-due-soon', '*/15 * * * *', $cron$ select public.emit_due_soon(); $cron$);
 -- pgTAP/e2e call `select public.emit_due_soon();` directly.
+
+-- inbox_feed: add the assigned tab; mentions/saved/all stay unchanged.
+create or replace function public.inbox_feed(ws uuid, tab text, lim int)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  uid uuid := (select auth.uid());
+  capped int := least(greatest(coalesce(lim, 20), 1), 100);
+  result jsonb;
+begin
+  if not public.is_workspace_member(ws) then
+    return '[]'::jsonb;
+  end if;
+
+  if tab = 'mentions' then
+    select coalesce(jsonb_agg(item order by created_at desc), '[]'::jsonb) into result
+    from (
+      select jsonb_build_object(
+               'kind', 'user.mentioned',
+               'entity_type', m.entity_type,
+               'entity_id', m.entity_id::text,
+               'ref_id', m.id::text,
+               'created_at', m.created_at,
+               'payload', jsonb_build_object('comment_id', m.comment_id::text, 'body', c.body)
+             ) as item,
+             m.created_at as created_at
+        from public.mention m
+        join public.comment c on c.id = m.comment_id
+       where m.workspace_id = ws
+         and m.mentioned_user_id = uid
+       order by m.created_at desc
+       limit capped
+    ) s;
+
+  elsif tab = 'saved' then
+    select coalesce(jsonb_agg(item order by created_at desc), '[]'::jsonb) into result
+    from (
+      select jsonb_build_object(
+               'kind', 'item.saved',
+               'entity_type', si.entity_type,
+               'entity_id', si.entity_id::text,
+               'ref_id', si.id::text,
+               'created_at', si.created_at,
+               'payload', '{}'::jsonb
+             ) as item,
+             si.created_at as created_at
+        from public.saved_item si
+       where si.workspace_id = ws
+         and si.user_id = uid
+       order by si.created_at desc
+       limit capped
+    ) s;
+
+  elsif tab = 'all' then
+    select coalesce(jsonb_agg(item order by created_at desc), '[]'::jsonb) into result
+    from (
+      select jsonb_build_object(
+               'kind', e.type,
+               'entity_type', coalesce(e.payload->>'entity_type', ''),
+               'entity_id', coalesce(e.payload->>'entity_id', e.payload->>'id', ''),
+               'ref_id', e.id::text,
+               'created_at', e.created_at,
+               'payload', e.payload
+             ) as item,
+             e.created_at as created_at
+        from movp_internal.movp_events e
+       where e.workspace_id = ws
+       order by e.created_at desc
+       limit capped
+    ) s;
+
+  elsif tab = 'assigned' then
+    select coalesce(jsonb_agg(item order by created_at desc), '[]'::jsonb) into result
+    from (
+      select jsonb_build_object(
+               'kind', 'task.assigned',
+               'entity_type', 'task',
+               'entity_id', t.id::text,
+               'ref_id', ta.id::text,
+               'created_at', ta.created_at,
+               'payload', jsonb_build_object('title', t.title)
+             ) as item,
+             ta.created_at as created_at
+        from public.task_assignment ta
+        join public.task t on t.id = ta.task_id
+       where ta.workspace_id = ws
+         and ta.assignee_user_id = uid
+       order by ta.created_at desc
+       limit capped
+    ) s;
+
+  else
+    result := '[]'::jsonb;
+  end if;
+
+  return result;
+end;
+$$;
