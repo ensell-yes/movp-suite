@@ -3,6 +3,7 @@ export { makeCollabService, resolveShareLink } from './collab.ts'
 export { createDomain } from './domain.ts'
 export { makeGraphService } from './graph.ts'
 export { runSearch } from './search.ts'
+export { makeTaskService } from './task.ts'
 export type {
   CollabService,
   CollectionService,
@@ -15,5 +16,18 @@ export type {
   Page,
   SearchArgs,
   SearchHit,
+  TaskBoardColumn,
+  TaskService,
 } from './types.ts'
-export type { CommentRow, NoteCreate, NoteRow, NoteUpdate, TagCreate, TagRow, TagUpdate } from './generated/types.ts'
+export type {
+  CommentRow,
+  NoteCreate,
+  NoteRow,
+  NoteUpdate,
+  TagCreate,
+  TagRow,
+  TagUpdate,
+  TaskPriorityOptionRow,
+  TaskRow,
+  TaskStatusOptionRow,
+} from './generated/types.ts'

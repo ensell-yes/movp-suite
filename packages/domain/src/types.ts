@@ -7,6 +7,13 @@ import type {
   TagCreate,
   TagRow,
   TagUpdate,
+  TaskPriorityOptionCreate,
+  TaskPriorityOptionRow,
+  TaskPriorityOptionUpdate,
+  TaskRow,
+  TaskStatusOptionCreate,
+  TaskStatusOptionRow,
+  TaskStatusOptionUpdate,
 } from './generated/types.ts'
 
 export interface DomainCtx {
@@ -105,9 +112,33 @@ export interface CollabService {
   inbox(a: { workspaceId: string; tab: 'all' | 'mentions' | 'saved' | 'assigned'; first?: number }): Promise<InboxItem[]>
 }
 
+export interface TaskBoardColumn {
+  status: TaskStatusOptionRow
+  tasks: TaskRow[]
+}
+
+export interface TaskService {
+  create(i: { workspaceId: string; title: string; description?: string; statusId?: string; priorityId?: string; parentId?: string; startDate?: string; dueDate?: string }): Promise<TaskRow>
+  get(id: string): Promise<TaskRow | null>
+  list(a: { workspaceId: string; statusId?: string; assigneeId?: string; parentId?: string | null; first?: number; after?: string | null }): Promise<Page<TaskRow>>
+  board(a: { workspaceId: string }): Promise<TaskBoardColumn[]>
+  updateDescription(id: string, body: string): Promise<TaskRow>
+  assign(i: { taskId: string; userId: string }): Promise<void>
+  unassign(i: { taskId: string; userId: string }): Promise<void>
+  addObserver(i: { taskId: string; userId: string }): Promise<void>
+  removeObserver(i: { taskId: string; userId: string }): Promise<void>
+  transition(i: { taskId: string; statusId: string }): Promise<TaskRow>
+  addDependency(i: { taskId: string; blockerId: string }): Promise<void>
+  removeDependency(i: { taskId: string; blockerId: string }): Promise<void>
+  attach(i: { taskId: string; r2Key: string; filename: string; contentType?: string; bytes?: number }): Promise<void>
+}
+
 export interface Domain {
   note: CollectionService<NoteRow, NoteCreate, NoteUpdate>
   tag: CollectionService<TagRow, TagCreate, TagUpdate>
+  task_status_option: CollectionService<TaskStatusOptionRow, TaskStatusOptionCreate, TaskStatusOptionUpdate>
+  task_priority_option: CollectionService<TaskPriorityOptionRow, TaskPriorityOptionCreate, TaskPriorityOptionUpdate>
+  task: TaskService
   search(a: SearchArgs): Promise<SearchHit[]>
   graph: GraphService
   collab: CollabService
