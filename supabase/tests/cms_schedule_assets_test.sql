@@ -1,5 +1,5 @@
 begin;
-select plan(11);
+select plan(17);
 
 insert into public.workspace (id, name) values
   ('11111111-1111-1111-1111-111111111111','W1');
@@ -30,6 +30,47 @@ select has_column('public','content_schedule','scheduled_by','content_schedule.s
 select has_column('public','content_collection_entry','collection_id','content_collection_entry.collection_id FK column');
 select has_column('public','content_collection_entry','content_item_id','content_collection_entry.content_item_id FK column');
 select has_column('public','content_seo','content_item_id','content_seo.content_item_id FK column');
+
+insert into public.content_schedule (id, workspace_id, content_item_id, action, revision_id, run_at, scheduled_by, state) values
+  ('000000e1-0000-0000-0000-000000000000','11111111-1111-1111-1111-111111111111',
+   '00000001-0000-0000-0000-000000000000','publish','000000a1-0000-0000-0000-000000000000',
+   now() + interval '1 hour','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','scheduled');
+select is((select count(*)::int from movp_internal.movp_events
+           where type='content.scheduled' and payload->>'schedule_id'='000000e1-0000-0000-0000-000000000000'),
+          1, 'inserting a content_schedule row emits exactly one content.scheduled event');
+
+insert into public.content_collection (id, workspace_id, key, label) values
+  ('000000c1-0000-0000-0000-000000000000','11111111-1111-1111-1111-111111111111','featured','Featured');
+select throws_ok($$
+  insert into public.content_collection (workspace_id, key, label)
+  values ('11111111-1111-1111-1111-111111111111','featured','Dupe')
+$$, '23505', null, 'content_collection(workspace_id, key) is unique');
+
+set local role authenticated;
+select lives_ok($$
+  insert into public.content_collection_entry (workspace_id, collection_id, content_item_id, position)
+  values ('11111111-1111-1111-1111-111111111111','000000c1-0000-0000-0000-000000000000',
+          '00000001-0000-0000-0000-000000000000',0)
+$$, 'a member may add a PUBLISHED item to a collection');
+select throws_ok($$
+  insert into public.content_collection_entry (workspace_id, collection_id, content_item_id, position)
+  values ('11111111-1111-1111-1111-111111111111','000000c1-0000-0000-0000-000000000000',
+          '00000002-0000-0000-0000-000000000000',1)
+$$, '42501', null, 'adding a DRAFT item is rejected by RLS (curation is published-only)');
+reset role;
+
+select throws_ok($$
+  insert into public.content_collection_entry (workspace_id, collection_id, content_item_id, position)
+  values ('11111111-1111-1111-1111-111111111111','000000c1-0000-0000-0000-000000000000',
+          '00000001-0000-0000-0000-000000000000',2)
+$$, '23505', null, 'content_collection_entry(collection_id, content_item_id) is unique');
+
+insert into public.content_seo (workspace_id, content_item_id) values
+  ('11111111-1111-1111-1111-111111111111','00000001-0000-0000-0000-000000000000');
+select throws_ok($$
+  insert into public.content_seo (workspace_id, content_item_id)
+  values ('11111111-1111-1111-1111-111111111111','00000001-0000-0000-0000-000000000000')
+$$, '23505', null, 'content_seo(content_item_id) is unique (one SEO row per item)');
 
 select * from finish();
 rollback;
