@@ -1,5 +1,5 @@
 begin;
-select plan(21);
+select plan(32);
 
 insert into public.workspace (id, name) values
   ('11111111-1111-1111-1111-111111111111', 'W1');
@@ -85,6 +85,82 @@ select throws_ok(
 select throws_ok(
   $$ delete from public.content_publish_event where content_item_id='00000001-0000-0000-0000-000000000000' $$,
   'P0001', null, 'content_publish_event is immutable (DELETE raises)');
+
+set local request.jwt.claims = '{"sub":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"}';
+
+insert into public.content_item (id, workspace_id, content_type_id, slug, status) values
+  ('00000003-0000-0000-0000-000000000000', '11111111-1111-1111-1111-111111111111',
+   'cccccccc-cccc-cccc-cccc-cccccccccccc', 'i3', 'draft');
+select is((select count(*)::int from movp_internal.movp_events
+           where type='content.created' and payload->>'id'='00000003-0000-0000-0000-000000000000'),
+          1, 'inserting a content_item emits content.created');
+select ok((select not (payload ? 'data') from movp_internal.movp_events
+           where type='content.created' and payload->>'id'='00000003-0000-0000-0000-000000000000'),
+          'content.created payload carries no data/PII');
+
+insert into public.content_revision (id, workspace_id, content_item_id, revision_number, data, content_hash, author_id) values
+  ('000000c1-0000-0000-0000-000000000000', '11111111-1111-1111-1111-111111111111',
+   '00000003-0000-0000-0000-000000000000', 1, '{"t":"v1"}'::jsonb, 'hash-v1',
+   'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
+update public.content_item set current_revision_id='000000c1-0000-0000-0000-000000000000'
+  where id='00000003-0000-0000-0000-000000000000';
+select is((select count(*)::int from movp_internal.movp_events
+           where type='content.revision_created' and payload->>'id'='000000c1-0000-0000-0000-000000000000'),
+          1, 'inserting a content_revision emits content.revision_created');
+
+update public.content_item set status='in_review' where id='00000003-0000-0000-0000-000000000000';
+select is((select count(*)::int from movp_internal.movp_events
+           where type='content.submitted_for_approval' and payload->>'id'='00000003-0000-0000-0000-000000000000'),
+          1, 'status -> in_review emits content.submitted_for_approval');
+
+insert into public.content_approval (id, workspace_id, content_item_id, state, policy, approvals_required) values
+  ('000000d3-0000-0000-0000-000000000000', '11111111-1111-1111-1111-111111111111',
+   '00000003-0000-0000-0000-000000000000', 'pending', 'single', 1);
+update public.content_approval
+   set state='approved', approved_revision_id='000000c1-0000-0000-0000-000000000000',
+       approved_content_hash='hash-v1', decided_at=now(), decided_by='aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+ where id='000000d3-0000-0000-0000-000000000000';
+select is((select count(*)::int from movp_internal.movp_events
+           where type='content.approved' and payload->>'id'='00000003-0000-0000-0000-000000000000'),
+          1, 'approval state -> approved emits content.approved');
+update public.content_item set status='approved', approved_revision_id='000000c1-0000-0000-0000-000000000000'
+  where id='00000003-0000-0000-0000-000000000000';
+
+insert into public.content_approval (id, workspace_id, content_item_id, state, policy, approvals_required) values
+  ('000000d4-0000-0000-0000-000000000000', '11111111-1111-1111-1111-111111111111',
+   '00000003-0000-0000-0000-000000000000', 'pending', 'single', 1);
+update public.content_approval set state='rejected', decided_at=now(), decided_by='aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+ where id='000000d4-0000-0000-0000-000000000000';
+select is((select count(*)::int from movp_internal.movp_events
+           where type='content.rejected' and payload->>'id'='00000003-0000-0000-0000-000000000000'),
+          1, 'approval state -> rejected emits content.rejected');
+
+insert into public.content_publish_event (workspace_id, content_item_id, action, revision_id, content_hash, actor_id) values
+  ('11111111-1111-1111-1111-111111111111', '00000003-0000-0000-0000-000000000000', 'publish',
+   '000000c1-0000-0000-0000-000000000000', 'hash-v1', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
+select is((select count(*)::int from movp_internal.movp_events
+           where type='content.published' and payload->>'id'='00000003-0000-0000-0000-000000000000'),
+          1, 'content_publish_event action=publish emits content.published');
+insert into public.content_publish_event (workspace_id, content_item_id, action, revision_id, content_hash, actor_id) values
+  ('11111111-1111-1111-1111-111111111111', '00000003-0000-0000-0000-000000000000', 'unpublish',
+   '000000c1-0000-0000-0000-000000000000', 'hash-v1', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
+select is((select count(*)::int from movp_internal.movp_events
+           where type='content.unpublished' and payload->>'id'='00000003-0000-0000-0000-000000000000'),
+          1, 'content_publish_event action=unpublish emits content.unpublished');
+
+insert into public.content_revision (id, workspace_id, content_item_id, revision_number, data, content_hash, author_id) values
+  ('000000c2-0000-0000-0000-000000000000', '11111111-1111-1111-1111-111111111111',
+   '00000003-0000-0000-0000-000000000000', 2, '{"t":"v2"}'::jsonb, 'hash-v2',
+   'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
+update public.content_item set current_revision_id='000000c2-0000-0000-0000-000000000000'
+  where id='00000003-0000-0000-0000-000000000000';
+select is((select count(*)::int from public.content_approval
+           where content_item_id='00000003-0000-0000-0000-000000000000' and state='superseded'),
+          1, 'editing an approved item supersedes the open approval');
+select is((select status from public.content_item where id='00000003-0000-0000-0000-000000000000'),
+          'in_review', 'demote-on-edit returns the item to in_review');
+select is((select approved_revision_id from public.content_item where id='00000003-0000-0000-0000-000000000000'),
+          '000000c1-0000-0000-0000-000000000000', 'demote-on-edit preserves approved_revision_id for audit');
 
 select * from finish();
 rollback;

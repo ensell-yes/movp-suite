@@ -91,3 +91,201 @@ drop trigger if exists content_publish_event_immutable_tg on public.content_publ
 create trigger content_publish_event_immutable_tg
   before update or delete on public.content_publish_event
   for each row execute function public.content_publish_event_immutable();
+
+create or replace function public.content_item_created_emit_event()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  perform public.emit_event(
+    'content.created',
+    new.workspace_id,
+    jsonb_build_object('id', new.id, 'content_type_id', new.content_type_id, 'status', new.status),
+    gen_random_uuid()::text
+  );
+  return new;
+end;
+$$;
+revoke all on function public.content_item_created_emit_event() from public, anon, authenticated;
+
+drop trigger if exists content_item_created_emit_event_tg on public.content_item;
+create trigger content_item_created_emit_event_tg
+  after insert on public.content_item
+  for each row execute function public.content_item_created_emit_event();
+
+create or replace function public.content_revision_created_emit_event()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  perform public.emit_event(
+    'content.revision_created',
+    new.workspace_id,
+    jsonb_build_object('id', new.id, 'content_item_id', new.content_item_id, 'content_hash', new.content_hash),
+    gen_random_uuid()::text
+  );
+  return new;
+end;
+$$;
+revoke all on function public.content_revision_created_emit_event() from public, anon, authenticated;
+
+drop trigger if exists content_revision_created_emit_event_tg on public.content_revision;
+create trigger content_revision_created_emit_event_tg
+  after insert on public.content_revision
+  for each row execute function public.content_revision_created_emit_event();
+
+create or replace function public.content_item_submitted_emit_event()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if new.status = 'in_review' and new.status is distinct from old.status then
+    perform public.emit_event(
+      'content.submitted_for_approval',
+      new.workspace_id,
+      jsonb_build_object(
+        'id', new.id,
+        'content_type_id', new.content_type_id,
+        'status', new.status,
+        'actor_id', (select auth.uid())
+      ),
+      gen_random_uuid()::text
+    );
+  end if;
+  return new;
+end;
+$$;
+revoke all on function public.content_item_submitted_emit_event() from public, anon, authenticated;
+
+drop trigger if exists content_item_submitted_emit_event_tg on public.content_item;
+create trigger content_item_submitted_emit_event_tg
+  after update of status on public.content_item
+  for each row execute function public.content_item_submitted_emit_event();
+
+create or replace function public.content_approval_decided_emit_event()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if new.state = 'approved' and new.state is distinct from old.state then
+    perform public.emit_event(
+      'content.approved',
+      new.workspace_id,
+      jsonb_build_object(
+        'id', new.content_item_id,
+        'approval_id', new.id,
+        'revision_id', new.approved_revision_id,
+        'content_hash', new.approved_content_hash,
+        'actor_id', new.decided_by,
+        'status', 'approved'
+      ),
+      gen_random_uuid()::text
+    );
+  elsif new.state = 'rejected' and new.state is distinct from old.state then
+    perform public.emit_event(
+      'content.rejected',
+      new.workspace_id,
+      jsonb_build_object(
+        'id', new.content_item_id,
+        'approval_id', new.id,
+        'actor_id', new.decided_by,
+        'status', 'rejected'
+      ),
+      gen_random_uuid()::text
+    );
+  end if;
+  return new;
+end;
+$$;
+revoke all on function public.content_approval_decided_emit_event() from public, anon, authenticated;
+
+drop trigger if exists content_approval_decided_emit_event_tg on public.content_approval;
+create trigger content_approval_decided_emit_event_tg
+  after update of state on public.content_approval
+  for each row execute function public.content_approval_decided_emit_event();
+
+create or replace function public.content_publish_event_emit_event()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if new.action = 'publish' then
+    perform public.emit_event(
+      'content.published',
+      new.workspace_id,
+      jsonb_build_object(
+        'id', new.content_item_id,
+        'revision_id', new.revision_id,
+        'content_hash', new.content_hash,
+        'actor_id', new.actor_id,
+        'status', 'published'
+      ),
+      gen_random_uuid()::text
+    );
+  elsif new.action = 'unpublish' then
+    perform public.emit_event(
+      'content.unpublished',
+      new.workspace_id,
+      jsonb_build_object(
+        'id', new.content_item_id,
+        'revision_id', new.revision_id,
+        'content_hash', new.content_hash,
+        'actor_id', new.actor_id,
+        'status', 'archived'
+      ),
+      gen_random_uuid()::text
+    );
+  end if;
+  return new;
+end;
+$$;
+revoke all on function public.content_publish_event_emit_event() from public, anon, authenticated;
+
+drop trigger if exists content_publish_event_emit_event_tg on public.content_publish_event;
+create trigger content_publish_event_emit_event_tg
+  after insert on public.content_publish_event
+  for each row execute function public.content_publish_event_emit_event();
+
+create or replace function public.content_demote_on_edit()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_approved uuid;
+begin
+  select approved_revision_id into v_approved
+    from public.content_item
+   where id = new.content_item_id;
+
+  if v_approved is not null and v_approved <> new.id then
+    update public.content_approval
+       set state = 'superseded', decided_at = now()
+     where content_item_id = new.content_item_id
+       and state in ('pending', 'approved');
+
+    update public.content_item
+       set status = 'in_review'
+     where id = new.content_item_id
+       and status <> 'in_review';
+  end if;
+  return new;
+end;
+$$;
+revoke all on function public.content_demote_on_edit() from public, anon, authenticated;
+
+drop trigger if exists content_demote_on_edit_tg on public.content_revision;
+create trigger content_demote_on_edit_tg
+  after insert on public.content_revision
+  for each row execute function public.content_demote_on_edit();
