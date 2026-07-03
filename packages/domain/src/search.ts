@@ -2,7 +2,7 @@ import type { DomainCtx, EmbeddingProvider, SearchArgs, SearchHit } from './type
 
 const DEFAULT_LIMIT = 10
 const MAX_LIMIT = 100
-const COLLECTIONS = ['note', 'tag'] as const
+const COLLECTIONS = ['note', 'tag', 'content_item'] as const
 
 const clamp = (n: number, lo: number, hi: number) => Math.min(Math.max(n, lo), hi)
 
@@ -57,7 +57,7 @@ async function hydrateTitles(
   const titles = new Map<string, string>()
   await Promise.all(
     [...byCollection.entries()].map(async ([collection, ids]) => {
-      const titleColumn = collection === 'tag' ? 'name' : 'title'
+      const titleColumn = collection === 'tag' ? 'name' : collection === 'content_item' ? 'search_text' : 'title'
       const { data, error } = await ctx.db.from(collection).select(`id, ${titleColumn}`).in('id', ids)
       if (error) throw new Error(`domain.search.hydrate failed [${error.code ?? 'unknown'}]`)
       for (const row of (data ?? []) as Array<Record<string, unknown>>) {

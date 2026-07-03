@@ -116,6 +116,11 @@ describe('content CMS integration', () => {
     })
     expect(scheduled.revision_id).toBe(published.current_revision_id)
 
+    const hits = await domain.search({ workspaceId, query: 'Perfectly Reasonable', collection: 'content_item', mode: 'fts' })
+    expect(hits).toEqual(expect.arrayContaining([
+      expect.objectContaining({ collection: 'content_item', id: published.id }),
+    ]))
+
     const collection = await domain.content.createCollection({ workspaceId, key: 'featured', label: 'Featured' })
     await expect(domain.content.addToCollection({ collectionId: collection.id, itemId: published.id })).resolves.toBeUndefined()
     await expect(domain.content.addToCollection({ collectionId: collection.id, itemId: draft.id })).rejects.toThrow()
