@@ -12,6 +12,16 @@ insert into public.workspace_membership (workspace_id, user_id, role) values
 insert into public.note (id, workspace_id, title, body) values
   ('33333333-3333-3333-3333-333333333333', '11111111-1111-1111-1111-111111111111', 'N1', 'body one'),
   ('44444444-4444-4444-4444-444444444444', '22222222-2222-2222-2222-222222222222', 'N2', 'body two');
+-- Task-subsystem seed so can_access_entity('task', ...) resolves against a real row.
+-- Options use is_default=false so they never collide with the per-workspace default-option
+-- trigger (20260701000008).
+insert into public.task_status_option (id, workspace_id, label, category, sort_order, is_default, is_active)
+  values ('a1a1a1a1-a1a1-a1a1-a1a1-a1a1a1a1a1a1','11111111-1111-1111-1111-111111111111','Seed Status','backlog',10,false,true);
+insert into public.task_priority_option (id, workspace_id, label, rank, is_default, is_active)
+  values ('b1b1b1b1-b1b1-b1b1-b1b1-b1b1b1b1b1b1','11111111-1111-1111-1111-111111111111','Seed Priority',5,false,true);
+insert into public.task (id, workspace_id, title, status_id, priority_id)
+  values ('99999999-9999-9999-9999-999999999999','11111111-1111-1111-1111-111111111111','Seed Task',
+          'a1a1a1a1-a1a1-a1a1-a1a1-a1a1a1a1a1a1','b1b1b1b1-b1b1-b1b1-b1b1-b1b1b1b1b1b1');
 
 -- Task 2: structural - tables, composite uniques, entity indexes.
 select has_table('public', 'comment',    'comment table exists');
@@ -44,13 +54,13 @@ select is(public.can_access_entity('note','33333333-3333-3333-3333-333333333333'
 select is(public.can_access_entity('note','44444444-4444-4444-4444-444444444444','11111111-1111-1111-1111-111111111111'),
           false, 'entity not in the passed workspace -> false');
 select is(public.can_access_entity('task','99999999-9999-9999-9999-999999999999','11111111-1111-1111-1111-111111111111'),
-          false, 'unknown entity_type -> false (fail closed) even for a member');
+          true, 'member + task in ws -> true (task arm resolves against public.task)');
 -- Act as non-member B (not in W1).
 set local request.jwt.claims = '{"sub":"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"}';
 select is(public.can_access_entity('note','33333333-3333-3333-3333-333333333333','11111111-1111-1111-1111-111111111111'),
           false, 'non-member -> false');
 select is(public.can_access_entity('task','99999999-9999-9999-9999-999999999999','11111111-1111-1111-1111-111111111111'),
-          false, 'unknown entity_type -> false (fail closed), non-member');
+          false, 'non-member -> false (task arm), even for an existing task');
 
 -- Task 4: RLS matrix (still role=authenticated).
 -- Member A authors a comment on the accessible note.

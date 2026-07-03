@@ -1,5 +1,5 @@
 begin;
-select plan(24);
+select plan(27);
 
 -- Base seed (as table owner; RLS bypassed).
 -- W1 members: A (owner), C (member). B is NOT a member of W1. W2 has no seeded members.
@@ -76,6 +76,18 @@ select throws_ok(
     values ('11111111-1111-1111-1111-111111111111','70000000-0000-0000-0000-000000000001',
             'dddddddd-dddd-dddd-dddd-dddddddddddd')$$,
   '23505', NULL, 'duplicate (task_id, assignee_user_id) rejected');
+
+-- Task 3: can_access_entity('task', ...) (act as member A of W1).
+set local role authenticated;
+set local request.jwt.claims = '{"sub":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"}';
+select is(public.can_access_entity('task','70000000-0000-0000-0000-000000000001','11111111-1111-1111-1111-111111111111'),
+          true,  'member + task in ws -> true');
+select is(public.can_access_entity('task','7fffffff-ffff-ffff-ffff-ffffffffffff','11111111-1111-1111-1111-111111111111'),
+          false, 'member + absent task -> false');
+-- Act as non-member B (not in W1).
+set local request.jwt.claims = '{"sub":"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"}';
+select is(public.can_access_entity('task','70000000-0000-0000-0000-000000000001','11111111-1111-1111-1111-111111111111'),
+          false, 'non-member -> false (base gate) even for an existing task');
 
 select * from finish();
 rollback;
