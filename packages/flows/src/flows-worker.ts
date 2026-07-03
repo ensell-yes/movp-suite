@@ -7,6 +7,27 @@ function stringField(value: unknown): string | null {
   return typeof value === 'string' && value.length > 0 ? value : null
 }
 
+async function hmacHex(secret: string, body: string): Promise<string> {
+  const enc = new TextEncoder()
+  const key = await crypto.subtle.importKey('raw', enc.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'])
+  const sig = await crypto.subtle.sign('HMAC', key, enc.encode(body))
+  return [...new Uint8Array(sig)].map((b) => b.toString(16).padStart(2, '0')).join('')
+}
+
+export async function buildWebhookRequest(
+  payload: Record<string, unknown>,
+): Promise<{ url: string; headers: Record<string, string>; body: string }> {
+  const url = stringField(payload.url)
+  if (!url) throw new Error('webhook_missing_url')
+  const secret = stringField(payload.secret)
+  const sent: Record<string, unknown> = { ...payload }
+  delete sent.secret
+  const body = JSON.stringify(sent)
+  const headers: Record<string, string> = { 'content-type': 'application/json' }
+  if (secret) headers['x-movp-signature'] = `sha256=${await hmacHex(secret, body)}`
+  return { url, headers, body }
+}
+
 async function emailForUser(db: SupabaseClient, userId: string): Promise<string | null> {
   const { data, error } = await db.auth.admin.getUserById(userId)
   if (error) return null
@@ -47,14 +68,8 @@ export async function runFlowsWorker(
 
   for (const job of await claimDueJobs(db, 'webhook', limit)) {
     try {
-      const payload = job.payload
-      const url = stringField(payload.url)
-      if (!url) throw new Error('webhook_missing_url')
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(payload),
-      })
+      const { url, headers, body } = await buildWebhookRequest(job.payload as Record<string, unknown>)
+      const res = await fetch(url, { method: 'POST', headers, body })
       if (!res.ok) throw new Error(`webhook:${res.status}`)
       await completeJob(db, job.id, true)
       processed++
