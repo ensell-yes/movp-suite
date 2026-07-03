@@ -427,3 +427,105 @@ export interface TaskAttachmentUpdate {
   uploaded_by?: string
   task_id?: string
 }
+
+export interface ContentTypeRow {
+  id: string
+  workspace_id: string
+  key: string
+  label: string
+  field_schema: Record<string, unknown>
+  moderation_policy: 'none' | 'pre' | 'post'
+  approval_policy: 'none' | 'single' | 'multi'
+  created_at: string
+  updated_at: string
+}
+
+export interface ContentTypeCreate {
+  workspace_id: string
+  key: string
+  label: string
+  field_schema: Record<string, unknown>
+  moderation_policy?: 'none' | 'pre' | 'post'
+  approval_policy?: 'none' | 'single' | 'multi'
+}
+
+export interface ContentTypeUpdate {
+  key?: string
+  label?: string
+  field_schema?: Record<string, unknown>
+  moderation_policy?: 'none' | 'pre' | 'post'
+  approval_policy?: 'none' | 'single' | 'multi'
+}
+
+export interface ContentItemRow {
+  id: string
+  workspace_id: string
+  slug: string
+  status: 'draft' | 'in_review' | 'approved' | 'published' | 'archived'
+  current_revision_id: string | null
+  approved_revision_id: string | null
+  published_revision_id: string | null
+  published_at: string | null
+  search_text: string | null
+  search_body: string | null
+  content_type_id: string
+  created_at: string
+  updated_at: string
+}
+
+export interface ContentItemCreate {
+  workspace_id: string
+  slug: string
+  status?: 'draft' | 'in_review' | 'approved' | 'published' | 'archived'
+  current_revision_id?: string
+  approved_revision_id?: string
+  published_revision_id?: string
+  published_at?: string
+  search_text?: string
+  search_body?: string
+  content_type_id: string
+}
+
+export interface ContentItemUpdate {
+  slug?: string
+  status?: 'draft' | 'in_review' | 'approved' | 'published' | 'archived'
+  current_revision_id?: string
+  approved_revision_id?: string
+  published_revision_id?: string
+  published_at?: string
+  search_text?: string
+  search_body?: string
+  content_type_id?: string
+}
+
+export interface ContentRevisionRow {
+  id: string
+  workspace_id: string
+  revision_number: number
+  data: Record<string, unknown>
+  content_hash: string
+  author_id: string
+  content_item_id: string
+  parent_id: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface ContentRevisionCreate {
+  workspace_id: string
+  revision_number: number
+  data: Record<string, unknown>
+  content_hash: string
+  author_id: string
+  content_item_id: string
+  parent_id?: string
+}
+
+export interface ContentRevisionUpdate {
+  revision_number?: number
+  data?: Record<string, unknown>
+  content_hash?: string
+  author_id?: string
+  content_item_id?: string
+  parent_id?: string
+}

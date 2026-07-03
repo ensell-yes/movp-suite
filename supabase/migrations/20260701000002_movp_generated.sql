@@ -1153,3 +1153,230 @@ on conflict (collection_name, name) do update set
   reporting_role = excluded.reporting_role,
   searchable = excluded.searchable,
   embeddable = excluded.embeddable;
+
+
+create table if not exists public.content_type (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id uuid not null references public.workspace(id) on delete cascade,
+  key text not null,
+  label text not null,
+  field_schema jsonb not null,
+  moderation_policy text not null default 'none' check (moderation_policy in ('none', 'pre', 'post')),
+  approval_policy text not null default 'none' check (approval_policy in ('none', 'single', 'multi')),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+alter table public.content_type enable row level security;
+grant select, insert, update, delete on public.content_type to authenticated;
+grant select, insert, update, delete on public.content_type to service_role;
+create policy content_type_rw on public.content_type for all to authenticated
+  using (public.is_workspace_member(workspace_id))
+  with check (public.is_workspace_member(workspace_id));
+
+
+
+create or replace function public.content_type_delete_chunks()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  delete from public.search_chunk where source_table = 'content_type' and source_id = old.id;
+  return old;
+end;
+$$;
+revoke all on function public.content_type_delete_chunks() from public, anon, authenticated;
+
+create trigger content_type_delete_chunks_tg
+  after delete on public.content_type
+  for each row execute function public.content_type_delete_chunks();
+
+insert into public.movp_collections (name, label, label_plural, workspace_scoped)
+values ('content_type', 'Content Type', 'Content Types', true)
+on conflict (name) do update set label = excluded.label, label_plural = excluded.label_plural, workspace_scoped = excluded.workspace_scoped;
+
+insert into public.movp_fields (collection_name, name, type, label, cardinality, reporting_role, searchable, embeddable)
+values
+  ('content_type', 'key', 'text', 'Key', null, null, false, false),
+  ('content_type', 'label', 'text', 'Label', null, null, false, false),
+  ('content_type', 'field_schema', 'json', 'Field Schema', null, null, false, false),
+  ('content_type', 'moderation_policy', 'enum', 'Moderation Policy', null, 'dimension', false, false),
+  ('content_type', 'approval_policy', 'enum', 'Approval Policy', null, 'dimension', false, false)
+on conflict (collection_name, name) do update set
+  type = excluded.type,
+  label = excluded.label,
+  cardinality = excluded.cardinality,
+  reporting_role = excluded.reporting_role,
+  searchable = excluded.searchable,
+  embeddable = excluded.embeddable;
+
+
+create table if not exists public.content_item (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id uuid not null references public.workspace(id) on delete cascade,
+  slug text not null,
+  status text not null default 'draft' check (status in ('draft', 'in_review', 'approved', 'published', 'archived')),
+  current_revision_id uuid,
+  approved_revision_id uuid,
+  published_revision_id uuid,
+  published_at timestamptz,
+  search_text text,
+  search_body text,
+  content_type_id uuid not null references public.content_type(id) on delete cascade,
+  search_vector tsvector,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+alter table public.content_item enable row level security;
+grant select, insert, update, delete on public.content_item to authenticated;
+grant select, insert, update, delete on public.content_item to service_role;
+create policy content_item_rw on public.content_item for all to authenticated
+  using (public.is_workspace_member(workspace_id))
+  with check (public.is_workspace_member(workspace_id));
+
+create or replace function public.content_item_search_vector_update()
+returns trigger
+language plpgsql
+as $$
+begin
+  new.search_vector := to_tsvector('english', coalesce(new.search_text, '') || ' ' || coalesce(new.search_body, ''));
+  return new;
+end;
+$$;
+
+create trigger content_item_search_vector_tg
+  before insert or update on public.content_item
+  for each row execute function public.content_item_search_vector_update();
+
+create index content_item_search_idx on public.content_item using gin (search_vector);
+
+create or replace function public.content_item_search_body_enqueue_embed()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_hash text;
+begin
+  v_hash := encode(extensions.digest(coalesce(new.search_body, ''), 'sha256'), 'hex');
+  if tg_op = 'UPDATE' and v_hash = encode(extensions.digest(coalesce(old.search_body, ''), 'sha256'), 'hex') then
+    return new;
+  end if;
+
+  insert into movp_internal.movp_jobs (kind, idempotency_key, payload, workspace_id)
+  values (
+    'embed',
+    'content_item' || ':' || new.id::text || ':search_body:' || v_hash,
+    jsonb_build_object('source_table', 'content_item', 'source_id', new.id, 'field', 'search_body', 'content_hash', v_hash),
+    new.workspace_id
+  )
+  on conflict (kind, idempotency_key) do nothing;
+  return new;
+end;
+$$;
+revoke all on function public.content_item_search_body_enqueue_embed() from public, anon, authenticated;
+
+create trigger content_item_search_body_enqueue_embed_tg
+  after insert or update on public.content_item
+  for each row execute function public.content_item_search_body_enqueue_embed();
+
+create or replace function public.content_item_delete_chunks()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  delete from public.search_chunk where source_table = 'content_item' and source_id = old.id;
+  return old;
+end;
+$$;
+revoke all on function public.content_item_delete_chunks() from public, anon, authenticated;
+
+create trigger content_item_delete_chunks_tg
+  after delete on public.content_item
+  for each row execute function public.content_item_delete_chunks();
+
+insert into public.movp_collections (name, label, label_plural, workspace_scoped)
+values ('content_item', 'Content Item', 'Content Items', true)
+on conflict (name) do update set label = excluded.label, label_plural = excluded.label_plural, workspace_scoped = excluded.workspace_scoped;
+
+insert into public.movp_fields (collection_name, name, type, label, cardinality, reporting_role, searchable, embeddable)
+values
+  ('content_item', 'content_type', 'relation', 'Content Type', 'many-to-one', null, false, false),
+  ('content_item', 'slug', 'text', 'Slug', null, null, false, false),
+  ('content_item', 'status', 'enum', 'Status', null, 'dimension', false, false),
+  ('content_item', 'current_revision_id', 'uuid', 'Current Revision', null, null, false, false),
+  ('content_item', 'approved_revision_id', 'uuid', 'Approved Revision', null, null, false, false),
+  ('content_item', 'published_revision_id', 'uuid', 'Published Revision', null, null, false, false),
+  ('content_item', 'published_at', 'datetime', 'Published At', null, null, false, false),
+  ('content_item', 'search_text', 'text', 'Search Text', null, null, true, false),
+  ('content_item', 'search_body', 'richText', 'Search Body', null, null, true, true)
+on conflict (collection_name, name) do update set
+  type = excluded.type,
+  label = excluded.label,
+  cardinality = excluded.cardinality,
+  reporting_role = excluded.reporting_role,
+  searchable = excluded.searchable,
+  embeddable = excluded.embeddable;
+
+
+create table if not exists public.content_revision (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id uuid not null references public.workspace(id) on delete cascade,
+  revision_number numeric not null,
+  data jsonb not null,
+  content_hash text not null,
+  author_id uuid not null,
+  content_item_id uuid not null references public.content_item(id) on delete cascade,
+  parent_id uuid references public.content_revision(id) on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+alter table public.content_revision enable row level security;
+grant select, insert, update, delete on public.content_revision to authenticated;
+grant select, insert, update, delete on public.content_revision to service_role;
+create policy content_revision_rw on public.content_revision for all to authenticated
+  using (public.is_workspace_member(workspace_id))
+  with check (public.is_workspace_member(workspace_id));
+
+
+
+create or replace function public.content_revision_delete_chunks()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  delete from public.search_chunk where source_table = 'content_revision' and source_id = old.id;
+  return old;
+end;
+$$;
+revoke all on function public.content_revision_delete_chunks() from public, anon, authenticated;
+
+create trigger content_revision_delete_chunks_tg
+  after delete on public.content_revision
+  for each row execute function public.content_revision_delete_chunks();
+
+insert into public.movp_collections (name, label, label_plural, workspace_scoped)
+values ('content_revision', 'Content Revision', 'Content Revisions', true)
+on conflict (name) do update set label = excluded.label, label_plural = excluded.label_plural, workspace_scoped = excluded.workspace_scoped;
+
+insert into public.movp_fields (collection_name, name, type, label, cardinality, reporting_role, searchable, embeddable)
+values
+  ('content_revision', 'content_item', 'relation', 'Item', 'many-to-one', null, false, false),
+  ('content_revision', 'revision_number', 'number', 'Revision Number', null, null, false, false),
+  ('content_revision', 'data', 'json', 'Data', null, null, false, false),
+  ('content_revision', 'content_hash', 'text', 'Content Hash', null, null, false, false),
+  ('content_revision', 'author_id', 'uuid', 'Author', null, null, false, false),
+  ('content_revision', 'parent', 'relation', 'Parent Revision', 'many-to-one', null, false, false)
+on conflict (collection_name, name) do update set
+  type = excluded.type,
+  label = excluded.label,
+  cardinality = excluded.cardinality,
+  reporting_role = excluded.reporting_role,
+  searchable = excluded.searchable,
+  embeddable = excluded.embeddable;

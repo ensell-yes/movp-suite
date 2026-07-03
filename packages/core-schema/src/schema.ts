@@ -1,4 +1,7 @@
 import { comment } from './collections/comment.ts'
+import { contentItem } from './collections/content_item.ts'
+import { contentRevision } from './collections/content_revision.ts'
+import { contentType } from './collections/content_type.ts'
 import { mention } from './collections/mention.ts'
 import { note } from './collections/note.ts'
 import { reaction } from './collections/reaction.ts'
@@ -33,4 +36,7 @@ export const schema = defineSchema([
   taskDependency,
   taskStatusHistory,
   taskAttachment,
+  contentType,
+  contentItem,
+  contentRevision,
 ])
