@@ -109,10 +109,34 @@ and links CMS content). Its hand-authored migrations start at `…000017` (after
    board**), reporting star-schema verification, and the `[campaigns]` e2e slice. **No new migration.**
    **Precondition: 03a + 03b merged.**
 
-> **The remaining app phases** (`app-04` Segmentation, `app-06` Domain Workflows) are still ROADMAP/design
-> altitude — each must be **expanded into a bite-sized TDD series** (as Core Phase 1, Collaboration, Task, CMS,
-> and Campaigns were) before code is written. Segmentation (`app-04`) lands the `segment` collection that lights
-> up Campaigns' dormant `campaign↔segment` targeting seam.
+**Phase 6 — Segmentation & Lifecycle Events (`app-04`) is EXPANDED and EXECUTABLE** (bite-sized TDD, four parts;
+the suite's BI/ML consumer, hardened across three parallel adversarial-review rounds — including a
+SQL-injection audit of the predicate compiler and a full write-path/schema-fixture reconciliation). A typed
+`platform_event` stream feeds audience `segment`s defined by a **parameterized predicate-DSL** (compiled to
+set-based SQL via `format('%L'/%I')`, never string-concatenation), with idempotent recompute on the shared
+`movp_jobs` engine and explainable membership. **Precondition: Campaigns (03a–03c) merged first** (+ the whole
+Core→Collaboration→Task→CMS→Campaigns chain); its hand-authored migrations start at `…000019`. Execute **in order**:
+1. `2026-07-01-movp-app-04a-segmentation-data-bridge.md` — seven config-first (generically-surfaced) collections
+   (`platform_event` [append-only fact], `segment`, `segment_rule`, `segment_membership`, `segment_snapshot`,
+   `segment_snapshot_member`, `segment_recompute_run`), `platform_event` composite indexes + immutability guard,
+   and the **internal event bridge** (`AFTER INSERT` on `movp_events` → `platform_event`, guarded so a bad payload
+   can't abort the emitting business write) (migration `…000019`).
+2. `2026-07-01-movp-app-04b-segmentation-ingestion.md` — **external ingestion** (`functions/ingest`: JWT + hashed
+   API-key paths, the `ingest_key` registry, the workspace-resolving `ingest_platform_event` RPC, bounded/dropped
+   untrusted input) (migration `…000020`). **Precondition: 04a merged.**
+3. `2026-07-01-movp-app-04c-segmentation-recompute.md` — the **evaluation/recompute engine**: the injection-safe
+   predicate compiler + `segment_match_subjects`, the `segment_recompute` job kind + incremental-enqueue trigger,
+   the atomic `recompute_segment` RPC (diff → deterministic events → audit run, advisory-locked) + worker, and
+   snapshots (migration `…000021`). **Precondition: 04a + 04b merged.**
+4. `2026-07-01-movp-app-04d-segmentation-surfaces-frontend.md` — codegen-generic surfaces + custom reads
+   (`previewMatchingCount` reusing the safe compiler, `segmentMembershipExplained`, `snapshotDiff`), four Astro
+   templates (island→`/api` pattern), BI/ML metadata verification, and the `[segmentation]` e2e slice.
+   **No new migration** (one tiny read RPC). **Precondition: 04a–04c merged.** (The `campaign→segment` audience
+   seam is DEFERRED to a future campaign-targeting flow.)
+
+> **The remaining app phase** (`app-06` Domain Workflows) is still ROADMAP/design altitude — it must be
+> **expanded into a bite-sized TDD series** (as every prior phase was) before code is written. It consumes
+> Segmentation's `segment.*` events + the `platform_event` stream as automation triggers.
 
 ## Per-task execution protocol
 
