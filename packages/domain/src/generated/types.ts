@@ -619,3 +619,151 @@ export interface ContentPublishEventUpdate {
   content_item_id?: string
   revision_id?: string
 }
+
+export interface ContentScheduleRow {
+  id: string
+  workspace_id: string
+  action: 'publish' | 'unpublish'
+  run_at: string
+  scheduled_by: string
+  state: 'scheduled' | 'fired' | 'canceled' | 'failed'
+  content_item_id: string
+  revision_id: string
+  created_at: string
+  updated_at: string
+}
+
+export interface ContentScheduleCreate {
+  workspace_id: string
+  action: 'publish' | 'unpublish'
+  run_at: string
+  scheduled_by: string
+  state?: 'scheduled' | 'fired' | 'canceled' | 'failed'
+  content_item_id: string
+  revision_id: string
+}
+
+export interface ContentScheduleUpdate {
+  action?: 'publish' | 'unpublish'
+  run_at?: string
+  scheduled_by?: string
+  state?: 'scheduled' | 'fired' | 'canceled' | 'failed'
+  content_item_id?: string
+  revision_id?: string
+}
+
+export interface AssetRow {
+  id: string
+  workspace_id: string
+  filename: string
+  mime: string
+  r2_key: string
+  size_bytes: number | null
+  checksum: string | null
+  width: number | null
+  height: number | null
+  alt_text: string | null
+  uploaded_by: string
+  created_at: string
+  updated_at: string
+}
+
+export interface AssetCreate {
+  workspace_id: string
+  filename: string
+  mime: string
+  r2_key: string
+  size_bytes?: number
+  checksum?: string
+  width?: number
+  height?: number
+  alt_text?: string
+  uploaded_by: string
+}
+
+export interface AssetUpdate {
+  filename?: string
+  mime?: string
+  r2_key?: string
+  size_bytes?: number
+  checksum?: string
+  width?: number
+  height?: number
+  alt_text?: string
+  uploaded_by?: string
+}
+
+export interface ContentCollectionRow {
+  id: string
+  workspace_id: string
+  key: string
+  label: string
+  description: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface ContentCollectionCreate {
+  workspace_id: string
+  key: string
+  label: string
+  description?: string
+}
+
+export interface ContentCollectionUpdate {
+  key?: string
+  label?: string
+  description?: string
+}
+
+export interface ContentCollectionEntryRow {
+  id: string
+  workspace_id: string
+  position: number
+  collection_id: string
+  content_item_id: string
+  created_at: string
+  updated_at: string
+}
+
+export interface ContentCollectionEntryCreate {
+  workspace_id: string
+  position: number
+  collection_id: string
+  content_item_id: string
+}
+
+export interface ContentCollectionEntryUpdate {
+  position?: number
+  collection_id?: string
+  content_item_id?: string
+}
+
+export interface ContentSeoRow {
+  id: string
+  workspace_id: string
+  meta: Record<string, unknown> | null
+  jsonld: Record<string, unknown> | null
+  score: number | null
+  checklist: Record<string, unknown> | null
+  content_item_id: string
+  created_at: string
+  updated_at: string
+}
+
+export interface ContentSeoCreate {
+  workspace_id: string
+  meta?: Record<string, unknown>
+  jsonld?: Record<string, unknown>
+  score?: number
+  checklist?: Record<string, unknown>
+  content_item_id: string
+}
+
+export interface ContentSeoUpdate {
+  meta?: Record<string, unknown>
+  jsonld?: Record<string, unknown>
+  score?: number
+  checklist?: Record<string, unknown>
+  content_item_id?: string
+}

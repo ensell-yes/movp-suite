@@ -1553,3 +1553,306 @@ on conflict (collection_name, name) do update set
   reporting_role = excluded.reporting_role,
   searchable = excluded.searchable,
   embeddable = excluded.embeddable;
+
+
+create table if not exists public.content_schedule (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id uuid not null references public.workspace(id) on delete cascade,
+  action text not null check (action in ('publish', 'unpublish')),
+  run_at timestamptz not null,
+  scheduled_by uuid not null,
+  state text not null default 'scheduled' check (state in ('scheduled', 'fired', 'canceled', 'failed')),
+  content_item_id uuid not null references public.content_item(id) on delete cascade,
+  revision_id uuid not null references public.content_revision(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+alter table public.content_schedule enable row level security;
+grant select, insert, update, delete on public.content_schedule to authenticated;
+grant select, insert, update, delete on public.content_schedule to service_role;
+create policy content_schedule_rw on public.content_schedule for all to authenticated
+  using (public.is_workspace_member(workspace_id))
+  with check (public.is_workspace_member(workspace_id));
+
+
+
+create or replace function public.content_schedule_delete_chunks()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  delete from public.search_chunk where source_table = 'content_schedule' and source_id = old.id;
+  return old;
+end;
+$$;
+revoke all on function public.content_schedule_delete_chunks() from public, anon, authenticated;
+
+create trigger content_schedule_delete_chunks_tg
+  after delete on public.content_schedule
+  for each row execute function public.content_schedule_delete_chunks();
+
+insert into public.movp_collections (name, label, label_plural, workspace_scoped)
+values ('content_schedule', 'Content Schedule', 'Content Schedules', true)
+on conflict (name) do update set label = excluded.label, label_plural = excluded.label_plural, workspace_scoped = excluded.workspace_scoped;
+
+insert into public.movp_fields (collection_name, name, type, label, cardinality, reporting_role, searchable, embeddable)
+values
+  ('content_schedule', 'content_item', 'relation', 'Content Item', 'many-to-one', null, false, false),
+  ('content_schedule', 'action', 'enum', 'Action', null, null, false, false),
+  ('content_schedule', 'revision', 'relation', 'Revision', 'many-to-one', null, false, false),
+  ('content_schedule', 'run_at', 'datetime', 'Run At', null, null, false, false),
+  ('content_schedule', 'scheduled_by', 'uuid', 'Scheduled By', null, null, false, false),
+  ('content_schedule', 'state', 'enum', 'State', null, 'dimension', false, false)
+on conflict (collection_name, name) do update set
+  type = excluded.type,
+  label = excluded.label,
+  cardinality = excluded.cardinality,
+  reporting_role = excluded.reporting_role,
+  searchable = excluded.searchable,
+  embeddable = excluded.embeddable;
+
+
+create table if not exists public.asset (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id uuid not null references public.workspace(id) on delete cascade,
+  filename text not null,
+  mime text not null,
+  r2_key text not null,
+  size_bytes numeric,
+  checksum text,
+  width numeric,
+  height numeric,
+  alt_text text,
+  uploaded_by uuid not null,
+  search_vector tsvector,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+alter table public.asset enable row level security;
+grant select, insert, update, delete on public.asset to authenticated;
+grant select, insert, update, delete on public.asset to service_role;
+create policy asset_rw on public.asset for all to authenticated
+  using (public.is_workspace_member(workspace_id))
+  with check (public.is_workspace_member(workspace_id));
+
+create or replace function public.asset_search_vector_update()
+returns trigger
+language plpgsql
+as $$
+begin
+  new.search_vector := to_tsvector('english', coalesce(new.alt_text, ''));
+  return new;
+end;
+$$;
+
+create trigger asset_search_vector_tg
+  before insert or update on public.asset
+  for each row execute function public.asset_search_vector_update();
+
+create index asset_search_idx on public.asset using gin (search_vector);
+
+
+create or replace function public.asset_delete_chunks()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  delete from public.search_chunk where source_table = 'asset' and source_id = old.id;
+  return old;
+end;
+$$;
+revoke all on function public.asset_delete_chunks() from public, anon, authenticated;
+
+create trigger asset_delete_chunks_tg
+  after delete on public.asset
+  for each row execute function public.asset_delete_chunks();
+
+insert into public.movp_collections (name, label, label_plural, workspace_scoped)
+values ('asset', 'Asset', 'Assets', true)
+on conflict (name) do update set label = excluded.label, label_plural = excluded.label_plural, workspace_scoped = excluded.workspace_scoped;
+
+insert into public.movp_fields (collection_name, name, type, label, cardinality, reporting_role, searchable, embeddable)
+values
+  ('asset', 'filename', 'text', 'Filename', null, null, false, false),
+  ('asset', 'mime', 'text', 'MIME Type', null, 'dimension', false, false),
+  ('asset', 'r2_key', 'text', 'R2 Key', null, null, false, false),
+  ('asset', 'size_bytes', 'number', 'Size Bytes', null, 'measure', false, false),
+  ('asset', 'checksum', 'text', 'Checksum', null, null, false, false),
+  ('asset', 'width', 'number', 'Width', null, null, false, false),
+  ('asset', 'height', 'number', 'Height', null, null, false, false),
+  ('asset', 'alt_text', 'text', 'Alt Text', null, null, true, false),
+  ('asset', 'uploaded_by', 'uuid', 'Uploaded By', null, null, false, false)
+on conflict (collection_name, name) do update set
+  type = excluded.type,
+  label = excluded.label,
+  cardinality = excluded.cardinality,
+  reporting_role = excluded.reporting_role,
+  searchable = excluded.searchable,
+  embeddable = excluded.embeddable;
+
+
+create table if not exists public.content_collection (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id uuid not null references public.workspace(id) on delete cascade,
+  key text not null,
+  label text not null,
+  description text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+alter table public.content_collection enable row level security;
+grant select, insert, update, delete on public.content_collection to authenticated;
+grant select, insert, update, delete on public.content_collection to service_role;
+create policy content_collection_rw on public.content_collection for all to authenticated
+  using (public.is_workspace_member(workspace_id))
+  with check (public.is_workspace_member(workspace_id));
+
+
+
+create or replace function public.content_collection_delete_chunks()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  delete from public.search_chunk where source_table = 'content_collection' and source_id = old.id;
+  return old;
+end;
+$$;
+revoke all on function public.content_collection_delete_chunks() from public, anon, authenticated;
+
+create trigger content_collection_delete_chunks_tg
+  after delete on public.content_collection
+  for each row execute function public.content_collection_delete_chunks();
+
+insert into public.movp_collections (name, label, label_plural, workspace_scoped)
+values ('content_collection', 'Content Collection', 'Content Collections', true)
+on conflict (name) do update set label = excluded.label, label_plural = excluded.label_plural, workspace_scoped = excluded.workspace_scoped;
+
+insert into public.movp_fields (collection_name, name, type, label, cardinality, reporting_role, searchable, embeddable)
+values
+  ('content_collection', 'key', 'text', 'Key', null, null, false, false),
+  ('content_collection', 'label', 'text', 'Label', null, null, false, false),
+  ('content_collection', 'description', 'text', 'Description', null, null, false, false)
+on conflict (collection_name, name) do update set
+  type = excluded.type,
+  label = excluded.label,
+  cardinality = excluded.cardinality,
+  reporting_role = excluded.reporting_role,
+  searchable = excluded.searchable,
+  embeddable = excluded.embeddable;
+
+
+create table if not exists public.content_collection_entry (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id uuid not null references public.workspace(id) on delete cascade,
+  position numeric not null,
+  collection_id uuid not null references public.content_collection(id) on delete cascade,
+  content_item_id uuid not null references public.content_item(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+alter table public.content_collection_entry enable row level security;
+grant select, insert, update, delete on public.content_collection_entry to authenticated;
+grant select, insert, update, delete on public.content_collection_entry to service_role;
+create policy content_collection_entry_rw on public.content_collection_entry for all to authenticated
+  using (public.is_workspace_member(workspace_id))
+  with check (public.is_workspace_member(workspace_id));
+
+
+
+create or replace function public.content_collection_entry_delete_chunks()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  delete from public.search_chunk where source_table = 'content_collection_entry' and source_id = old.id;
+  return old;
+end;
+$$;
+revoke all on function public.content_collection_entry_delete_chunks() from public, anon, authenticated;
+
+create trigger content_collection_entry_delete_chunks_tg
+  after delete on public.content_collection_entry
+  for each row execute function public.content_collection_entry_delete_chunks();
+
+insert into public.movp_collections (name, label, label_plural, workspace_scoped)
+values ('content_collection_entry', 'Content Collection Entry', 'Content Collection Entries', true)
+on conflict (name) do update set label = excluded.label, label_plural = excluded.label_plural, workspace_scoped = excluded.workspace_scoped;
+
+insert into public.movp_fields (collection_name, name, type, label, cardinality, reporting_role, searchable, embeddable)
+values
+  ('content_collection_entry', 'collection', 'relation', 'Collection', 'many-to-one', null, false, false),
+  ('content_collection_entry', 'content_item', 'relation', 'Content Item', 'many-to-one', null, false, false),
+  ('content_collection_entry', 'position', 'number', 'Position', null, null, false, false)
+on conflict (collection_name, name) do update set
+  type = excluded.type,
+  label = excluded.label,
+  cardinality = excluded.cardinality,
+  reporting_role = excluded.reporting_role,
+  searchable = excluded.searchable,
+  embeddable = excluded.embeddable;
+
+
+create table if not exists public.content_seo (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id uuid not null references public.workspace(id) on delete cascade,
+  meta jsonb,
+  jsonld jsonb,
+  score numeric,
+  checklist jsonb,
+  content_item_id uuid not null references public.content_item(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+alter table public.content_seo enable row level security;
+grant select, insert, update, delete on public.content_seo to authenticated;
+grant select, insert, update, delete on public.content_seo to service_role;
+create policy content_seo_rw on public.content_seo for all to authenticated
+  using (public.is_workspace_member(workspace_id))
+  with check (public.is_workspace_member(workspace_id));
+
+
+
+create or replace function public.content_seo_delete_chunks()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  delete from public.search_chunk where source_table = 'content_seo' and source_id = old.id;
+  return old;
+end;
+$$;
+revoke all on function public.content_seo_delete_chunks() from public, anon, authenticated;
+
+create trigger content_seo_delete_chunks_tg
+  after delete on public.content_seo
+  for each row execute function public.content_seo_delete_chunks();
+
+insert into public.movp_collections (name, label, label_plural, workspace_scoped)
+values ('content_seo', 'Content SEO', 'Content SEO Records', true)
+on conflict (name) do update set label = excluded.label, label_plural = excluded.label_plural, workspace_scoped = excluded.workspace_scoped;
+
+insert into public.movp_fields (collection_name, name, type, label, cardinality, reporting_role, searchable, embeddable)
+values
+  ('content_seo', 'content_item', 'relation', 'Content Item', 'many-to-one', null, false, false),
+  ('content_seo', 'meta', 'json', 'Meta', null, null, false, false),
+  ('content_seo', 'jsonld', 'json', 'JSON-LD', null, null, false, false),
+  ('content_seo', 'score', 'number', 'Score', null, 'measure', false, false),
+  ('content_seo', 'checklist', 'json', 'Checklist', null, null, false, false)
+on conflict (collection_name, name) do update set
+  type = excluded.type,
+  label = excluded.label,
+  cardinality = excluded.cardinality,
+  reporting_role = excluded.reporting_role,
+  searchable = excluded.searchable,
+  embeddable = excluded.embeddable;

@@ -1,9 +1,14 @@
 import { comment } from './collections/comment.ts'
+import { asset } from './collections/asset.ts'
 import { contentApproval } from './collections/content_approval.ts'
 import { contentApprovalVote } from './collections/content_approval_vote.ts'
+import { contentCollection } from './collections/content_collection.ts'
+import { contentCollectionEntry } from './collections/content_collection_entry.ts'
 import { contentItem } from './collections/content_item.ts'
 import { contentPublishEvent } from './collections/content_publish_event.ts'
 import { contentRevision } from './collections/content_revision.ts'
+import { contentSchedule } from './collections/content_schedule.ts'
+import { contentSeo } from './collections/content_seo.ts'
 import { contentType } from './collections/content_type.ts'
 import { mention } from './collections/mention.ts'
 import { note } from './collections/note.ts'
@@ -45,4 +50,9 @@ export const schema = defineSchema([
   contentApproval,
   contentApprovalVote,
   contentPublishEvent,
+  contentSchedule,
+  asset,
+  contentCollection,
+  contentCollectionEntry,
+  contentSeo,
 ])
