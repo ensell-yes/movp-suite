@@ -173,5 +173,104 @@ export function buildMcpServer(schema: MovpSchema, ctx: McpCtx): McpServer {
       text(await domain.collab.createShareLink({ entityType, entityId, expiresInHours })),
   )
 
+  server.registerTool(
+    'task.create',
+    {
+      title: 'Create task',
+      description: 'Create a task with workspace default status/priority when omitted',
+      inputSchema: {
+        workspaceId: z.string(),
+        title: z.string(),
+        description: z.string().optional(),
+        statusId: z.string().optional(),
+        priorityId: z.string().optional(),
+        parentId: z.string().optional(),
+        startDate: z.string().optional(),
+        dueDate: z.string().optional(),
+      },
+    },
+    async ({ workspaceId, title, description, statusId, priorityId, parentId, startDate, dueDate }) =>
+      text(await domain.task.create({ workspaceId, title, description, statusId, priorityId, parentId, startDate, dueDate })),
+  )
+
+  server.registerTool(
+    'task.get',
+    { title: 'Get task', description: 'Fetch a task by id', inputSchema: { id: z.string() } },
+    async ({ id }) => text(await domain.task.get(id)),
+  )
+
+  server.registerTool(
+    'task.list',
+    {
+      title: 'List tasks',
+      description: 'List tasks in a workspace',
+      inputSchema: {
+        workspaceId: z.string(),
+        statusId: z.string().optional(),
+        assigneeId: z.string().optional(),
+        parentId: z.string().optional(),
+        first: z.number().optional(),
+      },
+    },
+    async ({ workspaceId, statusId, assigneeId, parentId, first }) =>
+      text(await domain.task.list({ workspaceId, statusId, assigneeId, parentId, first })),
+  )
+
+  server.registerTool(
+    'task.board',
+    {
+      title: 'Task board',
+      description: 'Kanban columns with active statuses and their tasks',
+      inputSchema: { workspaceId: z.string() },
+    },
+    async ({ workspaceId }) => text(await domain.task.board({ workspaceId })),
+  )
+
+  server.registerTool(
+    'task.assign',
+    {
+      title: 'Assign task',
+      description: 'Assign a user to a task idempotently',
+      inputSchema: { taskId: z.string(), userId: z.string() },
+    },
+    async ({ taskId, userId }) => {
+      await domain.task.assign({ taskId, userId })
+      return text({ ok: true })
+    },
+  )
+
+  server.registerTool(
+    'task.transition',
+    {
+      title: 'Transition task',
+      description: 'Move a task to a status',
+      inputSchema: { taskId: z.string(), statusId: z.string() },
+    },
+    async ({ taskId, statusId }) => text(await domain.task.transition({ taskId, statusId })),
+  )
+
+  server.registerTool(
+    'task.add_dependency',
+    {
+      title: 'Add task dependency',
+      description: 'Mark a task as blocked by another task idempotently',
+      inputSchema: { taskId: z.string(), blockerId: z.string() },
+    },
+    async ({ taskId, blockerId }) => {
+      await domain.task.addDependency({ taskId, blockerId })
+      return text({ ok: true })
+    },
+  )
+
+  server.registerTool(
+    'task.update_description',
+    {
+      title: 'Update task description',
+      description: 'Replace a task description, deduping identical bodies',
+      inputSchema: { taskId: z.string(), body: z.string() },
+    },
+    async ({ taskId, body }) => text(await domain.task.updateDescription(taskId, body)),
+  )
+
   return server
 }
