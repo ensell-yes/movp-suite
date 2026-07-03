@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type {
+  AssetRow,
   CommentRow,
   ContentApprovalRow,
   ContentItemRow,
@@ -24,6 +25,8 @@ import type {
 export interface DomainCtx {
   db: SupabaseClient
   userId: string
+  accessToken?: string
+  assetsFnUrl?: string
 }
 
 export interface Page<T> {
@@ -153,6 +156,8 @@ export interface ContentService {
   getPublished(id: string): Promise<{ item: ContentItemRow; revision: ContentRevisionRow } | null>
   listApprovals(a: { workspaceId: string; itemId?: string; state?: 'pending' | 'approved' | 'rejected' | 'superseded'; first?: number; after?: string | null }): Promise<Page<ContentApprovalRow>>
   schedule(i: { itemId: string; action: 'publish' | 'unpublish'; revisionId: string; runAt: string }): Promise<ContentScheduleRow>
+  issueAssetUpload(i: { workspaceId: string; filename: string; mime: string; sizeBytes: number }): Promise<{ uploadUrl: string; r2Key: string; assetId: string }>
+  finalizeAsset(i: { assetId: string; checksum: string; sizeBytes: number; width?: number; height?: number }): Promise<AssetRow>
 }
 
 export interface Domain {

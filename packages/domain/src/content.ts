@@ -1,5 +1,6 @@
 import { z } from 'zod'
-import type { ContentApprovalRow, ContentItemRow, ContentRevisionRow, ContentScheduleRow, ContentTypeRow } from './generated/types.ts'
+import { validateAssetRequest } from './asset-bounds.ts'
+import type { AssetRow, ContentApprovalRow, ContentItemRow, ContentRevisionRow, ContentScheduleRow, ContentTypeRow } from './generated/types.ts'
 import type { ContentService, DomainCtx } from './types.ts'
 
 const DEFAULT_PAGE = 20
@@ -322,6 +323,40 @@ export function makeContentService(ctx: DomainCtx): ContentService {
       }).select('*').single()
       if (error) fail('schedule', error.code)
       return data as ContentScheduleRow
+    },
+
+    async issueAssetUpload(input) {
+      const assetsFnUrl = ctx.assetsFnUrl ?? fail('issueAssetUpload', 'asset_upload_not_configured')
+      const accessToken = ctx.accessToken ?? fail('issueAssetUpload', 'asset_upload_not_configured')
+      const validation = validateAssetRequest({ mime: input.mime, sizeBytes: input.sizeBytes })
+      if (!validation.ok) fail('issueAssetUpload', validation.error)
+
+      const res = await fetch(assetsFnUrl, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${accessToken}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ action: 'issue', ...input }),
+      })
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string }
+        fail('issueAssetUpload', body.error ?? String(res.status))
+      }
+      return await res.json() as { uploadUrl: string; r2Key: string; assetId: string }
+    },
+
+    async finalizeAsset(input) {
+      const assetsFnUrl = ctx.assetsFnUrl ?? fail('finalizeAsset', 'asset_upload_not_configured')
+      const accessToken = ctx.accessToken ?? fail('finalizeAsset', 'asset_upload_not_configured')
+
+      const res = await fetch(assetsFnUrl, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${accessToken}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ action: 'finalize', ...input }),
+      })
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string }
+        fail('finalizeAsset', body.error ?? String(res.status))
+      }
+      return await res.json() as AssetRow
     },
   }
 }

@@ -22,6 +22,7 @@ export type {
   TaskService,
 } from './types.ts'
 export type {
+  AssetRow,
   CommentRow,
   ContentApprovalRow,
   ContentItemRow,
