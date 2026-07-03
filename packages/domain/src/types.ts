@@ -3,9 +3,11 @@ import type {
   AssetRow,
   CommentRow,
   ContentApprovalRow,
+  ContentCollectionRow,
   ContentItemRow,
   ContentRevisionRow,
   ContentScheduleRow,
+  ContentSeoRow,
   ContentTypeRow,
   NoteCreate,
   NoteRow,
@@ -158,6 +160,13 @@ export interface ContentService {
   schedule(i: { itemId: string; action: 'publish' | 'unpublish'; revisionId: string; runAt: string }): Promise<ContentScheduleRow>
   issueAssetUpload(i: { workspaceId: string; filename: string; mime: string; sizeBytes: number }): Promise<{ uploadUrl: string; r2Key: string; assetId: string }>
   finalizeAsset(i: { assetId: string; checksum: string; sizeBytes: number; width?: number; height?: number }): Promise<AssetRow>
+  createCollection(i: { workspaceId: string; key: string; label: string; description?: string }): Promise<ContentCollectionRow>
+  addToCollection(i: { collectionId: string; itemId: string; position?: number }): Promise<void>
+  reorderCollection(i: { collectionId: string; orderedItemIds: string[] }): Promise<void>
+  runSeoAudit(i: { itemId: string }): Promise<ContentSeoRow>
+  linkAsset(i: { itemId: string; assetId: string }): Promise<void>
+  linkItem(i: { itemId: string; targetItemId: string }): Promise<void>
+  linkEditorialTask(i: { itemId: string; taskId: string }): Promise<void>
 }
 
 export interface Domain {

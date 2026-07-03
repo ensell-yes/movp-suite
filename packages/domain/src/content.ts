@@ -1,6 +1,17 @@
 import { z } from 'zod'
 import { validateAssetRequest } from './asset-bounds.ts'
-import type { AssetRow, ContentApprovalRow, ContentItemRow, ContentRevisionRow, ContentScheduleRow, ContentTypeRow } from './generated/types.ts'
+import { makeGraphService } from './graph.ts'
+import { auditSeo } from './seo-audit.ts'
+import type {
+  AssetRow,
+  ContentApprovalRow,
+  ContentCollectionRow,
+  ContentItemRow,
+  ContentRevisionRow,
+  ContentScheduleRow,
+  ContentSeoRow,
+  ContentTypeRow,
+} from './generated/types.ts'
 import type { ContentService, DomainCtx } from './types.ts'
 
 const DEFAULT_PAGE = 20
@@ -14,7 +25,7 @@ async function sha256Hex(input: string): Promise<string> {
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('')
 }
 
-const FIELD_TYPES = ['text', 'richtext', 'number', 'bool', 'date', 'enum', 'asset', 'reference'] as const
+const FIELD_TYPES = ['text', 'richtext', 'number', 'bool', 'date', 'enum', 'asset', 'reference', 'json'] as const
 type FieldType = (typeof FIELD_TYPES)[number]
 
 interface FieldDefShape {
@@ -57,6 +68,9 @@ function fieldSchemaToZod(fields: FieldDefShape[]): z.ZodType<Record<string, unk
         break
       case 'reference':
         base = z.string().uuid()
+        break
+      case 'json':
+        base = z.unknown()
         break
       case 'number':
         base = z.number()
@@ -114,6 +128,18 @@ export function makeContentService(ctx: DomainCtx): ContentService {
       .maybeSingle()
     if (error) fail('resolveItem', error.code)
     const id = (data as { content_type_id?: string } | null)?.content_type_id
+    if (!id) throw new Error('domain.content: content item not found or inaccessible')
+    return id
+  }
+
+  async function itemWorkspace(itemId: string): Promise<string> {
+    const { data, error } = await ctx.db
+      .from('content_item')
+      .select('workspace_id')
+      .eq('id', itemId)
+      .maybeSingle()
+    if (error) fail('resolveItemWorkspace', error.code)
+    const id = (data as { workspace_id?: string } | null)?.workspace_id
     if (!id) throw new Error('domain.content: content item not found or inaccessible')
     return id
   }
@@ -357,6 +383,145 @@ export function makeContentService(ctx: DomainCtx): ContentService {
         fail('finalizeAsset', body.error ?? String(res.status))
       }
       return await res.json() as AssetRow
+    },
+
+    async createCollection(input) {
+      const { data, error } = await ctx.db.from('content_collection').insert({
+        workspace_id: input.workspaceId,
+        key: input.key,
+        label: input.label,
+        description: input.description ?? null,
+      }).select('*').single()
+      if (error) fail('createCollection', error.code)
+      return data as ContentCollectionRow
+    },
+
+    async addToCollection(input) {
+      const { data: collection, error: collectionError } = await ctx.db
+        .from('content_collection')
+        .select('workspace_id')
+        .eq('id', input.collectionId)
+        .maybeSingle()
+      if (collectionError) fail('addToCollection', collectionError.code)
+      if (!collection) throw new Error('domain.content.addToCollection: collection_not_found')
+
+      const { error } = await ctx.db.from('content_collection_entry').insert({
+        workspace_id: (collection as { workspace_id: string }).workspace_id,
+        collection_id: input.collectionId,
+        content_item_id: input.itemId,
+        position: input.position ?? 0,
+      })
+      if (error) fail('addToCollection', error.code)
+    },
+
+    async reorderCollection(input) {
+      for (let position = 0; position < input.orderedItemIds.length; position++) {
+        const { error } = await ctx.db
+          .from('content_collection_entry')
+          .update({ position })
+          .eq('collection_id', input.collectionId)
+          .eq('content_item_id', input.orderedItemIds[position])
+          .select('id')
+          .single()
+        if (error) fail('reorderCollection', error.code)
+      }
+    },
+
+    async runSeoAudit(input) {
+      const { data: item, error: itemError } = await ctx.db
+        .from('content_item')
+        .select('workspace_id, current_revision_id')
+        .eq('id', input.itemId)
+        .maybeSingle()
+      if (itemError) fail('runSeoAudit', itemError.code)
+      if (!item) throw new Error('domain.content.runSeoAudit: item_not_found')
+
+      const itemRow = item as { workspace_id: string; current_revision_id: string | null }
+      const { data: revision, error: revisionError } = await ctx.db
+        .from('content_revision')
+        .select('data')
+        .eq('id', itemRow.current_revision_id)
+        .maybeSingle()
+      if (revisionError) fail('runSeoAudit', revisionError.code)
+
+      const { data: seoRow, error: seoError } = await ctx.db
+        .from('content_seo')
+        .select('meta, jsonld')
+        .eq('content_item_id', input.itemId)
+        .maybeSingle()
+      if (seoError) fail('runSeoAudit', seoError.code)
+
+      const { data: assetEdges, error: edgeError } = await ctx.db
+        .from('edges')
+        .select('dst_id')
+        .eq('src_type', 'content_item')
+        .eq('src_id', input.itemId)
+        .eq('rel', 'references')
+        .eq('dst_type', 'asset')
+      if (edgeError) fail('runSeoAudit', edgeError.code)
+
+      const assetIds = ((assetEdges ?? []) as Array<{ dst_id: string }>).map((edge) => edge.dst_id)
+      let referencedAssets: Array<{ alt_text: string | null }> = []
+      if (assetIds.length > 0) {
+        const { data: assets, error: assetError } = await ctx.db.from('asset').select('alt_text').in('id', assetIds)
+        if (assetError) fail('runSeoAudit', assetError.code)
+        referencedAssets = (assets ?? []) as Array<{ alt_text: string | null }>
+      }
+
+      const result = auditSeo({
+        data: ((revision as { data?: Record<string, unknown> } | null)?.data ?? {}) as Record<string, unknown>,
+        meta: ((seoRow as { meta?: Record<string, unknown> | null } | null)?.meta ?? null) as Record<string, unknown> | null,
+        jsonld: (seoRow as { jsonld?: unknown } | null)?.jsonld ?? null,
+        referencedAssets,
+      })
+
+      const { data, error } = await ctx.db.from('content_seo').upsert({
+        workspace_id: itemRow.workspace_id,
+        content_item_id: input.itemId,
+        score: result.score,
+        checklist: result.checklist as unknown as Record<string, unknown>,
+      }, { onConflict: 'content_item_id' }).select('*').single()
+      if (error) fail('runSeoAudit', error.code)
+      return data as ContentSeoRow
+    },
+
+    async linkAsset(input) {
+      const workspaceId = await itemWorkspace(input.itemId)
+      const graph = makeGraphService(ctx)
+      await graph.link({
+        workspaceId,
+        srcType: 'content_item',
+        srcId: input.itemId,
+        rel: 'references',
+        dstType: 'asset',
+        dstId: input.assetId,
+      })
+    },
+
+    async linkItem(input) {
+      const workspaceId = await itemWorkspace(input.itemId)
+      const graph = makeGraphService(ctx)
+      await graph.link({
+        workspaceId,
+        srcType: 'content_item',
+        srcId: input.itemId,
+        rel: 'references',
+        dstType: 'content_item',
+        dstId: input.targetItemId,
+      })
+    },
+
+    async linkEditorialTask(input) {
+      const workspaceId = await itemWorkspace(input.itemId)
+      const graph = makeGraphService(ctx)
+      await graph.link({
+        workspaceId,
+        srcType: 'content_item',
+        srcId: input.itemId,
+        rel: 'editorial_task',
+        dstType: 'task',
+        dstId: input.taskId,
+      })
     },
   }
 }
