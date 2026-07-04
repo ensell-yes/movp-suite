@@ -1,0 +1,105 @@
+---
+import Base from '../../layouts/Base.astro'
+import AuthFailure from '../../components/states/AuthFailure.astro'
+import ErrorRetry from '../../components/states/ErrorRetry.astro'
+import EmptyState from '../../components/states/EmptyState.astro'
+import { readServerEnv } from '../../lib/env.ts'
+import { getSessionToken } from '../../lib/session.ts'
+import { gqlRequest } from '../../lib/graphql.ts'
+import {
+  CONTENT_LIST_QUERY,
+  CONTENT_SEARCH_QUERY,
+  CONTENT_TYPES_QUERY,
+  type ContentPage,
+  type ContentTypeRow,
+  type SearchHit,
+} from '../../lib/content-queries.ts'
+
+const token = getSessionToken(Astro.cookies)
+const typeFilter = Astro.url.searchParams.get('contentTypeId') || ''
+const statusFilter = Astro.url.searchParams.get('status') || ''
+const q = Astro.url.searchParams.get('q')?.trim() ?? ''
+let state: 'auth' | 'error' | 'empty' | 'ok' = 'auth'
+let items: ContentPage['items'] = []
+let types: ContentTypeRow[] = []
+let hits: SearchHit[] = []
+
+if (token) {
+  const { graphqlEndpoint, workspaceId } = readServerEnv()
+  const [typesRes, contentRes] = await Promise.all([
+    gqlRequest<{ contentTypes: ContentTypeRow[] }>({ endpoint: graphqlEndpoint, token }, CONTENT_TYPES_QUERY, { workspaceId }),
+    gqlRequest<{ content: ContentPage }>({ endpoint: graphqlEndpoint, token }, CONTENT_LIST_QUERY, {
+      workspaceId,
+      contentTypeId: typeFilter || undefined,
+      status: statusFilter || undefined,
+      first: 50,
+    }),
+  ])
+  const searchRes = q
+    ? await gqlRequest<{ search: SearchHit[] }>({ endpoint: graphqlEndpoint, token }, CONTENT_SEARCH_QUERY, { workspaceId, query: q })
+    : null
+
+  if (!typesRes.ok || !contentRes.ok || (searchRes && !searchRes.ok)) state = 'error'
+  else {
+    types = typesRes.data.contentTypes
+    items = contentRes.data.content.items
+    hits = searchRes?.data.search.filter((hit) => hit.collection === 'content_item') ?? []
+    state = items.length === 0 && hits.length === 0 ? 'empty' : 'ok'
+  }
+}
+---
+<Base title="Content">
+  <h1 tabindex="-1" id="content-heading">Content</h1>
+  <p><a href="/content/approvals">Approvals</a> <a href="/content/calendar">Calendar</a></p>
+  {state === 'auth' && <AuthFailure resource="content" />}
+  {state === 'error' && <ErrorRetry message="Could not load content." retryHref={Astro.url.pathname + Astro.url.search} />}
+  {token && (
+    <form method="get" aria-label="Content filters">
+      <label>
+        Type
+        <select name="contentTypeId">
+          <option value="">All types</option>
+          {types.map((type) => <option value={type.id} selected={type.id === typeFilter}>{type.label ?? type.key ?? type.id}</option>)}
+        </select>
+      </label>
+      <label>
+        Status
+        <select name="status">
+          <option value="">All statuses</option>
+          {['draft', 'in_review', 'approved', 'published', 'archived'].map((status) => (
+            <option value={status} selected={status === statusFilter}>{status}</option>
+          ))}
+        </select>
+      </label>
+      <label>
+        Search content
+        <input name="q" type="search" value={q} />
+      </label>
+      <button type="submit">Apply</button>
+    </form>
+  )}
+  {state === 'empty' && <EmptyState message="No content yet." />}
+  {state === 'ok' && q && (
+    <section aria-labelledby="content-search-heading" data-testid="content-search-results">
+      <h2 id="content-search-heading">Search results</h2>
+      {hits.length === 0 ? <p>No matching content.</p> : (
+        <ul>
+          {hits.map((hit) => <li><a href={`/content/${hit.id}`}>{hit.title}</a> <small>{hit.snippet}</small></li>)}
+        </ul>
+      )}
+    </section>
+  )}
+  {state === 'ok' && (
+    <section aria-labelledby="content-list-heading">
+      <h2 id="content-list-heading">Items</h2>
+      <ul data-testid="content-list">
+        {items.map((item) => (
+          <li>
+            <a href={`/content/${item.id}`}>{item.slug ?? item.id}</a>
+            <small>{item.status ? ` ${item.status}` : ''}</small>
+          </li>
+        ))}
+      </ul>
+    </section>
+  )}
+</Base>

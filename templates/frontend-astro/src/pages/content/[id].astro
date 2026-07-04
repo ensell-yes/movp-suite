@@ -1,0 +1,298 @@
+---
+import Base from '../../layouts/Base.astro'
+import AuthFailure from '../../components/states/AuthFailure.astro'
+import ErrorRetry from '../../components/states/ErrorRetry.astro'
+import EmptyState from '../../components/states/EmptyState.astro'
+import { readServerEnv } from '../../lib/env.ts'
+import { getSessionToken } from '../../lib/session.ts'
+import { gqlRequest } from '../../lib/graphql.ts'
+import {
+  CONTENT_COMMENTS_QUERY,
+  CONTENT_ITEM_QUERY,
+  CONTENT_REVISIONS_QUERY,
+  FINALIZE_ASSET_MUTATION,
+  ISSUE_ASSET_UPLOAD_MUTATION,
+  PUBLISH_MUTATION,
+  RUN_SEO_AUDIT_MUTATION,
+  SCHEDULE_MUTATION,
+  SUBMIT_MUTATION,
+  UNPUBLISH_MUTATION,
+  UPDATE_CONTENT_MUTATION,
+  type CommentRow,
+  type ContentItemRow,
+  type ContentRevisionRow,
+} from '../../lib/content-queries.ts'
+
+type FieldDescriptor = { key?: string; name?: string; label?: string; type?: string; options?: string[] }
+type SeoResult = { score: number | null; checklist: string | null }
+
+const { id } = Astro.params
+const token = getSessionToken(Astro.cookies)
+let state: 'auth' | 'error' | 'empty' | 'ok' = 'auth'
+let item: ContentItemRow | null = null
+let comments: CommentRow[] = []
+let revisions: ContentRevisionRow[] = []
+let fields: FieldDescriptor[] = []
+let values: Record<string, unknown> = {}
+let seo: SeoResult | null = null
+let notice = ''
+
+function parseJsonObject(input: string | null | undefined): Record<string, unknown> {
+  if (!input) return {}
+  try {
+    const parsed = JSON.parse(input)
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {}
+  } catch {
+    return {}
+  }
+}
+
+function parseFields(input: string | null | undefined): FieldDescriptor[] {
+  if (!input) return []
+  try {
+    const parsed = JSON.parse(input)
+    const raw = Array.isArray(parsed) ? parsed : parsed?.fields
+    return Array.isArray(raw) ? raw.filter((field) => field && typeof field === 'object') as FieldDescriptor[] : []
+  } catch {
+    return []
+  }
+}
+
+function labelFor(field: FieldDescriptor): string {
+  return field.label ?? field.key ?? field.name ?? 'Field'
+}
+
+function keyFor(field: FieldDescriptor): string {
+  return field.key ?? field.name ?? labelFor(field)
+}
+
+function collectFieldData(form: FormData): Record<string, unknown> {
+  const data: Record<string, unknown> = {}
+  for (const [key, value] of form.entries()) {
+    if (!key.startsWith('field:')) continue
+    const field = key.slice('field:'.length)
+    data[field] = typeof value === 'string' ? value : value.name
+  }
+  return data
+}
+
+async function sha256Hex(buffer: ArrayBuffer): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', buffer)
+  return Array.from(new Uint8Array(digest)).map((byte) => byte.toString(16).padStart(2, '0')).join('')
+}
+
+async function loadItem(endpoint: string, workspaceId: string): Promise<'error' | 'empty' | 'ok'> {
+  const [itemRes, commentsRes, revisionsRes] = await Promise.all([
+    gqlRequest<{ contentItem: ContentItemRow | null }>({ endpoint, token: token ?? '' }, CONTENT_ITEM_QUERY, { id }),
+    gqlRequest<{ comments: CommentRow[] }>({ endpoint, token: token ?? '' }, CONTENT_COMMENTS_QUERY, { workspaceId, entityId: id }),
+    gqlRequest<{ contentRevisions: ContentRevisionRow[] }>({ endpoint, token: token ?? '' }, CONTENT_REVISIONS_QUERY, { itemId: id }),
+  ])
+  if (!itemRes.ok || !commentsRes.ok || !revisionsRes.ok) return 'error'
+  if (!itemRes.data.contentItem) return 'empty'
+  item = itemRes.data.contentItem
+  comments = commentsRes.data.comments
+  revisions = revisionsRes.data.contentRevisions
+  fields = parseFields(item.content_type?.field_schema)
+  values = parseJsonObject(item.data)
+  return 'ok'
+}
+
+if (token) {
+  const { graphqlEndpoint, workspaceId } = readServerEnv()
+  if (Astro.request.method === 'POST') {
+    const form = await Astro.request.formData()
+    const intent = String(form.get('intent') ?? '')
+    let mutationOk = true
+
+    if (intent === 'save') {
+      const data = collectFieldData(form)
+      const r = await gqlRequest({ endpoint: graphqlEndpoint, token }, UPDATE_CONTENT_MUTATION, { id, data: JSON.stringify(data) })
+      mutationOk = r.ok
+      if (r.ok) notice = 'Saved'
+    } else if (intent === 'seo') {
+      const r = await gqlRequest<{ runSeoAudit: SeoResult }>({ endpoint: graphqlEndpoint, token }, RUN_SEO_AUDIT_MUTATION, { itemId: id })
+      mutationOk = r.ok
+      if (r.ok) seo = r.data.runSeoAudit
+    } else if (intent === 'submit') {
+      const r = await gqlRequest({ endpoint: graphqlEndpoint, token }, SUBMIT_MUTATION, { itemId: id })
+      mutationOk = r.ok
+      if (r.ok) notice = 'Submitted'
+    } else if (intent === 'publish') {
+      const r = await gqlRequest({ endpoint: graphqlEndpoint, token }, PUBLISH_MUTATION, { itemId: id })
+      mutationOk = r.ok
+      if (r.ok) notice = 'Published'
+    } else if (intent === 'unpublish') {
+      const r = await gqlRequest({ endpoint: graphqlEndpoint, token }, UNPUBLISH_MUTATION, { itemId: id })
+      mutationOk = r.ok
+      if (r.ok) notice = 'Unpublished'
+    } else if (intent === 'schedule') {
+      const r = await gqlRequest({ endpoint: graphqlEndpoint, token }, SCHEDULE_MUTATION, {
+        itemId: id,
+        action: String(form.get('action') ?? 'publish'),
+        revisionId: String(form.get('revisionId') ?? ''),
+        runAt: String(form.get('runAt') ?? ''),
+      })
+      mutationOk = r.ok
+      if (r.ok) notice = 'Scheduled'
+    } else if (intent === 'asset') {
+      const loadState = await loadItem(graphqlEndpoint, workspaceId)
+      if (loadState === 'ok' && item) {
+        const file = form.get('asset')
+        const field = String(form.get('field') ?? '')
+        if (file instanceof File && file.size > 0 && field) {
+          const buffer = await file.arrayBuffer()
+          const issue = await gqlRequest<{ issueAssetUpload: { uploadUrl: string; assetId: string; r2Key: string } }>(
+            { endpoint: graphqlEndpoint, token },
+            ISSUE_ASSET_UPLOAD_MUTATION,
+            { workspaceId, filename: file.name, mime: file.type || 'application/octet-stream', sizeBytes: file.size },
+          )
+          if (issue.ok) {
+            const put = await fetch(issue.data.issueAssetUpload.uploadUrl, { method: 'PUT', body: buffer })
+            if (put.ok) {
+              const checksum = await sha256Hex(buffer)
+              const done = await gqlRequest<{ finalizeAsset: { r2_key: string | null } }>(
+                { endpoint: graphqlEndpoint, token },
+                FINALIZE_ASSET_MUTATION,
+                { assetId: issue.data.issueAssetUpload.assetId, checksum, sizeBytes: file.size },
+              )
+              if (done.ok) {
+                const next = { ...values, [field]: done.data.finalizeAsset.r2_key }
+                const update = await gqlRequest({ endpoint: graphqlEndpoint, token }, UPDATE_CONTENT_MUTATION, { id, data: JSON.stringify(next) })
+                mutationOk = update.ok
+                if (update.ok) notice = 'Asset uploaded'
+              } else mutationOk = false
+            } else mutationOk = false
+          } else mutationOk = false
+        } else mutationOk = false
+      } else mutationOk = false
+    }
+
+    if (!mutationOk) state = 'error'
+  }
+
+  if (state !== 'error') state = await loadItem(graphqlEndpoint, workspaceId)
+}
+
+const frozenIds = new Set([item?.approved_revision_id, item?.published_revision_id].filter(Boolean))
+const checklist = seo?.checklist ? (() => {
+  try {
+    const parsed = JSON.parse(seo.checklist)
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+})() : []
+---
+<Base title={item?.slug ?? 'Content Item'}>
+  {state === 'auth' && <AuthFailure resource="this content item" />}
+  {state === 'error' && <ErrorRetry message="Could not load this content item." retryHref={Astro.url.pathname} />}
+  {state === 'empty' && <EmptyState message="Content item not found."><a href="/content">Back to content</a></EmptyState>}
+  {state === 'ok' && item && (
+    <article data-testid="content-editor">
+      <h1 tabindex="-1" id="content-editor-heading">{item.slug ?? item.id}</h1>
+      {notice && <p role="status">{notice}</p>}
+      <p><small>Status {item.status ?? 'unknown'}</small></p>
+      <nav aria-label="Content item actions">
+        <a href="/content">List</a> <a href="/content/approvals">Approvals</a> <a href="/content/calendar">Calendar</a>
+      </nav>
+
+      <section aria-labelledby="fields-heading" data-testid="content-fields">
+        <h2 id="fields-heading">Fields</h2>
+        <form method="post">
+          <input type="hidden" name="intent" value="save" />
+          {fields.filter((field) => (field.type ?? 'text') !== 'asset').map((field) => {
+            const key = keyFor(field)
+            const label = labelFor(field)
+            const value = values[key]
+            const type = field.type ?? 'text'
+            return (
+              <p data-field-control>
+                <label>
+                  {label}
+                  {type === 'richtext' || type === 'longtext' ? (
+                    <textarea name={`field:${key}`}>{String(value ?? '')}</textarea>
+                  ) : type === 'boolean' ? (
+                    <>
+                      <input type="hidden" name={`field:${key}`} value="false" />
+                      <input type="checkbox" name={`field:${key}`} value="true" checked={value === true || value === 'true'} />
+                    </>
+                  ) : type === 'number' ? (
+                    <input type="number" name={`field:${key}`} value={String(value ?? '')} />
+                  ) : type === 'select' ? (
+                    <select name={`field:${key}`}>
+                      {(field.options ?? []).map((option) => <option value={option} selected={String(value ?? '') === option}>{option}</option>)}
+                    </select>
+                  ) : (
+                    <input name={`field:${key}`} value={String(value ?? '')} />
+                  )}
+                </label>
+              </p>
+            )
+          })}
+          <button type="submit">Save</button>
+        </form>
+        {fields.filter((field) => (field.type ?? 'text') === 'asset').map((field) => {
+          const key = keyFor(field)
+          const label = labelFor(field)
+          return (
+            <form method="post" enctype="multipart/form-data">
+              <input type="hidden" name="intent" value="asset" />
+              <input type="hidden" name="field" value={key} />
+              <p data-field-control>
+                <label>
+                  {label}
+                  <input type="file" name="asset" />
+                </label>
+                <button type="submit">Upload</button>
+              </p>
+            </form>
+          )
+        })}
+      </section>
+
+      <section aria-labelledby="workflow-heading">
+        <h2 id="workflow-heading">Workflow</h2>
+        <form method="post"><input type="hidden" name="intent" value="submit" /><button type="submit">Submit for approval</button></form>
+        <form method="post"><input type="hidden" name="intent" value="publish" /><button type="submit">Publish</button></form>
+        <form method="post"><input type="hidden" name="intent" value="unpublish" /><button type="submit">Unpublish</button></form>
+        <form method="post">
+          <input type="hidden" name="intent" value="schedule" />
+          <input type="hidden" name="revisionId" value={item.current_revision_id ?? ''} />
+          <label>Action <select name="action"><option value="publish">publish</option><option value="unpublish">unpublish</option></select></label>
+          <label>Run at <input name="runAt" type="datetime-local" /></label>
+          <button type="submit">Schedule</button>
+        </form>
+      </section>
+
+      <section aria-labelledby="seo-heading" data-testid="seo-panel">
+        <h2 id="seo-heading">SEO</h2>
+        <form method="post"><input type="hidden" name="intent" value="seo" /><button type="submit">Run SEO audit</button></form>
+        {seo && <p>Score {seo.score}</p>}
+        {checklist.length > 0 && <ul>{checklist.map((entry) => <li>{String(entry.rule ?? entry.name ?? 'check')} {entry.pass === false ? 'needs work' : 'ok'}</li>)}</ul>}
+      </section>
+
+      <section aria-labelledby="discussion-heading" data-testid="content-comments">
+        <h2 id="discussion-heading">Discussion</h2>
+        {comments.length === 0 ? <p>No comments yet.</p> : <ul>{comments.map((comment) => <li>{comment.body}</li>)}</ul>}
+      </section>
+
+      <section aria-labelledby="revisions-heading" data-testid="content-revisions">
+        <h2 id="revisions-heading">Revisions</h2>
+        {revisions.length === 0 ? <p>No revisions.</p> : (
+          <ol>
+            {revisions.map((revision) => (
+              <li>
+                <span>Revision {revision.revision_number ?? revision.id}</span>
+                {frozenIds.has(revision.id) && <strong> frozen</strong>}
+                <details>
+                  <summary>Diff</summary>
+                  <pre>{revision.data ?? ''}</pre>
+                </details>
+              </li>
+            ))}
+          </ol>
+        )}
+      </section>
+    </article>
+  )}
+</Base>

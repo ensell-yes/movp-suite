@@ -1,0 +1,82 @@
+---
+import Base from '../../layouts/Base.astro'
+import AuthFailure from '../../components/states/AuthFailure.astro'
+import ErrorRetry from '../../components/states/ErrorRetry.astro'
+import EmptyState from '../../components/states/EmptyState.astro'
+import { readServerEnv } from '../../lib/env.ts'
+import { getSessionToken } from '../../lib/session.ts'
+import { gqlRequest } from '../../lib/graphql.ts'
+import {
+  APPROVALS_QUERY,
+  CONTENT_ITEM_QUERY,
+  DECIDE_MUTATION,
+  type ContentApprovalRow,
+  type ContentItemRow,
+} from '../../lib/content-queries.ts'
+
+const token = getSessionToken(Astro.cookies)
+let state: 'auth' | 'error' | 'empty' | 'ok' = 'auth'
+let approvals: ContentApprovalRow[] = []
+let labels = new Map<string, string>()
+let notice = ''
+
+if (token) {
+  const { graphqlEndpoint, workspaceId } = readServerEnv()
+  if (Astro.request.method === 'POST') {
+    const form = await Astro.request.formData()
+    const approvalId = String(form.get('approvalId') ?? '')
+    const vote = String(form.get('vote') ?? '')
+    const r = await gqlRequest({ endpoint: graphqlEndpoint, token }, DECIDE_MUTATION, { approvalId, vote })
+    if (!r.ok) state = 'error'
+    else notice = vote === 'reject' ? 'Rejected' : 'Approved'
+  }
+
+  if (state !== 'error') {
+    const r = await gqlRequest<{ contentApprovals: ContentApprovalRow[] }>({ endpoint: graphqlEndpoint, token }, APPROVALS_QUERY, { workspaceId })
+    if (!r.ok) state = 'error'
+    else {
+      approvals = r.data.contentApprovals
+      const pairs = await Promise.all(
+        approvals.map(async (approval) => {
+          if (!approval.content_item_id) return null
+          const item = await gqlRequest<{ contentItem: ContentItemRow | null }>(
+            { endpoint: graphqlEndpoint, token },
+            CONTENT_ITEM_QUERY,
+            { id: approval.content_item_id },
+          )
+          if (!item.ok || !item.data.contentItem) return [approval.content_item_id, approval.content_item_id] as const
+          return [approval.content_item_id, item.data.contentItem.slug ?? approval.content_item_id] as const
+        }),
+      )
+      labels = new Map(pairs.filter((pair): pair is readonly [string, string] => pair !== null))
+      state = approvals.length === 0 ? 'empty' : 'ok'
+    }
+  }
+}
+---
+<Base title="Content Approvals">
+  <h1 tabindex="-1" id="content-approvals-heading">Content Approvals</h1>
+  <p><a href="/content">Content</a> <a href="/content/calendar">Calendar</a></p>
+  {state === 'auth' && <AuthFailure resource="content approvals" />}
+  {state === 'error' && <ErrorRetry message="Could not load content approvals." retryHref={Astro.url.pathname} />}
+  {state === 'empty' && <EmptyState message="No pending approvals." />}
+  {notice && <p role="status">{notice}</p>}
+  {state === 'ok' && (
+    <section aria-labelledby="queue-heading" data-testid="content-approvals">
+      <h2 id="queue-heading">Queue</h2>
+      <ul>
+        {approvals.map((approval) => (
+          <li>
+            <span>{approval.content_item_id ? labels.get(approval.content_item_id) ?? approval.content_item_id : approval.id}</span>
+            <small> {approval.state ?? 'pending'}</small>
+            <form method="post">
+              <input type="hidden" name="approvalId" value={approval.id} />
+              <button type="submit" name="vote" value="approve">Approve</button>
+              <button type="submit" name="vote" value="reject">Reject</button>
+            </form>
+          </li>
+        ))}
+      </ul>
+    </section>
+  )}
+</Base>

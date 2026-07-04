@@ -1,0 +1,45 @@
+---
+import Base from '../../layouts/Base.astro'
+import AuthFailure from '../../components/states/AuthFailure.astro'
+import ErrorRetry from '../../components/states/ErrorRetry.astro'
+import EmptyState from '../../components/states/EmptyState.astro'
+import { readServerEnv } from '../../lib/env.ts'
+import { getSessionToken } from '../../lib/session.ts'
+import { gqlRequest } from '../../lib/graphql.ts'
+import { INBOX_QUERY, type InboxItem } from '../../lib/content-queries.ts'
+
+const token = getSessionToken(Astro.cookies)
+let state: 'auth' | 'error' | 'empty' | 'ok' = 'auth'
+let events: InboxItem[] = []
+
+if (token) {
+  const { graphqlEndpoint, workspaceId } = readServerEnv()
+  const r = await gqlRequest<{ inbox: InboxItem[] }>({ endpoint: graphqlEndpoint, token }, INBOX_QUERY, { workspaceId, tab: 'all' })
+  if (!r.ok) state = 'error'
+  else {
+    events = r.data.inbox.filter((item) => item.entity_type === 'content_item' || item.kind.startsWith('content.'))
+    state = events.length === 0 ? 'empty' : 'ok'
+  }
+}
+---
+<Base title="Content Calendar">
+  <h1 tabindex="-1" id="content-calendar-heading">Content Calendar</h1>
+  <p><a href="/content">Content</a> <a href="/content/approvals">Approvals</a></p>
+  {state === 'auth' && <AuthFailure resource="content calendar" />}
+  {state === 'error' && <ErrorRetry message="Could not load content calendar." retryHref={Astro.url.pathname} />}
+  {state === 'empty' && <EmptyState message="No scheduled content events." />}
+  {state === 'ok' && (
+    <section aria-labelledby="calendar-events-heading" data-testid="content-calendar">
+      <h2 id="calendar-events-heading">Events</h2>
+      <ol>
+        {events.map((event) => (
+          <li>
+            <time datetime={event.created_at}>{event.created_at}</time>
+            <span> {event.kind}</span>
+            <a href={`/content/${event.entity_id}`}> {event.entity_id}</a>
+          </li>
+        ))}
+      </ol>
+    </section>
+  )}
+</Base>
