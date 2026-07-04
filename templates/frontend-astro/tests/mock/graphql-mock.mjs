@@ -142,6 +142,9 @@ createServer(async (req, res) => {
     return json(res, 200, { data: { runSeoAudit: { score: 87, checklist: JSON.stringify([{ rule: 'headline', pass: true }]) } } })
   }
   if (query.includes('mutation UpdateContent')) {
+    if (scenario === 'conflict') {
+      return json(res, 200, { errors: [{ message: 'domain.content.update failed [40001] content_update_conflict' }] })
+    }
     const data = JSON.parse(parsed.variables?.data ?? '{}')
     if (typeof data.priority !== 'number' || typeof data.featured !== 'boolean' || !['news', 'guide'].includes(data.category) || !data.hero) {
       return json(res, 200, { errors: [{ message: 'invalid content data' }] })

@@ -36,6 +36,8 @@ let fields: FieldDescriptor[] = []
 let values: Record<string, unknown> = {}
 let seo: SeoResult | null = null
 let notice = ''
+let postError = ''
+let shouldReload = true
 
 function parseJsonObject(input: string | null | undefined): Record<string, unknown> {
   if (!input) return {}
@@ -119,6 +121,14 @@ function collectFieldData(form: FormData, schemaFields: FieldDescriptor[]): Reco
   return data
 }
 
+function saveErrorMessage(result: { code: string; message?: string }): string {
+  const detail = result.message ?? ''
+  if (detail.includes('content_update_conflict') || detail.includes('40001')) {
+    return 'This content was changed by someone else. Reload to see the latest, then reapply your edits.'
+  }
+  return 'Could not save. Try again.'
+}
+
 async function sha256Hex(buffer: ArrayBuffer): Promise<string> {
   const digest = await crypto.subtle.digest('SHA-256', buffer)
   return Array.from(new Uint8Array(digest)).map((byte) => byte.toString(16).padStart(2, '0')).join('')
@@ -158,14 +168,20 @@ if (token) {
         state = loadState
         mutationOk = false
       } else {
+        state = 'ok'
         const data = { ...values, ...collectFieldData(form, fields) }
         const r = await gqlRequest({ endpoint: graphqlEndpoint, token }, UPDATE_CONTENT_MUTATION, {
           id,
           data: JSON.stringify(data),
           expectedRevisionId: item?.current_revision_id ?? undefined,
         })
-        mutationOk = r.ok
         if (r.ok) notice = 'Saved'
+        else {
+          values = data
+          postError = saveErrorMessage(r)
+          shouldReload = false
+          mutationOk = false
+        }
       }
     } else if (intent === 'seo') {
       const r = await gqlRequest<{ runSeoAudit: SeoResult }>({ endpoint: graphqlEndpoint, token }, RUN_SEO_AUDIT_MUTATION, { itemId: id })
@@ -195,6 +211,7 @@ if (token) {
     } else if (intent === 'asset') {
       const loadState = await loadItem(graphqlEndpoint, workspaceId)
       if (loadState === 'ok' && item) {
+        state = 'ok'
         const file = form.get('asset')
         const field = String(form.get('field') ?? '')
         if (file instanceof File && file.size > 0 && field) {
@@ -220,8 +237,13 @@ if (token) {
                   data: JSON.stringify(next),
                   expectedRevisionId: item.current_revision_id ?? undefined,
                 })
-                mutationOk = update.ok
                 if (update.ok) notice = 'Asset uploaded'
+                else {
+                  values = next
+                  postError = saveErrorMessage(update)
+                  shouldReload = false
+                  mutationOk = false
+                }
               } else mutationOk = false
             } else mutationOk = false
           } else mutationOk = false
@@ -229,10 +251,10 @@ if (token) {
       } else mutationOk = false
     }
 
-    if (!mutationOk) state = 'error'
+    if (!mutationOk && !postError) state = 'error'
   }
 
-  if (state !== 'error') state = await loadItem(graphqlEndpoint, workspaceId)
+  if (state !== 'error' && shouldReload) state = await loadItem(graphqlEndpoint, workspaceId)
 }
 
 const frozenIds = new Set([item?.approved_revision_id, item?.published_revision_id].filter(Boolean))
@@ -254,6 +276,7 @@ const checklist = seo?.checklist ? (() => {
     <article data-testid="content-editor">
       <h1 tabindex="-1" id="content-editor-heading">{item.slug ?? item.id}</h1>
       {notice && <p role="status">{notice}</p>}
+      {postError && <p role="alert" data-testid="save-error">{postError} <a href={Astro.url.pathname}>Reload</a></p>}
       <p><small>Status {item.status ?? 'unknown'}</small></p>
       <nav aria-label="Content item actions">
         <a href="/content">List</a> <a href="/content/approvals">Approvals</a> <a href="/content/calendar">Calendar</a>

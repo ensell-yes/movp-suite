@@ -47,7 +47,7 @@ describe('gqlRequest', () => {
       NOTES_QUERY,
       { workspaceId: 'w', first: 20 },
     )
-    expect(r).toEqual({ ok: false, code: 'graphql_error' })
+    expect(r).toEqual({ ok: false, code: 'graphql_error', message: 'nope' })
   })
 
   it('maps a 401 or 403 to auth_error', async () => {

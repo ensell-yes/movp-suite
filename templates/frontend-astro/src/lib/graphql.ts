@@ -20,7 +20,7 @@ export type SearchHit = {
 }
 
 export type GqlErrorCode = 'http_error' | 'auth_error' | 'graphql_error' | 'network_error'
-export type GqlResult<T> = { ok: true; data: T } | { ok: false; code: GqlErrorCode }
+export type GqlResult<T> = { ok: true; data: T } | { ok: false; code: GqlErrorCode; message?: string }
 
 export type GqlClientOpts = {
   endpoint: string
@@ -81,7 +81,13 @@ export async function gqlRequest<T>(
   } catch {
     return { ok: false, code: 'graphql_error' }
   }
-  if (json.errors && json.errors.length > 0) return { ok: false, code: 'graphql_error' }
+  if (json.errors && json.errors.length > 0) {
+    const message = json.errors
+      .map((error) => error && typeof error === 'object' && 'message' in error ? String((error as { message: unknown }).message) : '')
+      .filter(Boolean)
+      .join('; ')
+    return { ok: false, code: 'graphql_error', message: message || undefined }
+  }
   if (json.data === undefined) return { ok: false, code: 'graphql_error' }
   return { ok: true, data: json.data }
 }

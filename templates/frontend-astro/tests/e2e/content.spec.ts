@@ -62,6 +62,16 @@ test('content editor renders schema controls discussion revisions and SEO POST r
   await expect(page.getByTestId('seo-panel')).toContainText('headline')
 })
 
+test('content editor keeps edits visible on save conflict', async ({ page }) => {
+  await scenario('conflict')
+  await page.goto('/content/ci1')
+  await page.getByLabel('Priority').fill('43')
+  await page.getByRole('button', { name: 'Save' }).click()
+  await expect(page.getByTestId('save-error')).toContainText('changed by someone else')
+  await expect(page.getByTestId('content-editor')).toBeVisible()
+  await expect(page.getByLabel('Priority')).toHaveValue('43')
+})
+
 test('approval queue and calendar render operational states', async ({ page }) => {
   await page.goto('/content/approvals')
   await expect(page.getByTestId('content-approvals')).toContainText('launch-article')
