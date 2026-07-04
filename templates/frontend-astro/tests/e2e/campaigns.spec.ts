@@ -27,13 +27,29 @@ test('campaigns auth failure renders without a cookie', async ({ page, context }
 
 test('campaign list renders seeded campaigns, sorting controls, and empty state', async ({ page }) => {
   await page.goto('/campaigns')
-  await expect(page.getByTestId('campaigns-list')).toContainText('Launch campaign')
+  const rows = page.getByTestId('campaigns-list').locator('tbody tr')
+  await expect(rows).toHaveCount(3)
+  await expect(rows.nth(0)).toContainText('Launch campaign')
+  await expect(rows.nth(1)).toContainText('Planning campaign')
+  await expect(rows.nth(2)).toContainText('Wrap-up campaign')
+
   await page.getByRole('button', { name: 'Sort by rank' }).click()
   await expect(page.getByRole('button', { name: 'Sort by rank' })).toHaveAttribute('aria-pressed', 'true')
+  await expect(rows.nth(0)).toContainText('Launch campaign')
+  await expect(rows.nth(1)).toContainText('Planning campaign')
+  await expect(rows.nth(2)).toContainText('Wrap-up campaign')
+
   await page.getByRole('button', { name: 'Sort by priority' }).click()
   await expect(page.getByRole('button', { name: 'Sort by priority' })).toHaveAttribute('aria-pressed', 'true')
+  await expect(rows.nth(0)).toContainText('Planning campaign')
+  await expect(rows.nth(1)).toContainText('Launch campaign')
+  await expect(rows.nth(2)).toContainText('Wrap-up campaign')
+
   await page.getByRole('button', { name: 'Sort by status' }).click()
   await expect(page.getByRole('button', { name: 'Sort by status' })).toHaveAttribute('aria-pressed', 'true')
+  await expect(rows.nth(0)).toContainText('Planning campaign')
+  await expect(rows.nth(1)).toContainText('Launch campaign')
+  await expect(rows.nth(2)).toContainText('Wrap-up campaign')
 
   await scenario('empty')
   await page.goto('/campaigns')

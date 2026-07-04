@@ -3,6 +3,10 @@ import { createServer } from 'node:http'
 const port = Number(process.argv[2] ?? 4322)
 let scenario = 'ok'
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
 function json(res, status, body) {
   res.writeHead(status, { 'content-type': 'application/json' })
   res.end(JSON.stringify(body))
@@ -53,6 +57,24 @@ const campaigns = [
     rank: '1',
     start_date: '2026-07-01',
     end_date: '2026-07-31',
+  },
+  {
+    id: 'camp-2',
+    name: 'Planning campaign',
+    status: 'scheduled',
+    priority: 'low',
+    rank: '2',
+    start_date: '2026-06-15',
+    end_date: '2026-06-30',
+  },
+  {
+    id: 'camp-3',
+    name: 'Wrap-up campaign',
+    status: 'completed',
+    priority: 'urgent',
+    rank: '3',
+    start_date: '2026-08-01',
+    end_date: '2026-08-15',
   },
 ]
 const campaignDetail = {
@@ -131,6 +153,7 @@ createServer(async (req, res) => {
     return json(res, 200, { data: { note: scenario === 'empty' ? null : notes[0] } })
   }
   if (query.includes('query Search')) {
+    await sleep(100)
     const hits =
       scenario === 'empty'
         ? []

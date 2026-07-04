@@ -12,9 +12,17 @@ const token = getSessionToken(Astro.cookies)
 let state: 'auth' | 'error' | 'empty' | 'ok' = 'auth'
 let campaigns: CampaignPage['items'] = []
 
+const PRIORITY_ORDER: Record<string, number> = { low: 0, medium: 1, high: 2, urgent: 3 }
+const STATUS_ORDER: Record<string, number> = { draft: 0, scheduled: 1, active: 2, completed: 3, archived: 4 }
+
 function rankValue(rank: string | null): number {
   const parsed = Number.parseFloat(rank ?? '')
   return Number.isFinite(parsed) ? parsed : Number.POSITIVE_INFINITY
+}
+
+function orderedValue(value: string | null, order: Record<string, number>): number {
+  const key = (value ?? '').toLowerCase()
+  return order[key] ?? Number.POSITIVE_INFINITY
 }
 
 if (token) {
@@ -60,7 +68,9 @@ if (token) {
             <tr
               data-rank={campaign.rank ?? ''}
               data-priority={campaign.priority ?? ''}
+              data-priority-order={String(orderedValue(campaign.priority, PRIORITY_ORDER))}
               data-status={campaign.status ?? ''}
+              data-status-order={String(orderedValue(campaign.status, STATUS_ORDER))}
               data-start={campaign.start_date ?? ''}
             >
               <th scope="row"><a href={`/campaigns/${campaign.id}`}>{campaign.name ?? campaign.id}</a></th>
@@ -82,6 +92,14 @@ if (token) {
     function valueFor(row: HTMLTableRowElement, key: string): string | number {
       if (key === 'rank') {
         const parsed = Number.parseFloat(row.dataset.rank ?? '')
+        return Number.isFinite(parsed) ? parsed : Number.POSITIVE_INFINITY
+      }
+      if (key === 'priority') {
+        const parsed = Number.parseFloat(row.dataset.priorityOrder ?? '')
+        return Number.isFinite(parsed) ? parsed : Number.POSITIVE_INFINITY
+      }
+      if (key === 'status') {
+        const parsed = Number.parseFloat(row.dataset.statusOrder ?? '')
         return Number.isFinite(parsed) ? parsed : Number.POSITIVE_INFINITY
       }
       return row.dataset[key] ?? ''
