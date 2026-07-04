@@ -60,6 +60,28 @@ const tasks = [
     dependency_blocked: false,
     completed_at: null,
   },
+  {
+    id: 'task-1',
+    title: 'Campaign launch task',
+    status_id: 's1',
+    priority_id: 'p1',
+    parent_id: null,
+    description: 'Backs the launch email deliverable',
+    due_date: '2026-07-10',
+    dependency_blocked: false,
+    completed_at: null,
+  },
+  {
+    id: 'task-2',
+    title: 'Unlinked task',
+    status_id: 's1',
+    priority_id: 'p1',
+    parent_id: null,
+    description: 'Should not appear on the campaign board',
+    due_date: '2026-07-12',
+    dependency_blocked: false,
+    completed_at: null,
+  },
 ]
 const statuses = [{ id: 's1', label: 'Todo', category: 'backlog', sort_order: 0 }]
 const comments = [{ id: 'c1', body: 'Looks good', author_id: 'u2', created_at: '2026-07-01T00:00:00Z' }]

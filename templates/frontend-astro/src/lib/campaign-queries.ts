@@ -86,6 +86,9 @@ export type CampaignCalendarEventRow = {
 
 export type CampaignCalendarEventPage = { items: CampaignCalendarEventRow[]; nextCursor: string | null }
 
+export { TASK_BOARD_QUERY } from './task-queries.ts'
+export type { TaskBoardColumn } from './task-queries.ts'
+
 // Generic list (codegen surface): scalar fields exposed as String, sorted client-side.
 export const CAMPAIGNS_QUERY = /* GraphQL */ `
   query Campaigns($workspaceId: ID!, $first: Int) {

@@ -74,9 +74,17 @@ test('campaign calendar renders milestones and deliverable due dates', async ({ 
   await expect(page.getByTestId('campaign-calendar')).toContainText('Launch day')
   await expect(page.getByTestId('campaign-calendar')).toContainText('Launch email due')
   await expect(page.getByTestId('campaign-calendar')).toContainText('2026-07-10')
+  expect(await mockCounts()).toMatchObject({ DeliverableSchedules: 1 })
 })
 
-for (const path of ['/campaigns', '/campaigns/camp-1', '/campaigns/timeline', '/campaigns/calendar']) {
+test('campaign board reuses the task board filtered to backing tasks', async ({ page }) => {
+  await page.goto('/campaigns/camp-1/board')
+  await expect(page.getByTestId('task-board')).toContainText('Todo')
+  await expect(page.getByTestId('task-board')).toContainText('Campaign launch task')
+  await expect(page.getByTestId('task-board')).not.toContainText('Unlinked task')
+})
+
+for (const path of ['/campaigns', '/campaigns/camp-1', '/campaigns/timeline', '/campaigns/calendar', '/campaigns/camp-1/board']) {
   test(`campaign a11y smoke: ${path}`, async ({ page }) => {
     await page.goto(path)
     const results = await new AxeBuilder({ page }).analyze()

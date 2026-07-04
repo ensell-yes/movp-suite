@@ -1,0 +1,58 @@
+---
+import Base from '../../../layouts/Base.astro'
+import AuthFailure from '../../../components/states/AuthFailure.astro'
+import ErrorRetry from '../../../components/states/ErrorRetry.astro'
+import EmptyState from '../../../components/states/EmptyState.astro'
+import TaskBoardColumns from '../../../components/TaskBoardColumns.astro'
+import { readServerEnv } from '../../../lib/env.ts'
+import { getSessionToken } from '../../../lib/session.ts'
+import { gqlRequest } from '../../../lib/graphql.ts'
+import {
+  CAMPAIGN_DETAIL_QUERY,
+  TASK_BOARD_QUERY,
+  type CampaignDetail,
+  type TaskBoardColumn,
+} from '../../../lib/campaign-queries.ts'
+
+const { id } = Astro.params
+const token = getSessionToken(Astro.cookies)
+let state: 'auth' | 'error' | 'empty' | 'ok' = 'auth'
+let campaign: CampaignDetail | null = null
+let columns: TaskBoardColumn[] = []
+let taskIds: string[] = []
+let emptyMessage = 'Campaign not found.'
+
+if (token) {
+  const { graphqlEndpoint, workspaceId } = readServerEnv()
+  const [detailRes, boardRes] = await Promise.all([
+    gqlRequest<{ campaignDetail: CampaignDetail | null }>({ endpoint: graphqlEndpoint, token }, CAMPAIGN_DETAIL_QUERY, { campaignId: id }),
+    gqlRequest<{ taskBoard: TaskBoardColumn[] }>({ endpoint: graphqlEndpoint, token }, TASK_BOARD_QUERY, { workspaceId }),
+  ])
+
+  if (
+    (!detailRes.ok && detailRes.code === 'auth_error') ||
+    (!boardRes.ok && boardRes.code === 'auth_error')
+  ) state = 'auth'
+  else if (!detailRes.ok || !boardRes.ok) state = 'error'
+  else if (!detailRes.data.campaignDetail) state = 'empty'
+  else {
+    campaign = detailRes.data.campaignDetail
+    columns = boardRes.data.taskBoard
+    taskIds = campaign.deliverables.map((deliverable) => deliverable.taskId).filter((taskId): taskId is string => Boolean(taskId))
+    emptyMessage = 'No backing tasks for this campaign yet.'
+    state = taskIds.length === 0 ? 'empty' : 'ok'
+  }
+}
+---
+<Base title={campaign?.name ? `${campaign.name} Board` : 'Campaign Board'}>
+  {state === 'auth' && <AuthFailure resource="campaign board" />}
+  {state === 'error' && <ErrorRetry message="Could not load the campaign board." retryHref={Astro.url.pathname} />}
+  {state === 'empty' && <EmptyState message={emptyMessage}><a href={`/campaigns/${id}`}>Back to campaign</a></EmptyState>}
+  {state === 'ok' && campaign && (
+    <article data-testid="campaign-board">
+      <h1 tabindex="-1" id="campaign-board-heading">{campaign.name ?? campaign.id} Board</h1>
+      <p><a href={`/campaigns/${campaign.id}`}>Detail</a> <a href="/campaigns/timeline">Timeline</a> <a href="/campaigns/calendar">Calendar</a></p>
+      <TaskBoardColumns columns={columns} taskIds={taskIds} />
+    </article>
+  )}
+</Base>
