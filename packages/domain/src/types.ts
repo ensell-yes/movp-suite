@@ -169,6 +169,15 @@ export interface ContentService {
   linkEditorialTask(i: { itemId: string; taskId: string }): Promise<void>
 }
 
+export interface CampaignService {
+  linkTask(i: { deliverableId: string; taskId: string }): Promise<void>                 // edge deliverable -> task (implemented_by); rejects [task_not_found] if the task is missing or cross-workspace
+  linkContent(i: { deliverableId: string; contentItemId: string }): Promise<void>       // edge deliverable -> content_item (produces)
+  linkSegment(i: { campaignId: string; segmentId: string }): Promise<void>              // edge campaign -> segment (targets; inert until Phase 6)
+  addObserver(i: { campaignId: string; userId: string }): Promise<void>                 // edge campaign -> user (observer); rejects [user_not_member] — target MUST be a workspace member (feeds notification fan-out); NOT owner-gated by design (see impl note)
+  deliverableSchedule(deliverableId: string): Promise<{ taskId: string; startDate: string | null; dueDate: string | null } | null> // reverse edge -> backing task's dates
+  deliverableSchedules(deliverableIds: string[]): Promise<Array<{ deliverableId: string; taskId: string; startDate: string | null; dueDate: string | null }>> // BATCHED: all backing-task dates in TWO queries (edges .in + task .in) — avoids Part C timeline N+1
+}
+
 export interface Domain {
   note: CollectionService<NoteRow, NoteCreate, NoteUpdate>
   tag: CollectionService<TagRow, TagCreate, TagUpdate>
@@ -179,4 +188,5 @@ export interface Domain {
   search(a: SearchArgs): Promise<SearchHit[]>
   graph: GraphService
   collab: CollabService
+  campaign: CampaignService
 }

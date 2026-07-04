@@ -12,6 +12,7 @@ import type {
   TaskStatusOptionRow,
   TaskStatusOptionUpdate,
 } from './generated/types.ts'
+import { makeCampaignService } from './campaign.ts'
 import { makeCollabService } from './collab.ts'
 import { makeCollectionService } from './collection.ts'
 import { makeContentService } from './content.ts'
@@ -31,5 +32,6 @@ export function createDomain(ctx: DomainCtx, opts: { embedder?: EmbeddingProvide
     search: (args) => runSearch(ctx, opts.embedder, args),
     graph: makeGraphService(ctx),
     collab: makeCollabService(ctx),
+    campaign: makeCampaignService(ctx),
   }
 }
