@@ -135,13 +135,33 @@ Core→Collaboration→Task→CMS→Campaigns chain); its hand-authored migratio
    already expose it. **Precondition: 04a–04c merged.** (The `campaign→segment` audience seam is DEFERRED to a
    future campaign-targeting flow.)
 
-> **The remaining app phase** (`app-06` Domain Workflows) is still ROADMAP/design altitude — it must be
-> **expanded into a bite-sized TDD series** (as every prior phase was) before code is written. It consumes
-> Segmentation's `segment.*` events + the `platform_event` stream as automation triggers.
+**Phase 7 - Domain Workflows & Webhooks (`app-06`) is EXPANDED and EXECUTABLE** (bite-sized TDD,
+four parts; the orchestration layer over every prior phase's emitted events). It consumes Core's
+`emit_event`/`movp_events`/`movp_jobs`/`webhooks` backbone, Task/CMS/Campaign/Segmentation event
+names, and Segmentation's `platform_event` stream as automation triggers. **Precondition:
+Collaboration (05a-05b), Task (01a-01c), CMS (02a-02d), Campaigns (03a-03c), and Segmentation
+(04a-04d) merged first.** Its hand-authored migrations start at `...000022` (after Segmentation's
+`...000019-000021`). Execute **in order**:
+1. `2026-07-03-movp-app-06a-workflows-catalog-guards.md` - codegen support for the global
+   `event_type` catalog (`workspaceScoped:false` without member-RLS drift), `defineEvent` catalog
+   seeding + `check-event-catalog`, the four workflow collections
+   (`event_type`, `automation_rule`, `webhook_subscription`, `workflow_run`), the `automate` job kind,
+   and the additive `emit_event` automate enqueue (migration `...000022`).
+2. `2026-07-03-movp-app-06b-workflows-automation-engine.md` - the `automate` branch in the flows
+   worker, the bounded in-worker condition evaluator, ledger-first exactly-once `workflow_run` action
+   dispatch, loop guard, default rules, and the scoped `get_event(id, ws)` audit RPC (migration
+   `...000023`). **Precondition: 06a merged.**
+3. `2026-07-03-movp-app-06c-workflows-webhook-management.md` - hardened webhook-subscription RPCs
+   (register/rotate/activate/deactivate/filter), public/internal 1:1 pairing reconciliation, direct
+   write denial, secret discipline, and filter-before-fetch webhook delivery (migration `...000024`).
+   **Precondition: 06a merged; 06b preferred for evaluator reuse.**
+4. `2026-07-03-movp-app-06d-workflows-surfaces-frontend.md` - domain service wrappers,
+   GraphQL/MCP/CLI custom workflow operations, Astro rule/webhook/audit admin pages, dead-job replay,
+   and the `[workflows]` e2e slice. **No new migration.** **Precondition: 06a-06c merged.**
 
 ## Per-task execution protocol
 
-For every `### Task N` (Stage A **and** the Collaboration `05a`/`05b` series):
+For every `### Task N` (Stage A **and** every expanded application-series plan):
 1. Read **Files** and **Interfaces** (the exact signatures neighboring tasks rely on).
 2. Follow the `- [ ]` steps in order — the TDD cycle is deliberate:
    write the failing test → run it, confirm the **stated expected failure** → paste the
@@ -162,7 +182,8 @@ For every `### Task N` (Stage A **and** the Collaboration `05a`/`05b` series):
 
 ## Invariants to preserve (do not "improve" these away)
 
-- **Tenancy:** every collection is `workspaceScoped`; RLS authorizes via `is_workspace_member`.
+- **Tenancy:** every tenant-owned collection is `workspaceScoped`; RLS authorizes via
+  `is_workspace_member`. The app-06 `event_type` catalog is the explicit global read-only exception.
 - **Config-first single source of truth:** DB/GraphQL/MCP/CLI/types are codegen'd from
   `@movp/core-schema` — never hand-edit generated artifacts.
 - **DSL/relation contract (amended):** `many-to-one`/`one-to-one` relations → `<field>_id` FK;
