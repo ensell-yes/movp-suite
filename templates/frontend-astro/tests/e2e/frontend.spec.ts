@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test'
+import { expect, test, type Route } from '@playwright/test'
 import AxeBuilder from '@axe-core/playwright'
 import { scenario, seedSession } from './scenario.ts'
 
@@ -33,11 +33,28 @@ test('note detail renders', async ({ page }) => {
 
 test('search loading, results, empty, and error retry states render', async ({ page }) => {
   await page.goto('/search')
+  await expect(page.getByTestId('search-box')).toHaveAttribute('data-ready', 'true')
   await page.getByLabel('Search notes').fill('first')
-  const response = page.waitForResponse('**/api/search?q=first')
+
+  let releaseSearch!: () => void
+  const searchGate = new Promise<void>((resolve) => {
+    releaseSearch = resolve
+  })
+  const searchRoute = async (route: Route) => {
+    await searchGate
+    await route.continue()
+  }
+  await page.route('**/api/search**', searchRoute)
+
+  const response = page.waitForResponse((res) => {
+    const url = new URL(res.url())
+    return url.pathname === '/api/search' && url.searchParams.get('q') === 'first'
+  })
   await page.getByRole('button', { name: 'Search' }).click()
   await expect(page.getByTestId('search-loading')).toBeVisible()
+  releaseSearch()
   await response
+  await page.unroute('**/api/search**', searchRoute)
   await expect(page.getByTestId('search-results')).toContainText('First note')
 
   await scenario('empty')

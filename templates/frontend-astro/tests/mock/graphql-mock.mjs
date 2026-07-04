@@ -4,10 +4,6 @@ const port = Number(process.argv[2] ?? 4322)
 let fallbackScenario = 'ok'
 const scenarios = new Map()
 
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms))
-}
-
 function json(res, status, body) {
   res.writeHead(status, { 'content-type': 'application/json' })
   res.end(JSON.stringify(body))
@@ -82,6 +78,15 @@ const campaigns = [
     rank: '3',
     start_date: '2026-08-01',
     end_date: '2026-08-15',
+  },
+  {
+    id: 'camp-4',
+    name: 'Cancelled campaign',
+    status: 'cancelled',
+    priority: 'medium',
+    rank: '4',
+    start_date: '2026-09-01',
+    end_date: '2026-09-15',
   },
 ]
 const campaignDetail = {
@@ -164,7 +169,6 @@ createServer(async (req, res) => {
     return json(res, 200, { data: { note: scenario === 'empty' ? null : notes[0] } })
   }
   if (query.includes('query Search')) {
-    await sleep(100)
     const hits =
       scenario === 'empty'
         ? []
