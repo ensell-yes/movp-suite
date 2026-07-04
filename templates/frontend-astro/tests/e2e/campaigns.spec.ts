@@ -1,22 +1,9 @@
 import { expect, test } from '@playwright/test'
 import AxeBuilder from '@axe-core/playwright'
-
-async function scenario(name: string) {
-  await fetch(`http://127.0.0.1:4322/scenario?name=${name}`)
-}
+import { scenario, seedSession } from './scenario.ts'
 
 test.beforeEach(async ({ context }) => {
-  await scenario('ok')
-  await context.addCookies([
-    {
-      name: 'sb-access-token',
-      value: 'test-token',
-      domain: '127.0.0.1',
-      path: '/',
-      httpOnly: true,
-      sameSite: 'Lax',
-    },
-  ])
+  await seedSession(context)
 })
 
 test('campaigns auth failure renders without a cookie', async ({ page, context }) => {

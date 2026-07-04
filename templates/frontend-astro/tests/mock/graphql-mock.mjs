@@ -1,7 +1,8 @@
 import { createServer } from 'node:http'
 
 const port = Number(process.argv[2] ?? 4322)
-let scenario = 'ok'
+let fallbackScenario = 'ok'
+const scenarios = new Map()
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -10,6 +11,12 @@ function sleep(ms) {
 function json(res, status, body) {
   res.writeHead(status, { 'content-type': 'application/json' })
   res.end(JSON.stringify(body))
+}
+
+function scenarioFor(req) {
+  const auth = String(req.headers.authorization ?? '')
+  const match = auth.match(/^Bearer\s+(.+)$/i)
+  return match ? scenarios.get(match[1]) ?? fallbackScenario : fallbackScenario
 }
 
 const notes = [
@@ -134,10 +141,14 @@ createServer(async (req, res) => {
   const url = new URL(req.url ?? '/', `http://127.0.0.1:${port}`)
   if (url.pathname === '/health') return json(res, 200, { ok: true })
   if (url.pathname === '/scenario') {
-    scenario = url.searchParams.get('name') ?? 'ok'
-    return json(res, 200, { scenario })
+    const next = url.searchParams.get('name') ?? 'ok'
+    const token = url.searchParams.get('token')
+    if (token) scenarios.set(token, next)
+    else fallbackScenario = next
+    return json(res, 200, { scenario: next })
   }
   if (url.pathname !== '/graphql') return json(res, 404, { error: 'not_found' })
+  const scenario = scenarioFor(req)
   if (scenario === 'auth') return json(res, 401, { error: 'auth_error' })
   if (scenario === 'error') return json(res, 200, { errors: [{ message: 'seeded' }] })
 
