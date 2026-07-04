@@ -129,6 +129,12 @@ describe('content integration', () => {
     expect(rows[1].revision_number).toBe(2)
     expect(rows[1].parent_id).toBe(rows[0].id)
 
+    await expect(ownerDomain.content.update({
+      itemId: item.id,
+      data: { title: 'Stale write', body: '<p>Hi</p>', rank: 3 },
+      expectedRevisionId: rows[0].id,
+    })).rejects.toThrow(/\[40001\]|content_update_conflict/)
+
     const listed = await ownerDomain.content.listRevisions({ itemId: item.id })
     expect(listed.items.length).toBe(2)
 

@@ -47,6 +47,23 @@ function parseJsonObject(input: string | null | undefined): Record<string, unkno
   }
 }
 
+function revisionData(revision: ContentRevisionRow | undefined): Record<string, unknown> {
+  return parseJsonObject(revision?.data)
+}
+
+function diffRevision(revision: ContentRevisionRow, byId: Map<string, ContentRevisionRow>): Array<{ key: string; before: string; after: string }> {
+  const before = revisionData(revision.parent_id ? byId.get(revision.parent_id) : undefined)
+  const after = revisionData(revision)
+  const keys = Array.from(new Set([...Object.keys(before), ...Object.keys(after)])).sort()
+  return keys
+    .filter((key) => JSON.stringify(before[key]) !== JSON.stringify(after[key]))
+    .map((key) => ({
+      key,
+      before: before[key] == null ? '' : String(before[key]),
+      after: after[key] == null ? '' : String(after[key]),
+    }))
+}
+
 function parseFields(input: string | null | undefined): FieldDescriptor[] {
   if (!input) return []
   try {
@@ -142,7 +159,11 @@ if (token) {
         mutationOk = false
       } else {
         const data = { ...values, ...collectFieldData(form, fields) }
-        const r = await gqlRequest({ endpoint: graphqlEndpoint, token }, UPDATE_CONTENT_MUTATION, { id, data: JSON.stringify(data) })
+        const r = await gqlRequest({ endpoint: graphqlEndpoint, token }, UPDATE_CONTENT_MUTATION, {
+          id,
+          data: JSON.stringify(data),
+          expectedRevisionId: item?.current_revision_id ?? undefined,
+        })
         mutationOk = r.ok
         if (r.ok) notice = 'Saved'
       }
@@ -194,7 +215,11 @@ if (token) {
               )
               if (done.ok) {
                 const next = { ...values, [field]: done.data.finalizeAsset.r2_key }
-                const update = await gqlRequest({ endpoint: graphqlEndpoint, token }, UPDATE_CONTENT_MUTATION, { id, data: JSON.stringify(next) })
+                const update = await gqlRequest({ endpoint: graphqlEndpoint, token }, UPDATE_CONTENT_MUTATION, {
+                  id,
+                  data: JSON.stringify(next),
+                  expectedRevisionId: item.current_revision_id ?? undefined,
+                })
                 mutationOk = update.ok
                 if (update.ok) notice = 'Asset uploaded'
               } else mutationOk = false
@@ -211,6 +236,7 @@ if (token) {
 }
 
 const frozenIds = new Set([item?.approved_revision_id, item?.published_revision_id].filter(Boolean))
+const revisionsById = new Map(revisions.map((revision) => [revision.id, revision]))
 const checklist = seo?.checklist ? (() => {
   try {
     const parsed = JSON.parse(seo.checklist)
@@ -329,7 +355,16 @@ const checklist = seo?.checklist ? (() => {
                 {frozenIds.has(revision.id) && <strong> frozen</strong>}
                 <details>
                   <summary>Diff</summary>
-                  <pre>{revision.data ?? ''}</pre>
+                  {diffRevision(revision, revisionsById).length === 0 ? <p>No field changes.</p> : (
+                    <dl>
+                      {diffRevision(revision, revisionsById).map((change) => (
+                        <>
+                          <dt>{change.key}</dt>
+                          <dd><del>{change.before}</del> <ins>{change.after}</ins></dd>
+                        </>
+                      ))}
+                    </dl>
+                  )}
                 </details>
               </li>
             ))}

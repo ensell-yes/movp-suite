@@ -127,6 +127,14 @@ createServer(async (req, res) => {
   if (query.includes('query ContentComments')) {
     return json(res, 200, { data: { comments: scenario === 'empty' ? [] : [{ ...comments[0], body: 'Editorial note' }] } })
   }
+  if (query.includes('query ContentApprovalsPage')) {
+    return json(res, 200, {
+      data: {
+        contentApprovals: scenario === 'empty' ? [] : contentApprovals,
+        content: { items: scenario === 'empty' ? [] : contentItems, nextCursor: null },
+      },
+    })
+  }
   if (query.includes('query ContentApprovals')) {
     return json(res, 200, { data: { contentApprovals: scenario === 'empty' ? [] : contentApprovals } })
   }

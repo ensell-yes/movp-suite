@@ -79,13 +79,21 @@ export const APPROVALS_QUERY = /* GraphQL */ `
     contentApprovals(workspaceId: $workspaceId, state: "pending") { id content_item_id state }
   }`
 
+export const APPROVALS_PAGE_QUERY = /* GraphQL */ `
+  query ContentApprovalsPage($workspaceId: ID!) {
+    contentApprovals(workspaceId: $workspaceId, state: "pending") { id content_item_id state }
+    content(workspaceId: $workspaceId, first: 100) { items { id slug } nextCursor }
+  }`
+
 export const INBOX_QUERY = /* GraphQL */ `
   query Inbox($workspaceId: ID!, $tab: String!) {
     inbox(workspaceId: $workspaceId, tab: $tab) { kind entity_type entity_id ref_id created_at }
   }`
 
 export const UPDATE_CONTENT_MUTATION = /* GraphQL */ `
-  mutation UpdateContent($id: ID!, $data: String!) { updateContent(id: $id, data: $data) { id status } }`
+  mutation UpdateContent($id: ID!, $data: String!, $expectedRevisionId: ID) {
+    updateContent(id: $id, data: $data, expectedRevisionId: $expectedRevisionId) { id status current_revision_id }
+  }`
 
 export const RUN_SEO_AUDIT_MUTATION = /* GraphQL */ `
   mutation RunSeoAudit($itemId: ID!) { runSeoAudit(itemId: $itemId) { score checklist } }`

@@ -7,11 +7,10 @@ import { readServerEnv } from '../../lib/env.ts'
 import { getSessionToken } from '../../lib/session.ts'
 import { gqlRequest } from '../../lib/graphql.ts'
 import {
-  APPROVALS_QUERY,
-  CONTENT_ITEM_QUERY,
+  APPROVALS_PAGE_QUERY,
   DECIDE_MUTATION,
+  type ContentPage,
   type ContentApprovalRow,
-  type ContentItemRow,
 } from '../../lib/content-queries.ts'
 
 const token = getSessionToken(Astro.cookies)
@@ -33,24 +32,16 @@ if (token) {
   }
 
   if (state !== 'error' && !(Astro.request.method === 'POST' && state === 'auth')) {
-    const r = await gqlRequest<{ contentApprovals: ContentApprovalRow[] }>({ endpoint: graphqlEndpoint, token }, APPROVALS_QUERY, { workspaceId })
+    const r = await gqlRequest<{ contentApprovals: ContentApprovalRow[]; content: ContentPage }>(
+      { endpoint: graphqlEndpoint, token },
+      APPROVALS_PAGE_QUERY,
+      { workspaceId },
+    )
     if (!r.ok && r.code === 'auth_error') state = 'auth'
     else if (!r.ok) state = 'error'
     else {
       approvals = r.data.contentApprovals
-      const pairs = await Promise.all(
-        approvals.map(async (approval) => {
-          if (!approval.content_item_id) return null
-          const item = await gqlRequest<{ contentItem: ContentItemRow | null }>(
-            { endpoint: graphqlEndpoint, token },
-            CONTENT_ITEM_QUERY,
-            { id: approval.content_item_id },
-          )
-          if (!item.ok || !item.data.contentItem) return [approval.content_item_id, approval.content_item_id] as const
-          return [approval.content_item_id, item.data.contentItem.slug ?? approval.content_item_id] as const
-        }),
-      )
-      labels = new Map(pairs.filter((pair): pair is readonly [string, string] => pair !== null))
+      labels = new Map(r.data.content.items.map((item) => [item.id, item.slug ?? item.id] as const))
       state = approvals.length === 0 ? 'empty' : 'ok'
     }
   }

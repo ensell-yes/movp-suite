@@ -135,6 +135,12 @@ describe('content GraphQL surface', () => {
     expect((revs.data as { contentRevisions: Array<{ content_hash: string }> }).contentRevisions[0].content_hash).toBe('h2')
   })
 
+  it('updateContent routes expectedRevisionId for optimistic concurrency', async () => {
+    const res = await run('mutation { updateContent(id: "ci1", data: "{\\"headline\\":\\"Next\\"}", expectedRevisionId: "r2") { id current_revision_id } }')
+    expect(res.errors).toBeUndefined()
+    expect(mocks.update).toHaveBeenCalledWith({ itemId: 'ci1', data: { headline: 'Next' }, expectedRevisionId: 'r2' })
+  })
+
   it('approval, publish, schedule, collection, SEO, and asset mutations route correctly', async () => {
     await run('mutation { submitForApproval(itemId: "ci1") { id status } }')
     expect(mocks.submitForApproval).toHaveBeenCalledWith({ itemId: 'ci1' })

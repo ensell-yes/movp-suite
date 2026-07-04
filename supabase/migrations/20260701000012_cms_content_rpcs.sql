@@ -40,7 +40,8 @@ create or replace function public.update_content(
   p_data jsonb,
   p_content_hash text,
   p_search_text text,
-  p_search_body text
+  p_search_body text,
+  p_expected_revision_id uuid default null
 )
 returns jsonb
 language plpgsql
@@ -63,6 +64,10 @@ begin
 
   if v_ws is null then
     raise exception 'content item not found or inaccessible' using errcode = 'no_data_found';
+  end if;
+
+  if p_expected_revision_id is not null and v_parent is distinct from p_expected_revision_id then
+    raise exception 'content_update_conflict' using errcode = '40001';
   end if;
 
   if current_hash is not null and current_hash = p_content_hash then
@@ -90,6 +95,6 @@ end;
 $$;
 
 revoke all on function public.create_content_with_revision(uuid, uuid, text, jsonb, text, text, text) from public, anon;
-revoke all on function public.update_content(uuid, jsonb, text, text, text) from public, anon;
+revoke all on function public.update_content(uuid, jsonb, text, text, text, uuid) from public, anon;
 grant execute on function public.create_content_with_revision(uuid, uuid, text, jsonb, text, text, text) to authenticated;
-grant execute on function public.update_content(uuid, jsonb, text, text, text) to authenticated;
+grant execute on function public.update_content(uuid, jsonb, text, text, text, uuid) to authenticated;

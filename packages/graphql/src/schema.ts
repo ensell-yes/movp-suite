@@ -841,9 +841,13 @@ export function buildSchema(schema: MovpSchema): GraphQLSchema {
       t.field({
         type: contentItemRef,
         complexity: 10,
-        args: { id: t.arg.id({ required: true }), data: t.arg.string({ required: true }) },
+        args: { id: t.arg.id({ required: true }), data: t.arg.string({ required: true }), expectedRevisionId: t.arg.id({ required: false }) },
         resolve: (_r: unknown, a: any, ctx: GraphQLContext) =>
-          domainFrom(ctx).content.update({ itemId: String(a.id), data: JSON.parse(String(a.data)) }),
+          domainFrom(ctx).content.update({
+            itemId: String(a.id),
+            data: JSON.parse(String(a.data)),
+            expectedRevisionId: a.expectedRevisionId ? String(a.expectedRevisionId) : undefined,
+          }),
       }),
     )
     builder.mutationField('submitForApproval', (t: any) =>

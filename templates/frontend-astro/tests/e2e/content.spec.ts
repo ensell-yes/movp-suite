@@ -47,6 +47,9 @@ test('content editor renders schema controls discussion revisions and SEO POST r
   await expect(page.getByTestId('content-comments')).toContainText('Editorial note')
   await expect(page.getByTestId('content-revisions').locator('li')).toHaveCount(2)
   await expect(page.getByTestId('content-revisions')).toContainText('Diff')
+  await page.getByText('Diff').nth(1).click()
+  await expect(page.getByTestId('content-revisions')).toContainText('body')
+  await expect(page.getByTestId('content-revisions')).toContainText('Draft body')
 
   await page.getByLabel('Priority').fill('42')
   await page.getByLabel('Featured').uncheck()

@@ -214,13 +214,15 @@ export function makeContentService(ctx: DomainCtx): ContentService {
       const typeId = await itemTypeId(input.itemId)
       const fields = await loadType(typeId)
       const prepared = await prepare(fields, input.data)
-      const { data, error } = await ctx.db.rpc('update_content', {
+      const args: Record<string, unknown> = {
         p_item_id: input.itemId,
         p_data: prepared.canonical,
         p_content_hash: prepared.hash,
         p_search_text: prepared.searchText,
         p_search_body: prepared.searchBody,
-      })
+      }
+      if (input.expectedRevisionId) args.p_expected_revision_id = input.expectedRevisionId
+      const { data, error } = await ctx.db.rpc('update_content', args)
       if (error) fail('update', error.code)
       return data as ContentItemRow
     },
