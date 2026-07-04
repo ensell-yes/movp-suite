@@ -983,5 +983,228 @@ export function buildSchema(schema: MovpSchema): GraphQLSchema {
     )
   }
 
+  // ── Campaigns Part C — custom READ queries (only when the campaign collections exist) ──
+  // Codegen owns the generic campaign create+read CRUD. These two reads bridge the generic
+  // surface's limits: jsonb serialises to "[object Object]", relation FKs are not queryable
+  // scalars, and the generic list has no per-field filter (see plan "Inputs consumed").
+  if (refs.has('campaign_deliverable')) {
+    // Local row shapes for the ctx.db reads (avoid `any` in resolver bodies; the Pothos
+    // builder callbacks keep the file's existing `t: any` convention).
+    type GoalMetric = { metric_key?: string; target_value?: number | string | null; unit?: string | null }
+    type CampaignRowLite = {
+      id: string; workspace_id: string; name: string | null; brief: string | null
+      status: string | null; priority: string | null; rank: number | string | null
+      start_date: string | null; end_date: string | null; owner_id: string | null
+      marketing_plan_id: string | null; goal_metrics: unknown
+    }
+
+    const deliverableSchedule = builder
+      .objectRef<{ taskId: string; startDate: string | null; dueDate: string | null }>('DeliverableSchedule')
+      .implement({
+        fields: (t: any) => ({
+          taskId: t.exposeID('taskId', { complexity: 0 }),
+          startDate: t.string({ nullable: true, complexity: 0, resolve: (r: { startDate: string | null }) => r.startDate }),
+          dueDate: t.string({ nullable: true, complexity: 0, resolve: (r: { dueDate: string | null }) => r.dueDate }),
+        }),
+      })
+
+    builder.queryField('deliverableSchedule', (t: any) =>
+      t.field({
+        type: deliverableSchedule, nullable: true, complexity: 5,
+        args: { deliverableId: t.arg.id({ required: true }) },
+        // The one custom DOMAIN read (Part B). Recovers the backing task's dates via the
+        // implemented_by edge; null when unlinked/inaccessible under the caller's RLS.
+        resolve: (_r: unknown, a: any, ctx: GraphQLContext) =>
+          domainFrom(ctx).campaign.deliverableSchedule(String(a.deliverableId)),
+      }),
+    )
+
+    // ── deliverableSchedules: the BATCHED sibling (timeline/calendar use THIS, not the
+    // singular one per deliverable). Part B's campaign.deliverableSchedules does ONE edges read
+    // + ONE task read; each entry carries its deliverableId so the client maps back. ──
+    const deliverableScheduleEntry = builder
+      .objectRef<{ deliverableId: string; taskId: string; startDate: string | null; dueDate: string | null }>('DeliverableScheduleEntry')
+      .implement({
+        fields: (t: any) => ({
+          deliverableId: t.exposeID('deliverableId', { complexity: 0 }),
+          taskId: t.exposeID('taskId', { complexity: 0 }),
+          startDate: t.string({ nullable: true, complexity: 0, resolve: (r: { startDate: string | null }) => r.startDate }),
+          dueDate: t.string({ nullable: true, complexity: 0, resolve: (r: { dueDate: string | null }) => r.dueDate }),
+        }),
+      })
+
+    const MAX_SCHEDULE_IDS = 100
+    builder.queryField('deliverableSchedules', (t: any) =>
+      t.field({
+        // complexity scales with the requested batch so a large array cannot hide behind a
+        // fixed cost; the resolver ALSO hard-rejects above MAX_SCHEDULE_IDS (F4).
+        type: [deliverableScheduleEntry], nullable: false,
+        complexity: (_args: any, _ctx: unknown) => 10 + Math.min(Number(_args?.deliverableIds?.length ?? 0), MAX_SCHEDULE_IDS),
+        args: { deliverableIds: t.arg({ type: ['ID'], required: true }) },
+        // Resolved at call time from ctx (workerd has no per-request module instance).
+        resolve: (_r: unknown, a: any, ctx: GraphQLContext) => {
+          const ids = (a.deliverableIds as unknown[]).map(String)
+          if (ids.length > MAX_SCHEDULE_IDS) throw new Error('deliverable_schedules_too_many_ids')
+          return domainFrom(ctx).campaign.deliverableSchedules(ids)
+        },
+      }),
+    )
+
+    // ── campaignDetail: the per-campaign BFF read (detail + board pages) ──
+    const metricTarget = builder.objectRef<{ metricKey: string; targetValue: string | null; unit: string | null }>('MetricTarget').implement({
+      fields: (t: any) => ({
+        metricKey: t.exposeString('metricKey', { complexity: 0 }),
+        targetValue: t.string({ nullable: true, complexity: 0, resolve: (r: { targetValue: string | null }) => r.targetValue }),
+        unit: t.string({ nullable: true, complexity: 0, resolve: (r: { unit: string | null }) => r.unit }),
+      }),
+    })
+    const metricActual = builder.objectRef<{ metricKey: string; total: number }>('MetricActual').implement({
+      fields: (t: any) => ({
+        metricKey: t.exposeString('metricKey', { complexity: 0 }),
+        total: t.float({ complexity: 0, resolve: (r: { total: number }) => r.total }),
+      }),
+    })
+    const deliverableBrief = builder.objectRef<{ id: string; name: string | null; taskId: string | null }>('CampaignDeliverableBrief').implement({
+      fields: (t: any) => ({
+        id: t.exposeID('id', { complexity: 0 }),
+        name: t.string({ nullable: true, complexity: 0, resolve: (r: { name: string | null }) => r.name }),
+        taskId: t.string({ nullable: true, complexity: 0, resolve: (r: { taskId: string | null }) => r.taskId }),
+      }),
+    })
+    const channelBrief = builder.objectRef<{ id: string; channelType: string | null; name: string | null }>('CampaignChannelBrief').implement({
+      fields: (t: any) => ({
+        id: t.exposeID('id', { complexity: 0 }),
+        channelType: t.string({ nullable: true, complexity: 0, resolve: (r: { channelType: string | null }) => r.channelType }),
+        name: t.string({ nullable: true, complexity: 0, resolve: (r: { name: string | null }) => r.name }),
+      }),
+    })
+    const stakeholders = builder.objectRef<{ ownerId: string | null; observerIds: string[] }>('CampaignStakeholders').implement({
+      fields: (t: any) => ({
+        ownerId: t.string({ nullable: true, complexity: 0, resolve: (r: { ownerId: string | null }) => r.ownerId }),
+        observerIds: t.field({ type: ['ID'], complexity: 0, resolve: (r: { observerIds: string[] }) => r.observerIds }),
+      }),
+    })
+    type CampaignDetailShape = {
+      id: string; name: string | null; brief: string | null; status: string | null
+      priority: string | null; rank: string | null; startDate: string | null; endDate: string | null
+      ownerId: string | null; marketingPlanId: string | null
+      goalMetrics: Array<{ metricKey: string; targetValue: string | null; unit: string | null }>
+      actuals: Array<{ metricKey: string; total: number }>
+      deliverables: Array<{ id: string; name: string | null; taskId: string | null }>
+      channels: Array<{ id: string; channelType: string | null; name: string | null }>
+      stakeholders: { ownerId: string | null; observerIds: string[] }
+    }
+    const campaignDetail = builder.objectRef<CampaignDetailShape>('CampaignDetail').implement({
+      fields: (t: any) => ({
+        id: t.exposeID('id', { complexity: 0 }),
+        name: t.string({ nullable: true, complexity: 0, resolve: (r: CampaignDetailShape) => r.name }),
+        brief: t.string({ nullable: true, complexity: 0, resolve: (r: CampaignDetailShape) => r.brief }),
+        status: t.string({ nullable: true, complexity: 0, resolve: (r: CampaignDetailShape) => r.status }),
+        priority: t.string({ nullable: true, complexity: 0, resolve: (r: CampaignDetailShape) => r.priority }),
+        rank: t.string({ nullable: true, complexity: 0, resolve: (r: CampaignDetailShape) => r.rank }),
+        startDate: t.string({ nullable: true, complexity: 0, resolve: (r: CampaignDetailShape) => r.startDate }),
+        endDate: t.string({ nullable: true, complexity: 0, resolve: (r: CampaignDetailShape) => r.endDate }),
+        ownerId: t.string({ nullable: true, complexity: 0, resolve: (r: CampaignDetailShape) => r.ownerId }),
+        marketingPlanId: t.string({ nullable: true, complexity: 0, resolve: (r: CampaignDetailShape) => r.marketingPlanId }),
+        goalMetrics: t.field({ type: [metricTarget], complexity: 0, resolve: (r: CampaignDetailShape) => r.goalMetrics }),
+        actuals: t.field({ type: [metricActual], complexity: 0, resolve: (r: CampaignDetailShape) => r.actuals }),
+        deliverables: t.field({ type: [deliverableBrief], complexity: 0, resolve: (r: CampaignDetailShape) => r.deliverables }),
+        channels: t.field({ type: [channelBrief], complexity: 0, resolve: (r: CampaignDetailShape) => r.channels }),
+        stakeholders: t.field({ type: stakeholders, complexity: 0, resolve: (r: CampaignDetailShape) => r.stakeholders }),
+      }),
+    })
+
+    builder.queryField('campaignDetail', (t: any) =>
+      t.field({
+        type: campaignDetail, nullable: true, complexity: 15,
+        args: { campaignId: t.arg.id({ required: true }) },
+        resolve: async (_r: unknown, a: any, ctx: GraphQLContext): Promise<CampaignDetailShape | null> => {
+          const campaignId = String(a.campaignId)
+          // All reads run under the caller's RLS (member-scoped, non-internal tables). Every
+          // child/edge read is ALSO explicitly scoped to the campaign's workspace_id (F2 defence-
+          // in-depth): even if a cross-workspace child row existed it is never aggregated here.
+          // Every read checks `error` and fails loud with a bounded code (F3) rather than silently
+          // returning empty sections that look like "no data".
+          const { data: c, error: cErr } = await ctx.db
+            .from('campaign')
+            .select('id, workspace_id, name, brief, status, priority, rank, start_date, end_date, owner_id, marketing_plan_id, goal_metrics')
+            .eq('id', campaignId)
+            .maybeSingle()
+          if (cErr) throw new Error('campaign_detail_campaign_failed')
+          if (!c) return null
+          const camp = c as CampaignRowLite
+          const ws = camp.workspace_id
+
+          const { data: delivRows, error: delivErr } = await ctx.db
+            .from('campaign_deliverable').select('id, name')
+            .eq('campaign_id', campaignId).eq('workspace_id', ws).order('id', { ascending: true })
+          if (delivErr) throw new Error('campaign_detail_deliverables_failed')
+          const delivs = (delivRows ?? []) as Array<{ id: string; name: string | null }>
+
+          // Batch the backing-task ids for ALL deliverables in ONE edges read (avoid N+1).
+          const delivIds = delivs.map((d) => d.id)
+          const edgeMap = new Map<string, string>()
+          if (delivIds.length > 0) {
+            const { data: edges, error: edgeErr } = await ctx.db
+              .from('edges').select('src_id, dst_id')
+              .eq('workspace_id', ws)
+              .eq('rel', 'implemented_by').eq('src_type', 'campaign_deliverable').eq('dst_type', 'task')
+              .in('src_id', delivIds)
+            if (edgeErr) throw new Error('campaign_detail_edges_failed')
+            for (const e of (edges ?? []) as Array<{ src_id: string; dst_id: string }>) edgeMap.set(e.src_id, e.dst_id)
+          }
+
+          const { data: chanRows, error: chanErr } = await ctx.db
+            .from('campaign_channel').select('id, channel_type, name')
+            .eq('campaign_id', campaignId).eq('workspace_id', ws).order('id', { ascending: true })
+          if (chanErr) throw new Error('campaign_detail_channels_failed')
+          const { data: metricRows, error: metricErr } = await ctx.db
+            .from('campaign_metric').select('metric_key, value')
+            .eq('campaign_id', campaignId).eq('workspace_id', ws)
+          if (metricErr) throw new Error('campaign_detail_metrics_failed')
+
+          // Roll up sum(value) by metric_key (the actuals side of target-vs-actual).
+          const totals = new Map<string, number>()
+          for (const m of (metricRows ?? []) as Array<{ metric_key: string | null; value: number | string | null }>) {
+            const key = m.metric_key ?? ''
+            const v = typeof m.value === 'string' ? Number(m.value) : (m.value ?? 0)
+            totals.set(key, (totals.get(key) ?? 0) + (Number.isFinite(v) ? v : 0))
+          }
+
+          // Observers via the campaign→user observer edge (owner is the FK owner_id).
+          const observers = await domainFrom(ctx).graph.traverse({
+            workspaceId: camp.workspace_id, srcType: 'campaign', srcId: campaignId, rel: 'observer', depth: 1,
+          })
+          const observerIds = observers.filter((n) => n.type === 'user').map((n) => n.id)
+
+          const goals: GoalMetric[] = Array.isArray(camp.goal_metrics) ? (camp.goal_metrics as GoalMetric[]) : []
+
+          return {
+            id: camp.id,
+            name: camp.name,
+            brief: camp.brief,
+            status: camp.status,
+            priority: camp.priority,
+            rank: camp.rank == null ? null : String(camp.rank),
+            startDate: camp.start_date,
+            endDate: camp.end_date,
+            ownerId: camp.owner_id,
+            marketingPlanId: camp.marketing_plan_id,
+            goalMetrics: goals.map((g) => ({
+              metricKey: String(g.metric_key ?? ''),
+              targetValue: g.target_value == null ? null : String(g.target_value),
+              unit: g.unit ?? null,
+            })),
+            actuals: [...totals.entries()].map(([metricKey, total]) => ({ metricKey, total })),
+            deliverables: delivs.map((d) => ({ id: d.id, name: d.name, taskId: edgeMap.get(d.id) ?? null })),
+            channels: ((chanRows ?? []) as Array<{ id: string; channel_type: string | null; name: string | null }>)
+              .map((ch) => ({ id: ch.id, channelType: ch.channel_type, name: ch.name })),
+            stakeholders: { ownerId: camp.owner_id, observerIds },
+          }
+        },
+      }),
+    )
+  }
+
   return builder.toSchema()
 }
