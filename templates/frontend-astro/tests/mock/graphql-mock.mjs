@@ -3,6 +3,7 @@ import { createServer } from 'node:http'
 const port = Number(process.argv[2] ?? 4322)
 let fallbackScenario = 'ok'
 const scenarios = new Map()
+const counts = new Map()
 
 function json(res, status, body) {
   res.writeHead(status, { 'content-type': 'application/json' })
@@ -13,6 +14,17 @@ function scenarioFor(req) {
   const auth = String(req.headers.authorization ?? '')
   const match = auth.match(/^Bearer\s+(.+)$/i)
   return match ? scenarios.get(match[1]) ?? fallbackScenario : fallbackScenario
+}
+
+function tokenFor(req) {
+  const auth = String(req.headers.authorization ?? '')
+  return auth.match(/^Bearer\s+(.+)$/i)?.[1] ?? 'fallback'
+}
+
+function bump(token, key) {
+  const current = counts.get(token) ?? {}
+  current[key] = (current[key] ?? 0) + 1
+  counts.set(token, current)
 }
 
 const notes = [
@@ -89,6 +101,9 @@ const campaigns = [
     end_date: '2026-09-15',
   },
 ]
+const campaignDeliverables = [{ id: 'd1', name: 'Launch email' }]
+const campaignSchedules = [{ deliverableId: 'd1', taskId: 'task-1', startDate: '2026-07-03', dueDate: '2026-07-10' }]
+const campaignCalendarEvents = [{ id: 'cal-1', title: 'Launch day', event_date: '2026-07-08', event_type: 'launch' }]
 const campaignDetail = {
   id: 'camp-1',
   name: 'Launch campaign',
@@ -148,12 +163,22 @@ createServer(async (req, res) => {
   if (url.pathname === '/scenario') {
     const next = url.searchParams.get('name') ?? 'ok'
     const token = url.searchParams.get('token')
-    if (token) scenarios.set(token, next)
-    else fallbackScenario = next
+    if (token) {
+      scenarios.set(token, next)
+      counts.set(token, {})
+    } else {
+      fallbackScenario = next
+      counts.set('fallback', {})
+    }
     return json(res, 200, { scenario: next })
+  }
+  if (url.pathname === '/counts') {
+    const token = url.searchParams.get('token') ?? 'fallback'
+    return json(res, 200, counts.get(token) ?? {})
   }
   if (url.pathname !== '/graphql') return json(res, 404, { error: 'not_found' })
   const scenario = scenarioFor(req)
+  const token = tokenFor(req)
   if (scenario === 'auth') return json(res, 401, { error: 'auth_error' })
   if (scenario === 'error') return json(res, 200, { errors: [{ message: 'seeded' }] })
 
@@ -186,6 +211,16 @@ createServer(async (req, res) => {
   }
   if (query.includes('query CampaignComments')) {
     return json(res, 200, { data: { comments: scenario === 'empty' ? [] : [{ ...comments[0], body: 'Campaign note' }] } })
+  }
+  if (query.includes('query Deliverables')) {
+    return json(res, 200, { data: { campaign_deliverables: { items: scenario === 'empty' ? [] : campaignDeliverables, nextCursor: null } } })
+  }
+  if (query.includes('query DeliverableSchedules')) {
+    bump(token, 'DeliverableSchedules')
+    return json(res, 200, { data: { deliverableSchedules: scenario === 'empty' ? [] : campaignSchedules } })
+  }
+  if (query.includes('query CalendarEvents')) {
+    return json(res, 200, { data: { campaign_calendar_events: { items: scenario === 'empty' ? [] : campaignCalendarEvents, nextCursor: null } } })
   }
   if (query.includes('query ContentTypes')) {
     return json(res, 200, { data: { contentTypes: scenario === 'empty' ? [] : contentTypes } })

@@ -11,6 +11,12 @@ export async function scenario(name: string): Promise<void> {
   await fetch(`http://127.0.0.1:4322/scenario?name=${encodeURIComponent(name)}&token=${token}`)
 }
 
+export async function mockCounts(): Promise<Record<string, number>> {
+  const token = encodeURIComponent(scenarioToken())
+  const res = await fetch(`http://127.0.0.1:4322/counts?token=${token}`)
+  return (await res.json()) as Record<string, number>
+}
+
 export async function seedSession(context: BrowserContext): Promise<void> {
   const token = scenarioToken()
   await scenario('ok')

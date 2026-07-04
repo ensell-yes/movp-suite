@@ -1,0 +1,100 @@
+---
+import Base from '../../layouts/Base.astro'
+import AuthFailure from '../../components/states/AuthFailure.astro'
+import ErrorRetry from '../../components/states/ErrorRetry.astro'
+import EmptyState from '../../components/states/EmptyState.astro'
+import { readServerEnv } from '../../lib/env.ts'
+import { getSessionToken } from '../../lib/session.ts'
+import { gqlRequest } from '../../lib/graphql.ts'
+import {
+  CALENDAR_EVENTS_QUERY,
+  DELIVERABLE_SCHEDULES_QUERY,
+  DELIVERABLES_QUERY,
+  type CampaignCalendarEventPage,
+  type CampaignDeliverablePage,
+  type CampaignDeliverableSchedule,
+} from '../../lib/campaign-queries.ts'
+
+type CalendarEntry = { date: string; label: string; kind: string }
+
+const token = getSessionToken(Astro.cookies)
+let state: 'auth' | 'error' | 'empty' | 'ok' = 'auth'
+let entries: CalendarEntry[] = []
+
+if (token) {
+  const { graphqlEndpoint, workspaceId } = readServerEnv()
+  const [deliverablesRes, eventsRes] = await Promise.all([
+    gqlRequest<{ campaign_deliverables: CampaignDeliverablePage }>(
+      { endpoint: graphqlEndpoint, token },
+      DELIVERABLES_QUERY,
+      { workspaceId, first: 100 },
+    ),
+    gqlRequest<{ campaign_calendar_events: CampaignCalendarEventPage }>(
+      { endpoint: graphqlEndpoint, token },
+      CALENDAR_EVENTS_QUERY,
+      { workspaceId, first: 100 },
+    ),
+  ])
+
+  if (
+    (!deliverablesRes.ok && deliverablesRes.code === 'auth_error') ||
+    (!eventsRes.ok && eventsRes.code === 'auth_error')
+  ) state = 'auth'
+  else if (!deliverablesRes.ok || !eventsRes.ok) state = 'error'
+  else {
+    const deliverables = deliverablesRes.data.campaign_deliverables.items
+    const deliverableIds = deliverables.map((deliverable) => deliverable.id)
+    const schedules = deliverableIds.length > 0
+      ? await gqlRequest<{ deliverableSchedules: CampaignDeliverableSchedule[] }>(
+          { endpoint: graphqlEndpoint, token },
+          DELIVERABLE_SCHEDULES_QUERY,
+          { deliverableIds },
+        )
+      : { ok: true as const, data: { deliverableSchedules: [] } }
+
+    if (!schedules.ok && schedules.code === 'auth_error') state = 'auth'
+    else if (!schedules.ok) state = 'error'
+    else {
+      const deliverablesById = new Map(deliverables.map((deliverable) => [deliverable.id, deliverable]))
+      entries = [
+        ...eventsRes.data.campaign_calendar_events.items
+          .filter((event) => Boolean(event.event_date))
+          .map((event) => ({
+            date: event.event_date as string,
+            label: event.title ?? event.id,
+            kind: event.event_type ?? 'milestone',
+          })),
+        ...schedules.data.deliverableSchedules
+          .filter((schedule) => Boolean(schedule.dueDate))
+          .map((schedule) => ({
+            date: schedule.dueDate as string,
+            label: `${deliverablesById.get(schedule.deliverableId)?.name ?? schedule.deliverableId} due`,
+            kind: 'deliverable',
+          })),
+      ].sort((a, b) => a.date.localeCompare(b.date))
+      state = entries.length === 0 ? 'empty' : 'ok'
+    }
+  }
+}
+---
+<Base title="Campaign Calendar">
+  <h1 tabindex="-1" id="campaign-calendar-heading">Campaign Calendar</h1>
+  <p><a href="/campaigns">Campaigns</a> <a href="/campaigns/timeline">Timeline</a></p>
+  {state === 'auth' && <AuthFailure resource="campaign calendar" />}
+  {state === 'error' && <ErrorRetry message="Could not load campaign calendar." retryHref={Astro.url.pathname} />}
+  {state === 'empty' && <EmptyState message="No dated campaign work yet." />}
+  {state === 'ok' && (
+    <section aria-labelledby="calendar-heading" data-testid="campaign-calendar">
+      <h2 id="calendar-heading">Calendar</h2>
+      <ol>
+        {entries.map((entry) => (
+          <li>
+            <time datetime={entry.date}>{entry.date}</time>
+            {' '}<strong>{entry.label}</strong>
+            <small> {entry.kind}</small>
+          </li>
+        ))}
+      </ol>
+    </section>
+  )}
+</Base>

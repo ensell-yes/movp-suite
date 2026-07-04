@@ -63,6 +63,29 @@ export type CampaignCommentRow = {
   created_at: string
 }
 
+export type CampaignDeliverableRow = {
+  id: string
+  name: string | null
+}
+
+export type CampaignDeliverablePage = { items: CampaignDeliverableRow[]; nextCursor: string | null }
+
+export type CampaignDeliverableSchedule = {
+  deliverableId: string
+  taskId: string | null
+  startDate: string | null
+  dueDate: string | null
+}
+
+export type CampaignCalendarEventRow = {
+  id: string
+  title: string | null
+  event_date: string | null
+  event_type: string | null
+}
+
+export type CampaignCalendarEventPage = { items: CampaignCalendarEventRow[]; nextCursor: string | null }
+
 // Generic list (codegen surface): scalar fields exposed as String, sorted client-side.
 export const CAMPAIGNS_QUERY = /* GraphQL */ `
   query Campaigns($workspaceId: ID!, $first: Int) {
@@ -90,5 +113,31 @@ export const CAMPAIGN_COMMENTS_QUERY = /* GraphQL */ `
   query CampaignComments($workspaceId: ID!, $entityId: ID!) {
     comments(workspaceId: $workspaceId, entityType: "campaign", entityId: $entityId) {
       id body author_id created_at
+    }
+  }`
+
+// Enumerate deliverables (generic list): id + name scalars are exposed.
+export const DELIVERABLES_QUERY = /* GraphQL */ `
+  query Deliverables($workspaceId: ID!, $first: Int) {
+    campaign_deliverables(workspaceId: $workspaceId, first: $first) {
+      items { id name }
+      nextCursor
+    }
+  }`
+
+// Backing-task schedules for all deliverables in one batched custom read.
+export const DELIVERABLE_SCHEDULES_QUERY = /* GraphQL */ `
+  query DeliverableSchedules($deliverableIds: [ID!]!) {
+    deliverableSchedules(deliverableIds: $deliverableIds) {
+      deliverableId taskId startDate dueDate
+    }
+  }`
+
+// Calendar-event milestones (generic list): title/event_date/event_type scalars are exposed.
+export const CALENDAR_EVENTS_QUERY = /* GraphQL */ `
+  query CalendarEvents($workspaceId: ID!, $first: Int) {
+    campaign_calendar_events(workspaceId: $workspaceId, first: $first) {
+      items { id title event_date event_type }
+      nextCursor
     }
   }`

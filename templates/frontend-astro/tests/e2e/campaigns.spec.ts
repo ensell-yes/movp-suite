@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 import AxeBuilder from '@axe-core/playwright'
-import { scenario, seedSession } from './scenario.ts'
+import { mockCounts, scenario, seedSession } from './scenario.ts'
 
 test.beforeEach(async ({ context }) => {
   await seedSession(context)
@@ -60,7 +60,23 @@ test('campaign detail renders brief metrics stakeholders deliverables channels a
   await expect(page.getByTestId('campaign-comments')).toContainText('Campaign note')
 })
 
-for (const path of ['/campaigns', '/campaigns/camp-1']) {
+test('campaign timeline renders backing-task dates and milestones with one batched schedule read', async ({ page }) => {
+  await page.goto('/campaigns/timeline')
+  await expect(page.getByTestId('campaign-timeline')).toContainText('Launch email')
+  await expect(page.getByTestId('campaign-timeline')).toContainText('2026-07-03 to 2026-07-10')
+  await expect(page.getByTestId('campaign-timeline')).toContainText('Launch day')
+  await expect(page.getByTestId('campaign-timeline')).toContainText('launch')
+  expect(await mockCounts()).toMatchObject({ DeliverableSchedules: 1 })
+})
+
+test('campaign calendar renders milestones and deliverable due dates', async ({ page }) => {
+  await page.goto('/campaigns/calendar')
+  await expect(page.getByTestId('campaign-calendar')).toContainText('Launch day')
+  await expect(page.getByTestId('campaign-calendar')).toContainText('Launch email due')
+  await expect(page.getByTestId('campaign-calendar')).toContainText('2026-07-10')
+})
+
+for (const path of ['/campaigns', '/campaigns/camp-1', '/campaigns/timeline', '/campaigns/calendar']) {
   test(`campaign a11y smoke: ${path}`, async ({ page }) => {
     await page.goto(path)
     const results = await new AxeBuilder({ page }).analyze()
