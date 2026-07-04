@@ -44,6 +44,34 @@ const tasks = [
 ]
 const statuses = [{ id: 's1', label: 'Todo', category: 'backlog', sort_order: 0 }]
 const comments = [{ id: 'c1', body: 'Looks good', author_id: 'u2', created_at: '2026-07-01T00:00:00Z' }]
+const campaigns = [
+  {
+    id: 'camp-1',
+    name: 'Launch campaign',
+    status: 'active',
+    priority: 'high',
+    rank: '1',
+    start_date: '2026-07-01',
+    end_date: '2026-07-31',
+  },
+]
+const campaignDetail = {
+  id: 'camp-1',
+  name: 'Launch campaign',
+  brief: 'Launch the summer campaign across owned and paid channels.',
+  status: 'active',
+  priority: 'high',
+  rank: '1',
+  startDate: '2026-07-01',
+  endDate: '2026-07-31',
+  ownerId: 'owner-1',
+  marketingPlanId: 'plan-1',
+  goalMetrics: [{ metricKey: 'clicks', targetValue: '100', unit: 'count' }],
+  actuals: [{ metricKey: 'clicks', total: 40 }],
+  deliverables: [{ id: 'd1', name: 'Launch email', taskId: 'task-1' }],
+  channels: [{ id: 'ch1', channelType: 'email', name: 'Email' }],
+  stakeholders: { ownerId: 'owner-1', observerIds: [] },
+}
 const contentTypes = [
   {
     id: 'ct1',
@@ -111,6 +139,15 @@ createServer(async (req, res) => {
             { collection: 'content_item', id: 'ci1', title: 'Launch article', snippet: 'Draft body', score: 0.89 },
           ]
     return json(res, 200, { data: { search: hits } })
+  }
+  if (query.includes('query Campaigns')) {
+    return json(res, 200, { data: { campaigns: { items: scenario === 'empty' ? [] : campaigns, nextCursor: null } } })
+  }
+  if (query.includes('query CampaignDetail')) {
+    return json(res, 200, { data: { campaignDetail: scenario === 'empty' ? null : campaignDetail } })
+  }
+  if (query.includes('query CampaignComments')) {
+    return json(res, 200, { data: { comments: scenario === 'empty' ? [] : [{ ...comments[0], body: 'Campaign note' }] } })
   }
   if (query.includes('query ContentTypes')) {
     return json(res, 200, { data: { contentTypes: scenario === 'empty' ? [] : contentTypes } })
