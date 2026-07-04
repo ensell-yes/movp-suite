@@ -39,11 +39,20 @@ test('content list renders filters search and seeded items', async ({ page }) =>
 test('content editor renders schema controls discussion revisions and SEO POST result', async ({ page }) => {
   await page.goto('/content/ci1')
   await expect(page.getByTestId('content-editor')).toContainText('launch-article')
-  await expect(page.getByTestId('content-fields').locator('[data-field-control]')).toHaveCount(3)
+  await expect(page.getByTestId('content-fields').locator('[data-field-control]')).toHaveCount(6)
+  await expect(page.getByLabel('Priority')).toHaveAttribute('type', 'number')
+  await expect(page.getByLabel('Featured')).toHaveAttribute('type', 'checkbox')
+  await expect(page.getByLabel('Category')).toHaveValue('news')
   await expect(page.getByLabel('Hero asset')).toHaveAttribute('type', 'file')
   await expect(page.getByTestId('content-comments')).toContainText('Editorial note')
   await expect(page.getByTestId('content-revisions').locator('li')).toHaveCount(2)
   await expect(page.getByTestId('content-revisions')).toContainText('Diff')
+
+  await page.getByLabel('Priority').fill('42')
+  await page.getByLabel('Featured').uncheck()
+  await page.getByLabel('Category').selectOption('guide')
+  await page.getByRole('button', { name: 'Save' }).click()
+  await expect(page.getByRole('status')).toContainText('Saved')
 
   await page.getByRole('button', { name: 'Run SEO audit' }).click()
   await expect(page.getByTestId('seo-panel')).toContainText('Score 87')
@@ -52,7 +61,7 @@ test('content editor renders schema controls discussion revisions and SEO POST r
 
 test('approval queue and calendar render operational states', async ({ page }) => {
   await page.goto('/content/approvals')
-  await expect(page.getByTestId('content-approvals')).toContainText('ci1')
+  await expect(page.getByTestId('content-approvals')).toContainText('launch-article')
 
   await page.goto('/content/calendar')
   await expect(page.getByTestId('content-calendar')).toContainText('content.scheduled')

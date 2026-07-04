@@ -49,13 +49,14 @@ const contentTypes = [
     id: 'ct1',
     key: 'article',
     label: 'Article',
-    field_schema: JSON.stringify({
-      fields: [
-        { key: 'headline', type: 'text', label: 'Headline' },
-        { key: 'body', type: 'richtext', label: 'Body' },
-        { key: 'hero', type: 'asset', label: 'Hero asset' },
-      ],
-    }),
+    field_schema: JSON.stringify([
+      { name: 'headline', type: 'text', label: 'Headline' },
+      { name: 'body', type: 'richtext', label: 'Body' },
+      { name: 'priority', type: 'number', label: 'Priority' },
+      { name: 'featured', type: 'bool', label: 'Featured' },
+      { name: 'category', type: 'enum', label: 'Category', values: ['news', 'guide'] },
+      { name: 'hero', type: 'asset', label: 'Hero asset' },
+    ]),
   },
 ]
 const contentItems = [
@@ -64,7 +65,7 @@ const contentItems = [
     slug: 'launch-article',
     status: 'draft',
     content_type_id: 'ct1',
-    data: JSON.stringify({ headline: 'Launch article', body: 'Draft body', hero: '' }),
+    data: JSON.stringify({ headline: 'Launch article', body: 'Draft body', priority: 1, featured: true, category: 'news', hero: 'w/hero.png' }),
     current_revision_id: 'cr2',
     approved_revision_id: null,
     published_revision_id: null,
@@ -133,6 +134,10 @@ createServer(async (req, res) => {
     return json(res, 200, { data: { runSeoAudit: { score: 87, checklist: JSON.stringify([{ rule: 'headline', pass: true }]) } } })
   }
   if (query.includes('mutation UpdateContent')) {
+    const data = JSON.parse(parsed.variables?.data ?? '{}')
+    if (typeof data.priority !== 'number' || typeof data.featured !== 'boolean' || !['news', 'guide'].includes(data.category) || !data.hero) {
+      return json(res, 200, { errors: [{ message: 'invalid content data' }] })
+    }
     return json(res, 200, { data: { updateContent: { id: parsed.variables?.id, status: 'draft' } } })
   }
   if (query.includes('mutation SubmitContent')) {

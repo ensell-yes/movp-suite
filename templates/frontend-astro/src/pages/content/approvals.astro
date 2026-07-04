@@ -27,13 +27,15 @@ if (token) {
     const approvalId = String(form.get('approvalId') ?? '')
     const vote = String(form.get('vote') ?? '')
     const r = await gqlRequest({ endpoint: graphqlEndpoint, token }, DECIDE_MUTATION, { approvalId, vote })
-    if (!r.ok) state = 'error'
+    if (!r.ok && r.code === 'auth_error') state = 'auth'
+    else if (!r.ok) state = 'error'
     else notice = vote === 'reject' ? 'Rejected' : 'Approved'
   }
 
-  if (state !== 'error') {
+  if (state !== 'error' && !(Astro.request.method === 'POST' && state === 'auth')) {
     const r = await gqlRequest<{ contentApprovals: ContentApprovalRow[] }>({ endpoint: graphqlEndpoint, token }, APPROVALS_QUERY, { workspaceId })
-    if (!r.ok) state = 'error'
+    if (!r.ok && r.code === 'auth_error') state = 'auth'
+    else if (!r.ok) state = 'error'
     else {
       approvals = r.data.contentApprovals
       const pairs = await Promise.all(

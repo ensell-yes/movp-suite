@@ -247,7 +247,7 @@ BAD="$(post_graphql "{\"query\":\"mutation{createContentType(workspaceId:\\\"$WS
 echo "$BAD" | grep -q '"errors"' || { echo "malformed field schema was NOT rejected: $BAD"; exit 1; }
 
 echo "== [content] create a valid type + an item (content.created + revision #1) =="
-CT="$(post_graphql "{\"query\":\"mutation{createContentType(workspaceId:\\\"$WS\\\", key:\\\"article\\\", label:\\\"Article\\\", fieldSchema:\\\"{\\\\\\\"fields\\\\\\\":[{\\\\\\\"key\\\\\\\":\\\\\\\"headline\\\\\\\",\\\\\\\"type\\\\\\\":\\\\\\\"text\\\\\\\"}]}\\\"){id}}\"}")"
+CT="$(post_graphql "{\"query\":\"mutation{createContentType(workspaceId:\\\"$WS\\\", key:\\\"article\\\", label:\\\"Article\\\", fieldSchema:\\\"[{\\\\\\\"name\\\\\\\":\\\\\\\"headline\\\\\\\",\\\\\\\"type\\\\\\\":\\\\\\\"text\\\\\\\"}]\\\"){id}}\"}")"
 CT_ID="$(echo "$CT" | json_get data.createContentType.id)"
 [ -n "$CT_ID" ] || { echo "createContentType failed: $CT"; exit 1; }
 ITEM="$(post_graphql "{\"query\":\"mutation{createContent(workspaceId:\\\"$WS\\\", contentTypeId:\\\"$CT_ID\\\", slug:\\\"e2e-article\\\", data:\\\"{\\\\\\\"headline\\\\\\\":\\\\\\\"v1\\\\\\\"}\\\"){id status}}\"}")"
@@ -339,6 +339,8 @@ psql "$DB_URL" -v ON_ERROR_STOP=1 -c "select public.claim_due_schedules(100);" >
 psql "$DB_URL" -v ON_ERROR_STOP=1 -c "select public.run_scheduled_publish(id) from public.content_schedule where state='fired' and run_at <= now();" >/dev/null
 SCHED_ROW="$(psql "$DB_URL" -tAc "select count(*) from public.content_schedule where content_item_id='$ITEM_ID';" | tr -d '[:space:]')"
 [ "$SCHED_ROW" -ge 1 ] || { echo "no content_schedule row for the item"; exit 1; }
+SCHED_PUBLISH="$(psql "$DB_URL" -tAc "select count(*) from public.content_publish_event where content_item_id='$ITEM_ID' and action='publish' and revision_id='$CUR_REV';" | tr -d '[:space:]')"
+[ "$SCHED_PUBLISH" -ge 1 ] || { echo "scheduled publish did not emit a publish event for pinned revision $CUR_REV"; exit 1; }
 
 echo "== [content] authz - a capability-less member cannot decide/publish via the API [42501] =="
 post_graphql "{\"query\":\"mutation{submitForApproval(itemId:\\\"$ITEM_ID\\\"){id}}\"}" >/dev/null
@@ -355,23 +357,29 @@ echo "$NM" | grep -q "$ITEM_ID" && { echo "non-member saw content rows: $NM"; ex
 
 echo "== [content] immutability - content_revision + content_publish_event rows cannot be UPDATEd =="
 REV_ID="$(psql "$DB_URL" -tAc "select id from public.content_revision where content_item_id='$ITEM_ID' order by created_at limit 1;" | tr -d '[:space:]')"
-BEFORE_HASH="$(psql "$DB_URL" -tAc "select content_hash from public.content_revision where id='$REV_ID';" | tr -d '[:space:]')"
-psql "$DB_URL" -c "begin; set local role authenticated; set local request.jwt.claims = '{\"sub\":\"$USER2_ID\"}'; update public.content_revision set content_hash='tampered' where id='$REV_ID'; rollback;" >/dev/null 2>&1 || true
-AFTER_HASH="$(psql "$DB_URL" -tAc "select content_hash from public.content_revision where id='$REV_ID';" | tr -d '[:space:]')"
-[ "$BEFORE_HASH" = "$AFTER_HASH" ] || { echo "content_revision was mutated (immutability broken)"; exit 1; }
-PE_BEFORE="$(psql "$DB_URL" -tAc "select count(*) from public.content_publish_event where content_item_id='$ITEM_ID';" | tr -d '[:space:]')"
-psql "$DB_URL" -c "begin; set local role authenticated; set local request.jwt.claims = '{\"sub\":\"$USER2_ID\"}'; update public.content_publish_event set content_item_id='00000000-0000-0000-0000-000000000000' where content_item_id='$ITEM_ID'; rollback;" >/dev/null 2>&1 || true
-PE_AFTER="$(psql "$DB_URL" -tAc "select count(*) from public.content_publish_event where content_item_id='$ITEM_ID';" | tr -d '[:space:]')"
-[ "$PE_BEFORE" = "$PE_AFTER" ] || { echo "content_publish_event was mutated (immutability broken)"; exit 1; }
+if psql "$DB_URL" -v ON_ERROR_STOP=1 -c "update public.content_revision set content_hash='tampered' where id='$REV_ID';" >/tmp/content-revision-tamper.out 2>&1; then
+  echo "content_revision UPDATE unexpectedly succeeded"
+  cat /tmp/content-revision-tamper.out
+  exit 1
+fi
+grep -qi 'immutable' /tmp/content-revision-tamper.out || { echo "content_revision tamper failed for the wrong reason"; cat /tmp/content-revision-tamper.out; exit 1; }
+PE_ID="$(psql "$DB_URL" -tAc "select id from public.content_publish_event where content_item_id='$ITEM_ID' order by created_at limit 1;" | tr -d '[:space:]')"
+[ -n "$PE_ID" ] || { echo "no content_publish_event row to test immutability"; exit 1; }
+if psql "$DB_URL" -v ON_ERROR_STOP=1 -c "update public.content_publish_event set content_item_id='00000000-0000-0000-0000-000000000000' where id='$PE_ID';" >/tmp/content-publish-event-tamper.out 2>&1; then
+  echo "content_publish_event UPDATE unexpectedly succeeded"
+  cat /tmp/content-publish-event-tamper.out
+  exit 1
+fi
+grep -qi 'immutable' /tmp/content-publish-event-tamper.out || { echo "content_publish_event tamper failed for the wrong reason"; cat /tmp/content-publish-event-tamper.out; exit 1; }
 
 echo "== [content] observability - each transition emits trace-correlated, ids-only events =="
 for T in content.created content.submitted_for_approval content.approved content.published content.unpublished; do
   N="$(psql "$DB_URL" -tAc "select count(*) from movp_internal.movp_events where type='$T' and payload->>'id'='$ITEM_ID';" | tr -d '[:space:]')"
   [ "$N" -ge 1 ] || { echo "missing event $T"; exit 1; }
-  TRACED="$(psql "$DB_URL" -tAc "select count(*) from movp_internal.movp_events where type='$T' and payload->>'id'='$ITEM_ID' and trace_id is not null;" | tr -d '[:space:]')"
+  TRACED="$(psql "$DB_URL" -tAc "select count(*) from movp_internal.movp_events where type='$T' and payload->>'id'='$ITEM_ID' and trace_id ~ '^[0-9a-f-]{36}$';" | tr -d '[:space:]')"
   [ "$TRACED" = "$N" ] || { echo "event $T is not trace-correlated"; exit 1; }
 done
-LEAK="$(psql "$DB_URL" -tAc "select count(*) from movp_internal.movp_events where payload->>'id'='$ITEM_ID' and (payload::text ilike '%E2E article%' or payload::text ilike '%v3-draft%');" | tr -d '[:space:]')"
+LEAK="$(psql "$DB_URL" -tAc "select count(*) from movp_internal.movp_events where (payload->>'id'='$ITEM_ID' or payload->>'content_item_id'='$ITEM_ID') and (payload::text ilike '%e2e-article%' or payload::text ilike '%v1%' or payload::text ilike '%v2%' or payload::text ilike '%v3-draft%');" | tr -d '[:space:]')"
 [ "$LEAK" = "0" ] || { echo "event payload leaked content title/body text (redaction broken)"; exit 1; }
 
 echo "== [8] internal not exposed via PostgREST API =="

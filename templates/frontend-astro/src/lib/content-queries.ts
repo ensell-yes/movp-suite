@@ -80,7 +80,7 @@ export const APPROVALS_QUERY = /* GraphQL */ `
   }`
 
 export const INBOX_QUERY = /* GraphQL */ `
-  query ContentInbox($workspaceId: ID!, $tab: String!) {
+  query Inbox($workspaceId: ID!, $tab: String!) {
     inbox(workspaceId: $workspaceId, tab: $tab) { kind entity_type entity_id ref_id created_at }
   }`
 

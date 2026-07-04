@@ -39,7 +39,12 @@ if (token) {
     ? await gqlRequest<{ search: SearchHit[] }>({ endpoint: graphqlEndpoint, token }, CONTENT_SEARCH_QUERY, { workspaceId, query: q })
     : null
 
-  if (!typesRes.ok || !contentRes.ok || (searchRes && !searchRes.ok)) state = 'error'
+  if (
+    (!typesRes.ok && typesRes.code === 'auth_error') ||
+    (!contentRes.ok && contentRes.code === 'auth_error') ||
+    (searchRes && !searchRes.ok && searchRes.code === 'auth_error')
+  ) state = 'auth'
+  else if (!typesRes.ok || !contentRes.ok || (searchRes && !searchRes.ok)) state = 'error'
   else {
     types = typesRes.data.contentTypes
     items = contentRes.data.content.items

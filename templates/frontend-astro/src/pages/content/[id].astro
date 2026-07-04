@@ -23,7 +23,7 @@ import {
   type ContentRevisionRow,
 } from '../../lib/content-queries.ts'
 
-type FieldDescriptor = { key?: string; name?: string; label?: string; type?: string; options?: string[] }
+type FieldDescriptor = { name: string; label?: string; type?: string; values?: string[]; required?: boolean }
 type SeoResult = { score: number | null; checklist: string | null }
 
 const { id } = Astro.params
@@ -51,27 +51,53 @@ function parseFields(input: string | null | undefined): FieldDescriptor[] {
   if (!input) return []
   try {
     const parsed = JSON.parse(input)
-    const raw = Array.isArray(parsed) ? parsed : parsed?.fields
-    return Array.isArray(raw) ? raw.filter((field) => field && typeof field === 'object') as FieldDescriptor[] : []
+    if (!Array.isArray(parsed)) return []
+    return parsed.filter((field): field is FieldDescriptor => {
+      return Boolean(field && typeof field === 'object' && typeof field.name === 'string' && field.name.length > 0)
+    })
   } catch {
     return []
   }
 }
 
 function labelFor(field: FieldDescriptor): string {
-  return field.label ?? field.key ?? field.name ?? 'Field'
+  return field.label ?? field.name
 }
 
 function keyFor(field: FieldDescriptor): string {
-  return field.key ?? field.name ?? labelFor(field)
+  return field.name
 }
 
-function collectFieldData(form: FormData): Record<string, unknown> {
+function coerceFieldValue(field: FieldDescriptor, value: FormDataEntryValue): unknown {
+  if (typeof value !== 'string') return value.name
+  if (value === '' && !field.required) return undefined
+  if (value === '' && field.type === 'number') return Number.NaN
+  switch (field.type ?? 'text') {
+    case 'number':
+      return Number(value)
+    case 'bool':
+      return value === 'true'
+    case 'json':
+      try {
+        return JSON.parse(value)
+      } catch {
+        return value
+      }
+    default:
+      return value
+  }
+}
+
+function collectFieldData(form: FormData, schemaFields: FieldDescriptor[]): Record<string, unknown> {
   const data: Record<string, unknown> = {}
+  const byName = new Map(schemaFields.map((field) => [field.name, field]))
   for (const [key, value] of form.entries()) {
     if (!key.startsWith('field:')) continue
     const field = key.slice('field:'.length)
-    data[field] = typeof value === 'string' ? value : value.name
+    const descriptor = byName.get(field)
+    if (!descriptor) continue
+    const coerced = coerceFieldValue(descriptor, value)
+    data[field] = coerced
   }
   return data
 }
@@ -87,6 +113,11 @@ async function loadItem(endpoint: string, workspaceId: string): Promise<'error' 
     gqlRequest<{ comments: CommentRow[] }>({ endpoint, token: token ?? '' }, CONTENT_COMMENTS_QUERY, { workspaceId, entityId: id }),
     gqlRequest<{ contentRevisions: ContentRevisionRow[] }>({ endpoint, token: token ?? '' }, CONTENT_REVISIONS_QUERY, { itemId: id }),
   ])
+  if (
+    (!itemRes.ok && itemRes.code === 'auth_error') ||
+    (!commentsRes.ok && commentsRes.code === 'auth_error') ||
+    (!revisionsRes.ok && revisionsRes.code === 'auth_error')
+  ) return 'auth'
   if (!itemRes.ok || !commentsRes.ok || !revisionsRes.ok) return 'error'
   if (!itemRes.data.contentItem) return 'empty'
   item = itemRes.data.contentItem
@@ -105,10 +136,16 @@ if (token) {
     let mutationOk = true
 
     if (intent === 'save') {
-      const data = collectFieldData(form)
-      const r = await gqlRequest({ endpoint: graphqlEndpoint, token }, UPDATE_CONTENT_MUTATION, { id, data: JSON.stringify(data) })
-      mutationOk = r.ok
-      if (r.ok) notice = 'Saved'
+      const loadState = await loadItem(graphqlEndpoint, workspaceId)
+      if (loadState !== 'ok') {
+        state = loadState
+        mutationOk = false
+      } else {
+        const data = { ...values, ...collectFieldData(form, fields) }
+        const r = await gqlRequest({ endpoint: graphqlEndpoint, token }, UPDATE_CONTENT_MUTATION, { id, data: JSON.stringify(data) })
+        mutationOk = r.ok
+        if (r.ok) notice = 'Saved'
+      }
     } else if (intent === 'seo') {
       const r = await gqlRequest<{ runSeoAudit: SeoResult }>({ endpoint: graphqlEndpoint, token }, RUN_SEO_AUDIT_MUTATION, { itemId: id })
       mutationOk = r.ok
@@ -209,19 +246,25 @@ const checklist = seo?.checklist ? (() => {
               <p data-field-control>
                 <label>
                   {label}
-                  {type === 'richtext' || type === 'longtext' ? (
+                  {type === 'richtext' ? (
                     <textarea name={`field:${key}`}>{String(value ?? '')}</textarea>
-                  ) : type === 'boolean' ? (
+                  ) : type === 'bool' ? (
                     <>
                       <input type="hidden" name={`field:${key}`} value="false" />
                       <input type="checkbox" name={`field:${key}`} value="true" checked={value === true || value === 'true'} />
                     </>
                   ) : type === 'number' ? (
                     <input type="number" name={`field:${key}`} value={String(value ?? '')} />
-                  ) : type === 'select' ? (
+                  ) : type === 'enum' ? (
                     <select name={`field:${key}`}>
-                      {(field.options ?? []).map((option) => <option value={option} selected={String(value ?? '') === option}>{option}</option>)}
+                      {(field.values ?? []).map((option) => <option value={option} selected={String(value ?? '') === option}>{option}</option>)}
                     </select>
+                  ) : type === 'date' ? (
+                    <input type="date" name={`field:${key}`} value={String(value ?? '')} />
+                  ) : type === 'reference' ? (
+                    <input name={`field:${key}`} value={String(value ?? '')} />
+                  ) : type === 'json' ? (
+                    <textarea name={`field:${key}`}>{typeof value === 'string' ? value : JSON.stringify(value ?? {})}</textarea>
                   ) : (
                     <input name={`field:${key}`} value={String(value ?? '')} />
                   )}

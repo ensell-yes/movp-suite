@@ -15,7 +15,8 @@ let events: InboxItem[] = []
 if (token) {
   const { graphqlEndpoint, workspaceId } = readServerEnv()
   const r = await gqlRequest<{ inbox: InboxItem[] }>({ endpoint: graphqlEndpoint, token }, INBOX_QUERY, { workspaceId, tab: 'all' })
-  if (!r.ok) state = 'error'
+  if (!r.ok && r.code === 'auth_error') state = 'auth'
+  else if (!r.ok) state = 'error'
   else {
     events = r.data.inbox.filter((item) => item.entity_type === 'content_item' || item.kind.startsWith('content.'))
     state = events.length === 0 ? 'empty' : 'ok'
