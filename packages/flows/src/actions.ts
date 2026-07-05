@@ -88,14 +88,7 @@ async function enqueueSubscriptionWebhook(
   const internalWebhookId = stringField((sub as { internal_webhook_id?: unknown }).internal_webhook_id)
   if (!internalWebhookId) return { ok: false, errorCode: 'phase_unavailable' }
 
-  const internal = (db as unknown as { schema: (name: string) => SupabaseClient }).schema('movp_internal')
-  const { data: webhook, error: webhookErr } = await internal
-    .from('webhooks')
-    .select('url,secret')
-    .eq('id', internalWebhookId)
-    .eq('workspace_id', workspaceId)
-    .eq('active', true)
-    .maybeSingle()
+  const { data: webhook, error: webhookErr } = await db.rpc('workflow_webhook_for_action', { sub_id: subscriptionId, ws: workspaceId })
   if (webhookErr) return { ok: false, errorCode: 'action_dispatch_failed' }
   if (!webhook) return { ok: false, errorCode: 'cross_workspace_target' }
 

@@ -1,5 +1,5 @@
 begin;
-select plan(16);
+select plan(19);
 
 insert into public.workspace (id, name) values
   ('11111111-1111-1111-1111-111111111111', 'W1'),
@@ -92,6 +92,48 @@ select is(
   'non-member gets null');
 
 reset role;
+set local request.jwt.claims = '{"role":"service_role"}';
+select isnt(
+  public.get_event((select id from _workflow_event_id),
+                   '11111111-1111-1111-1111-111111111111'),
+  null,
+  'service-role worker can read an event through get_event without exposing movp_internal');
+reset all;
+
+insert into movp_internal.webhooks (id, workspace_id, event_type, url, secret, active)
+values (
+  'aaaaaaaa-0000-0000-0000-000000000001',
+  '11111111-1111-1111-1111-111111111111',
+  'task.completed',
+  'https://example.test/hook',
+  'secret-value',
+  true
+);
+insert into public.webhook_subscription (id, workspace_id, event_type_id, url, internal_webhook_id)
+values (
+  'bbbbbbbb-0000-0000-0000-000000000001',
+  '11111111-1111-1111-1111-111111111111',
+  (select id from public.event_type where key='task.completed'),
+  'https://example.test/hook',
+  'aaaaaaaa-0000-0000-0000-000000000001'
+);
+
+set local role service_role;
+set local request.jwt.claims = '{"role":"service_role"}';
+select is(
+  public.workflow_webhook_for_action('bbbbbbbb-0000-0000-0000-000000000001', '11111111-1111-1111-1111-111111111111')->>'url',
+  'https://example.test/hook',
+  'service-role worker can resolve a managed webhook through a public RPC');
+reset role;
+
+set local role authenticated;
+set local request.jwt.claims = '{"sub":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"}';
+select throws_ok(
+  $$select public.workflow_webhook_for_action('bbbbbbbb-0000-0000-0000-000000000001', '11111111-1111-1111-1111-111111111111')$$,
+  '42501', NULL,
+  'authenticated cannot execute the workflow webhook secret RPC');
+reset role;
+
 select is((select count(*)::int
              from pg_proc p
              join pg_namespace n on n.oid = p.pronamespace

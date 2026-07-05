@@ -51,13 +51,7 @@ function errorCode(e: unknown): string {
 
 async function loadInternalEvent(db: SupabaseClient, eventId: string, workspaceId: string | null): Promise<MovpInternalEvent | null> {
   if (!workspaceId) return null
-  const internal = (db as unknown as { schema: (name: string) => SupabaseClient }).schema('movp_internal')
-  const { data, error } = await internal
-    .from('movp_events')
-    .select('id,type,workspace_id,payload,trace_id')
-    .eq('id', eventId)
-    .eq('workspace_id', workspaceId)
-    .maybeSingle()
+  const { data, error } = await db.rpc('get_event', { ev_id: eventId, ws: workspaceId })
   if (error) throw new Error(error.code ?? 'event_load_failed')
   return data as MovpInternalEvent | null
 }

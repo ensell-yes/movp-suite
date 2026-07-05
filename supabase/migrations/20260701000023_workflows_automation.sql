@@ -9,7 +9,7 @@ as $$
 declare
   v_event movp_internal.movp_events%rowtype;
 begin
-  if not public.is_workspace_member(ws) then
+  if coalesce(auth.role(), '') <> 'service_role' and not public.is_workspace_member(ws) then
     return null;
   end if;
 
@@ -36,6 +36,37 @@ $$;
 
 revoke all on function public.get_event(uuid, uuid) from public, anon, authenticated;
 grant execute on function public.get_event(uuid, uuid) to authenticated, service_role;
+
+create or replace function public.workflow_webhook_for_action(sub_id uuid, ws uuid)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_row record;
+begin
+  select w.url, w.secret
+    into v_row
+    from public.webhook_subscription s
+    join movp_internal.webhooks w
+      on w.id = s.internal_webhook_id
+     and w.workspace_id = s.workspace_id
+   where s.id = sub_id
+     and s.workspace_id = ws
+     and s.active
+     and w.active;
+
+  if not found then
+    return null;
+  end if;
+
+  return jsonb_build_object('url', v_row.url, 'secret', v_row.secret);
+end;
+$$;
+
+revoke all on function public.workflow_webhook_for_action(uuid, uuid) from public, anon, authenticated;
+grant execute on function public.workflow_webhook_for_action(uuid, uuid) to service_role;
 
 alter table public.task
   add column if not exists workflow_idempotency_key text;

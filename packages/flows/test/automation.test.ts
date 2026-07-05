@@ -130,6 +130,10 @@ class FakeDb {
 
   rpc = vi.fn(async (fn: string, args: Row) => {
     if (fn === 'claim_jobs') return { data: args.job_kind === 'automate' ? this.jobs : [], error: null }
+    if (fn === 'get_event') {
+      const row = this.tables.movp_events.find((event) => event.id === args.ev_id && event.workspace_id === args.ws)
+      return { data: row ?? null, error: null }
+    }
     if (fn === 'enqueue_job') {
       this.enqueued.push(args)
       return { data: null, error: null }
@@ -142,6 +146,12 @@ class FakeDb {
       this.emitted.push(args)
       return { data: null, error: null }
     }
+    if (fn === 'workflow_webhook_for_action') {
+      const sub = this.tables.webhook_subscription.find((row) => row.id === args.sub_id && row.workspace_id === args.ws && row.active !== false)
+      if (!sub) return { data: null, error: null }
+      const webhook = this.tables.webhooks.find((row) => row.id === sub.internal_webhook_id && row.workspace_id === args.ws && row.active !== false)
+      return { data: webhook ? { url: webhook.url, secret: webhook.secret } : null, error: null }
+    }
     if (fn === 'complete_job') {
       this.completed.push(args)
       return { data: null, error: null }
@@ -150,8 +160,7 @@ class FakeDb {
   })
 
   schema(name: string): { from: (table: string) => Query } {
-    if (name !== 'movp_internal') throw new Error(`unknown_schema:${name}`)
-    return { from: (table: string) => new Query(this, table) }
+    throw new Error(`schema_not_exposed:${name}`)
   }
 
   from(table: string): Query {
@@ -387,6 +396,32 @@ describe('dispatchWorkflowAction', () => {
       job_kind: 'segment_recompute',
       idem_key: 'event-1:rule-1',
       ws: 'ws-1',
+    })
+  })
+
+  it('resolves managed webhooks through a public RPC instead of direct internal schema reads', async () => {
+    const db = baseDb()
+    db.tables.webhook_subscription.push({ id: 'sub-1', workspace_id: 'ws-1', internal_webhook_id: 'wh-1', active: true })
+    db.tables.webhooks.push({ id: 'wh-1', workspace_id: 'ws-1', url: 'https://example.test/hook', secret: 'secret', active: true })
+
+    const result = await dispatchWorkflowAction(db as unknown as SupabaseClient, {
+      workspaceId: 'ws-1',
+      event: baseEvent(),
+      rule: baseRule('deliver_webhook', { subscriptionId: 'sub-1' }) as any,
+      dedupeKey: 'event-1:rule-1',
+    })
+
+    expect(result).toEqual({ ok: true, outcome: 'enqueued' })
+    expect(db.enqueued[0]).toMatchObject({
+      job_kind: 'webhook',
+      idem_key: 'event-1:rule-1',
+      ws: 'ws-1',
+      payload: {
+        event: 'task.completed',
+        subscription_id: 'sub-1',
+        url: 'https://example.test/hook',
+        secret: 'secret',
+      },
     })
   })
 
