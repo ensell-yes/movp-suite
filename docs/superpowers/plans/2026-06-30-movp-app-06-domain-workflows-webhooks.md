@@ -61,6 +61,10 @@ time so consumers can dispatch on it.
 
 ## Transition guards
 
+**Execution note:** transition-guard codegen is deferred out of app-06 execution. It needs a
+real consumer that retrofits an existing Task/CMS state machine without duplicate emissions.
+App-06 only catalogs emitted events and automates off Core's event spine.
+
 Guarantee: **a state change emits its event only if the transition is valid, and an invalid
 transition neither mutates nor emits.** Guards are declared once, config-first, and live at
 two layers (DB authoritative, service advisory):

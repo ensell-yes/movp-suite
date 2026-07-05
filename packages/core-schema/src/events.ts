@@ -34,7 +34,7 @@ export const events = [
   event('content.rejected', 'cms', 'Content rejected'),
   event('content.published', 'cms', 'Content published'),
   // CMS executed code emits content.unpublished through content_publish_event, even though
-  // scheduled unpublish internally transitions the item to archived.
+  // scheduled unpublish internally stores the item as archived.
   event('content.unpublished', 'cms', 'Content unpublished'),
   event('content.scheduled', 'cms', 'Content scheduled'),
 
