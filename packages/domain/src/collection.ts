@@ -8,11 +8,12 @@ const encodeCursor = (id: string) => btoa(id)
 const decodeCursor = (cursor: string) => atob(cursor)
 
 export function makeCollectionService<
-  Row extends { id: string; workspace_id: string },
+  Row extends { id: string },
   Create,
   Update,
->(ctx: DomainCtx, config: { table: string }): CollectionService<Row, Create, Update> {
+>(ctx: DomainCtx, config: { table: string; workspaceScoped?: boolean }): CollectionService<Row, Create, Update> {
   const table = config.table
+  const workspaceScoped = config.workspaceScoped ?? true
   const fail = (op: string, code: string | undefined): never => {
     throw new Error(`domain.${table}.${op} failed [${code ?? 'unknown'}]`)
   }
@@ -35,9 +36,9 @@ export function makeCollectionService<
       let q = ctx.db
         .from(table)
         .select('*')
-        .eq('workspace_id', args.workspaceId)
         .order('id', { ascending: true })
         .limit(first + 1)
+      if (workspaceScoped) q = q.eq('workspace_id', args.workspaceId)
       if (args.after) q = q.gt('id', decodeCursor(args.after))
 
       const { data, error } = await q

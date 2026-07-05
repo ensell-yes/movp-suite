@@ -30,6 +30,7 @@ function crud() {
 
 vi.mock('@movp/domain', () => ({
   createDomain: vi.fn(() => ({
+    event_type: crud(),
     note: {
       create: noteCreate,
       get: vi.fn(async () => created),
@@ -46,6 +47,9 @@ vi.mock('@movp/domain', () => ({
     },
     task_status_option: crud(),
     task_priority_option: crud(),
+    automation_rule: crud(),
+    webhook_subscription: crud(),
+    workflow_run: crud(),
     search,
     graph: { link: vi.fn(), traverse: vi.fn() },
     collab: {

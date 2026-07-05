@@ -126,6 +126,81 @@ create index if not exists edges_src_idx on public.edges (src_type, src_id);
 create index if not exists edges_dst_idx on public.edges (dst_type, dst_id);
 
 
+create table if not exists public.event_type (
+  id uuid primary key default gen_random_uuid(),
+  key text not null,
+  domain text not null check (domain in ('collaboration', 'task', 'cms', 'campaign', 'segmentation', 'lifecycle', 'workflow')),
+  label text not null,
+  payload_schema jsonb not null,
+  schema_version numeric not null default 1,
+  active boolean not null default true,
+  description text,
+  search_vector tsvector,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+alter table public.event_type enable row level security;
+grant select on public.event_type to authenticated;
+grant select, insert, update, delete on public.event_type to service_role;
+create policy event_type_read on public.event_type for select to authenticated using (true);
+
+create or replace function public.event_type_search_vector_update()
+returns trigger
+language plpgsql
+as $$
+begin
+  new.search_vector := to_tsvector('english', coalesce(new.description, ''));
+  return new;
+end;
+$$;
+
+create trigger event_type_search_vector_tg
+  before insert or update on public.event_type
+  for each row execute function public.event_type_search_vector_update();
+
+create index event_type_search_idx on public.event_type using gin (search_vector);
+
+
+create or replace function public.event_type_delete_chunks()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  delete from public.search_chunk where source_table = 'event_type' and source_id = old.id;
+  return old;
+end;
+$$;
+revoke all on function public.event_type_delete_chunks() from public, anon, authenticated;
+
+create trigger event_type_delete_chunks_tg
+  after delete on public.event_type
+  for each row execute function public.event_type_delete_chunks();
+
+insert into public.movp_collections (name, label, label_plural, workspace_scoped)
+values ('event_type', 'Event Type', 'Event Types', false)
+on conflict (name) do update set label = excluded.label, label_plural = excluded.label_plural, workspace_scoped = excluded.workspace_scoped;
+
+insert into public.movp_fields (collection_name, name, type, label, cardinality, reporting_role, searchable, embeddable)
+values
+  ('event_type', 'key', 'text', 'Key', null, 'dimension', false, false),
+  ('event_type', 'domain', 'enum', 'Domain', null, 'dimension', false, false),
+  ('event_type', 'label', 'text', 'Label', null, null, false, false),
+  ('event_type', 'payload_schema', 'json', 'Payload Schema', null, null, false, false),
+  ('event_type', 'schema_version', 'number', 'Schema Version', null, null, false, false),
+  ('event_type', 'active', 'boolean', 'Active', null, null, false, false),
+  ('event_type', 'description', 'text', 'Description', null, null, true, false)
+on conflict (collection_name, name) do update set
+  type = excluded.type,
+  label = excluded.label,
+  cardinality = excluded.cardinality,
+  reporting_role = excluded.reporting_role,
+  searchable = excluded.searchable,
+  embeddable = excluded.embeddable;
+
+
 create table if not exists public.note (
   id uuid primary key default gen_random_uuid(),
   workspace_id uuid not null references public.workspace(id) on delete cascade,
@@ -136,6 +211,7 @@ create table if not exists public.note (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
 alter table public.note enable row level security;
 grant select, insert, update, delete on public.note to authenticated;
 grant select, insert, update, delete on public.note to service_role;
@@ -234,6 +310,7 @@ create table if not exists public.tag (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
 alter table public.tag enable row level security;
 grant select, insert, update, delete on public.tag to authenticated;
 grant select, insert, update, delete on public.tag to service_role;
@@ -303,6 +380,7 @@ create table if not exists public.comment (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
 alter table public.comment enable row level security;
 grant select, insert, update, delete on public.comment to authenticated;
 grant select, insert, update, delete on public.comment to service_role;
@@ -374,6 +452,7 @@ create table if not exists public.reaction (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
 alter table public.reaction enable row level security;
 grant select, insert, update, delete on public.reaction to authenticated;
 grant select, insert, update, delete on public.reaction to service_role;
@@ -428,6 +507,7 @@ create table if not exists public.saved_item (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
 alter table public.saved_item enable row level security;
 grant select, insert, update, delete on public.saved_item to authenticated;
 grant select, insert, update, delete on public.saved_item to service_role;
@@ -482,6 +562,7 @@ create table if not exists public.mention (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
 alter table public.mention enable row level security;
 grant select, insert, update, delete on public.mention to authenticated;
 grant select, insert, update, delete on public.mention to service_role;
@@ -539,6 +620,7 @@ create table if not exists public.share_link (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
 alter table public.share_link enable row level security;
 grant select, insert, update, delete on public.share_link to authenticated;
 grant select, insert, update, delete on public.share_link to service_role;
@@ -598,6 +680,7 @@ create table if not exists public.task_status_option (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
 alter table public.task_status_option enable row level security;
 grant select, insert, update, delete on public.task_status_option to authenticated;
 grant select, insert, update, delete on public.task_status_option to service_role;
@@ -656,6 +739,7 @@ create table if not exists public.task_priority_option (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
 alter table public.task_priority_option enable row level security;
 grant select, insert, update, delete on public.task_priority_option to authenticated;
 grant select, insert, update, delete on public.task_priority_option to service_role;
@@ -719,6 +803,7 @@ create table if not exists public.task (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
 alter table public.task enable row level security;
 grant select, insert, update, delete on public.task to authenticated;
 grant select, insert, update, delete on public.task to service_role;
@@ -796,6 +881,7 @@ create table if not exists public.task_revision (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
 alter table public.task_revision enable row level security;
 grant select, insert, update, delete on public.task_revision to authenticated;
 grant select, insert, update, delete on public.task_revision to service_role;
@@ -895,6 +981,7 @@ create table if not exists public.task_assignment (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
 alter table public.task_assignment enable row level security;
 grant select, insert, update, delete on public.task_assignment to authenticated;
 grant select, insert, update, delete on public.task_assignment to service_role;
@@ -947,6 +1034,7 @@ create table if not exists public.task_observer (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
 alter table public.task_observer enable row level security;
 grant select, insert, update, delete on public.task_observer to authenticated;
 grant select, insert, update, delete on public.task_observer to service_role;
@@ -998,6 +1086,7 @@ create table if not exists public.task_dependency (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
 alter table public.task_dependency enable row level security;
 grant select, insert, update, delete on public.task_dependency to authenticated;
 grant select, insert, update, delete on public.task_dependency to service_role;
@@ -1051,6 +1140,7 @@ create table if not exists public.task_status_history (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
 alter table public.task_status_history enable row level security;
 grant select, insert, update, delete on public.task_status_history to authenticated;
 grant select, insert, update, delete on public.task_status_history to service_role;
@@ -1108,6 +1198,7 @@ create table if not exists public.task_attachment (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
 alter table public.task_attachment enable row level security;
 grant select, insert, update, delete on public.task_attachment to authenticated;
 grant select, insert, update, delete on public.task_attachment to service_role;
@@ -1166,6 +1257,7 @@ create table if not exists public.content_type (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
 alter table public.content_type enable row level security;
 grant select, insert, update, delete on public.content_type to authenticated;
 grant select, insert, update, delete on public.content_type to service_role;
@@ -1228,6 +1320,7 @@ create table if not exists public.content_item (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
 alter table public.content_item enable row level security;
 grant select, insert, update, delete on public.content_item to authenticated;
 grant select, insert, update, delete on public.content_item to service_role;
@@ -1335,6 +1428,7 @@ create table if not exists public.content_revision (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
 alter table public.content_revision enable row level security;
 grant select, insert, update, delete on public.content_revision to authenticated;
 grant select, insert, update, delete on public.content_revision to service_role;
@@ -1396,6 +1490,7 @@ create table if not exists public.content_approval (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
 alter table public.content_approval enable row level security;
 grant select, insert, update, delete on public.content_approval to authenticated;
 grant select, insert, update, delete on public.content_approval to service_role;
@@ -1454,6 +1549,7 @@ create table if not exists public.content_approval_vote (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
 alter table public.content_approval_vote enable row level security;
 grant select, insert, update, delete on public.content_approval_vote to authenticated;
 grant select, insert, update, delete on public.content_approval_vote to service_role;
@@ -1509,6 +1605,7 @@ create table if not exists public.content_publish_event (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
 alter table public.content_publish_event enable row level security;
 grant select, insert, update, delete on public.content_publish_event to authenticated;
 grant select, insert, update, delete on public.content_publish_event to service_role;
@@ -1567,6 +1664,7 @@ create table if not exists public.content_schedule (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
 alter table public.content_schedule enable row level security;
 grant select, insert, update, delete on public.content_schedule to authenticated;
 grant select, insert, update, delete on public.content_schedule to service_role;
@@ -1630,6 +1728,7 @@ create table if not exists public.asset (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
 alter table public.asset enable row level security;
 grant select, insert, update, delete on public.asset to authenticated;
 grant select, insert, update, delete on public.asset to service_role;
@@ -1704,6 +1803,7 @@ create table if not exists public.content_collection (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
 alter table public.content_collection enable row level security;
 grant select, insert, update, delete on public.content_collection to authenticated;
 grant select, insert, update, delete on public.content_collection to service_role;
@@ -1757,6 +1857,7 @@ create table if not exists public.content_collection_entry (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
 alter table public.content_collection_entry enable row level security;
 grant select, insert, update, delete on public.content_collection_entry to authenticated;
 grant select, insert, update, delete on public.content_collection_entry to service_role;
@@ -1812,6 +1913,7 @@ create table if not exists public.content_seo (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
 alter table public.content_seo enable row level security;
 grant select, insert, update, delete on public.content_seo to authenticated;
 grant select, insert, update, delete on public.content_seo to service_role;
@@ -1872,6 +1974,7 @@ create table if not exists public.marketing_plan (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
 alter table public.marketing_plan enable row level security;
 grant select, insert, update, delete on public.marketing_plan to authenticated;
 grant select, insert, update, delete on public.marketing_plan to service_role;
@@ -1952,6 +2055,7 @@ create table if not exists public.campaign (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
 alter table public.campaign enable row level security;
 grant select, insert, update, delete on public.campaign to authenticated;
 grant select, insert, update, delete on public.campaign to service_role;
@@ -2057,6 +2161,7 @@ create table if not exists public.campaign_channel (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
 alter table public.campaign_channel enable row level security;
 grant select, insert, update, delete on public.campaign_channel to authenticated;
 grant select, insert, update, delete on public.campaign_channel to service_role;
@@ -2112,6 +2217,7 @@ create table if not exists public.campaign_deliverable (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
 alter table public.campaign_deliverable enable row level security;
 grant select, insert, update, delete on public.campaign_deliverable to authenticated;
 grant select, insert, update, delete on public.campaign_deliverable to service_role;
@@ -2183,6 +2289,7 @@ create table if not exists public.campaign_calendar_event (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
 alter table public.campaign_calendar_event enable row level security;
 grant select, insert, update, delete on public.campaign_calendar_event to authenticated;
 grant select, insert, update, delete on public.campaign_calendar_event to service_role;
@@ -2256,6 +2363,7 @@ create table if not exists public.campaign_metric (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
 alter table public.campaign_metric enable row level security;
 grant select, insert, update, delete on public.campaign_metric to authenticated;
 grant select, insert, update, delete on public.campaign_metric to service_role;
@@ -2313,6 +2421,7 @@ create table if not exists public.campaign_segment (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
 alter table public.campaign_segment enable row level security;
 grant select, insert, update, delete on public.campaign_segment to authenticated;
 grant select, insert, update, delete on public.campaign_segment to service_role;
@@ -2371,6 +2480,7 @@ create table if not exists public.platform_event (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
 alter table public.platform_event enable row level security;
 grant select, insert, update, delete on public.platform_event to authenticated;
 grant select, insert, update, delete on public.platform_event to service_role;
@@ -2432,6 +2542,7 @@ create table if not exists public.segment (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
 alter table public.segment enable row level security;
 grant select, insert, update, delete on public.segment to authenticated;
 grant select, insert, update, delete on public.segment to service_role;
@@ -2504,6 +2615,7 @@ create table if not exists public.segment_rule (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
 alter table public.segment_rule enable row level security;
 grant select, insert, update, delete on public.segment_rule to authenticated;
 grant select, insert, update, delete on public.segment_rule to service_role;
@@ -2563,6 +2675,7 @@ create table if not exists public.segment_membership (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
 alter table public.segment_membership enable row level security;
 grant select, insert, update, delete on public.segment_membership to authenticated;
 grant select, insert, update, delete on public.segment_membership to service_role;
@@ -2622,6 +2735,7 @@ create table if not exists public.segment_snapshot (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
 alter table public.segment_snapshot enable row level security;
 grant select, insert, update, delete on public.segment_snapshot to authenticated;
 grant select, insert, update, delete on public.segment_snapshot to service_role;
@@ -2678,6 +2792,7 @@ create table if not exists public.segment_snapshot_member (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
 alter table public.segment_snapshot_member enable row level security;
 grant select, insert, update, delete on public.segment_snapshot_member to authenticated;
 grant select, insert, update, delete on public.segment_snapshot_member to service_role;
@@ -2738,6 +2853,7 @@ create table if not exists public.segment_recompute_run (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
 alter table public.segment_recompute_run enable row level security;
 grant select, insert, update, delete on public.segment_recompute_run to authenticated;
 grant select, insert, update, delete on public.segment_recompute_run to service_role;
@@ -2786,3 +2902,236 @@ on conflict (collection_name, name) do update set
   reporting_role = excluded.reporting_role,
   searchable = excluded.searchable,
   embeddable = excluded.embeddable;
+
+
+create table if not exists public.automation_rule (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id uuid not null references public.workspace(id) on delete cascade,
+  condition jsonb not null,
+  action_type text not null check (action_type in ('notify', 'deliver_webhook', 'create_task', 'advance_deliverable', 'recompute_segment', 'emit_event')),
+  action_config jsonb not null,
+  enabled boolean not null default true,
+  priority numeric not null default 100,
+  trigger_event_type_id uuid not null references public.event_type(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+alter table public.automation_rule enable row level security;
+grant select, insert, update, delete on public.automation_rule to authenticated;
+grant select, insert, update, delete on public.automation_rule to service_role;
+create policy automation_rule_rw on public.automation_rule for all to authenticated
+  using (public.is_workspace_member(workspace_id))
+  with check (public.is_workspace_member(workspace_id));
+
+
+
+create or replace function public.automation_rule_delete_chunks()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  delete from public.search_chunk where source_table = 'automation_rule' and source_id = old.id;
+  return old;
+end;
+$$;
+revoke all on function public.automation_rule_delete_chunks() from public, anon, authenticated;
+
+create trigger automation_rule_delete_chunks_tg
+  after delete on public.automation_rule
+  for each row execute function public.automation_rule_delete_chunks();
+
+insert into public.movp_collections (name, label, label_plural, workspace_scoped)
+values ('automation_rule', 'Automation Rule', 'Automation Rules', true)
+on conflict (name) do update set label = excluded.label, label_plural = excluded.label_plural, workspace_scoped = excluded.workspace_scoped;
+
+insert into public.movp_fields (collection_name, name, type, label, cardinality, reporting_role, searchable, embeddable)
+values
+  ('automation_rule', 'trigger_event_type', 'relation', 'Trigger Event Type', 'many-to-one', null, false, false),
+  ('automation_rule', 'condition', 'json', 'Condition', null, null, false, false),
+  ('automation_rule', 'action_type', 'enum', 'Action Type', null, 'dimension', false, false),
+  ('automation_rule', 'action_config', 'json', 'Action Config', null, null, false, false),
+  ('automation_rule', 'enabled', 'boolean', 'Enabled', null, null, false, false),
+  ('automation_rule', 'priority', 'number', 'Priority', null, null, false, false)
+on conflict (collection_name, name) do update set
+  type = excluded.type,
+  label = excluded.label,
+  cardinality = excluded.cardinality,
+  reporting_role = excluded.reporting_role,
+  searchable = excluded.searchable,
+  embeddable = excluded.embeddable;
+
+
+create table if not exists public.webhook_subscription (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id uuid not null references public.workspace(id) on delete cascade,
+  url text not null,
+  filter jsonb,
+  active boolean not null default true,
+  secret_set boolean not null default false,
+  secret_last_rotated_at timestamptz,
+  internal_webhook_id uuid,
+  event_type_id uuid not null references public.event_type(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+alter table public.webhook_subscription enable row level security;
+grant select, insert, update, delete on public.webhook_subscription to authenticated;
+grant select, insert, update, delete on public.webhook_subscription to service_role;
+create policy webhook_subscription_rw on public.webhook_subscription for all to authenticated
+  using (public.is_workspace_member(workspace_id))
+  with check (public.is_workspace_member(workspace_id));
+
+
+
+create or replace function public.webhook_subscription_delete_chunks()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  delete from public.search_chunk where source_table = 'webhook_subscription' and source_id = old.id;
+  return old;
+end;
+$$;
+revoke all on function public.webhook_subscription_delete_chunks() from public, anon, authenticated;
+
+create trigger webhook_subscription_delete_chunks_tg
+  after delete on public.webhook_subscription
+  for each row execute function public.webhook_subscription_delete_chunks();
+
+insert into public.movp_collections (name, label, label_plural, workspace_scoped)
+values ('webhook_subscription', 'Webhook Subscription', 'Webhook Subscriptions', true)
+on conflict (name) do update set label = excluded.label, label_plural = excluded.label_plural, workspace_scoped = excluded.workspace_scoped;
+
+insert into public.movp_fields (collection_name, name, type, label, cardinality, reporting_role, searchable, embeddable)
+values
+  ('webhook_subscription', 'event_type', 'relation', 'Event Type', 'many-to-one', null, false, false),
+  ('webhook_subscription', 'url', 'text', 'URL', null, null, false, false),
+  ('webhook_subscription', 'filter', 'json', 'Filter', null, null, false, false),
+  ('webhook_subscription', 'active', 'boolean', 'Active', null, null, false, false),
+  ('webhook_subscription', 'secret_set', 'boolean', 'Secret Set', null, null, false, false),
+  ('webhook_subscription', 'secret_last_rotated_at', 'datetime', 'Secret Last Rotated At', null, null, false, false),
+  ('webhook_subscription', 'internal_webhook_id', 'uuid', 'Internal Webhook', null, null, false, false)
+on conflict (collection_name, name) do update set
+  type = excluded.type,
+  label = excluded.label,
+  cardinality = excluded.cardinality,
+  reporting_role = excluded.reporting_role,
+  searchable = excluded.searchable,
+  embeddable = excluded.embeddable;
+
+
+create table if not exists public.workflow_run (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id uuid not null references public.workspace(id) on delete cascade,
+  source_event_id uuid not null,
+  event_type text not null,
+  matched boolean not null default false,
+  action_type text not null,
+  outcome text not null check (outcome in ('succeeded', 'failed', 'skipped', 'enqueued')),
+  job_id uuid,
+  error_code text,
+  trace_id text,
+  automation_rule_id uuid not null references public.automation_rule(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+alter table public.workflow_run enable row level security;
+grant select, insert, update, delete on public.workflow_run to authenticated;
+grant select, insert, update, delete on public.workflow_run to service_role;
+create policy workflow_run_rw on public.workflow_run for all to authenticated
+  using (public.is_workspace_member(workspace_id))
+  with check (public.is_workspace_member(workspace_id));
+
+
+
+create or replace function public.workflow_run_delete_chunks()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  delete from public.search_chunk where source_table = 'workflow_run' and source_id = old.id;
+  return old;
+end;
+$$;
+revoke all on function public.workflow_run_delete_chunks() from public, anon, authenticated;
+
+create trigger workflow_run_delete_chunks_tg
+  after delete on public.workflow_run
+  for each row execute function public.workflow_run_delete_chunks();
+
+insert into public.movp_collections (name, label, label_plural, workspace_scoped)
+values ('workflow_run', 'Workflow Run', 'Workflow Runs', true)
+on conflict (name) do update set label = excluded.label, label_plural = excluded.label_plural, workspace_scoped = excluded.workspace_scoped;
+
+insert into public.movp_fields (collection_name, name, type, label, cardinality, reporting_role, searchable, embeddable)
+values
+  ('workflow_run', 'source_event_id', 'uuid', 'Source Event ID', null, null, false, false),
+  ('workflow_run', 'event_type', 'text', 'Event Type', null, 'dimension', false, false),
+  ('workflow_run', 'automation_rule', 'relation', 'Automation Rule', 'many-to-one', 'dimension', false, false),
+  ('workflow_run', 'matched', 'boolean', 'Matched', null, null, false, false),
+  ('workflow_run', 'action_type', 'text', 'Action Type', null, 'dimension', false, false),
+  ('workflow_run', 'outcome', 'enum', 'Outcome', null, 'dimension', false, false),
+  ('workflow_run', 'job_id', 'uuid', 'Job ID', null, null, false, false),
+  ('workflow_run', 'error_code', 'text', 'Error Code', null, null, false, false),
+  ('workflow_run', 'trace_id', 'text', 'Trace ID', null, null, false, false)
+on conflict (collection_name, name) do update set
+  type = excluded.type,
+  label = excluded.label,
+  cardinality = excluded.cardinality,
+  reporting_role = excluded.reporting_role,
+  searchable = excluded.searchable,
+  embeddable = excluded.embeddable;
+
+
+create unique index if not exists event_type_key_unique on public.event_type (key);
+insert into public.event_type (key, domain, label, payload_schema, schema_version, active, description)
+values
+  ('note.created', 'lifecycle', 'Note created', '{"type":"object"}', 1, true, null),
+  ('comment.added', 'collaboration', 'Comment added', '{"type":"object"}', 1, true, null),
+  ('comment.replied', 'collaboration', 'Comment replied', '{"type":"object"}', 1, true, null),
+  ('user.mentioned', 'collaboration', 'User mentioned', '{"type":"object"}', 1, true, null),
+  ('item.liked', 'collaboration', 'Item liked', '{"type":"object"}', 1, true, null),
+  ('item.disliked', 'collaboration', 'Item disliked', '{"type":"object"}', 1, true, null),
+  ('item.saved', 'collaboration', 'Item saved', '{"type":"object"}', 1, true, null),
+  ('item.shared', 'collaboration', 'Item shared', '{"type":"object"}', 1, true, null),
+  ('task.created', 'task', 'Task created', '{"type":"object"}', 1, true, null),
+  ('task.assigned', 'task', 'Task assigned', '{"type":"object"}', 1, true, null),
+  ('task.observer_added', 'task', 'Task observer added', '{"type":"object"}', 1, true, null),
+  ('task.status_changed', 'task', 'Task status changed', '{"type":"object"}', 1, true, null),
+  ('task.completed', 'task', 'Task completed', '{"type":"object"}', 1, true, null),
+  ('task.reopened', 'task', 'Task reopened', '{"type":"object"}', 1, true, null),
+  ('task.dependency_blocked', 'task', 'Task dependency blocked', '{"type":"object"}', 1, true, null),
+  ('task.due_soon', 'task', 'Task due soon', '{"type":"object"}', 1, true, null),
+  ('content.created', 'cms', 'Content created', '{"type":"object"}', 1, true, null),
+  ('content.revision_created', 'cms', 'Content revision created', '{"type":"object"}', 1, true, null),
+  ('content.submitted_for_approval', 'cms', 'Content submitted for approval', '{"type":"object"}', 1, true, null),
+  ('content.approved', 'cms', 'Content approved', '{"type":"object"}', 1, true, null),
+  ('content.rejected', 'cms', 'Content rejected', '{"type":"object"}', 1, true, null),
+  ('content.published', 'cms', 'Content published', '{"type":"object"}', 1, true, null),
+  ('content.unpublished', 'cms', 'Content unpublished', '{"type":"object"}', 1, true, null),
+  ('content.scheduled', 'cms', 'Content scheduled', '{"type":"object"}', 1, true, null),
+  ('campaign.created', 'campaign', 'Campaign created', '{"type":"object"}', 1, true, null),
+  ('campaign.started', 'campaign', 'Campaign started', '{"type":"object"}', 1, true, null),
+  ('campaign.ended', 'campaign', 'Campaign ended', '{"type":"object"}', 1, true, null),
+  ('deliverable.created', 'campaign', 'Deliverable created', '{"type":"object"}', 1, true, null),
+  ('deliverable.assigned', 'campaign', 'Deliverable assigned', '{"type":"object"}', 1, true, null),
+  ('deliverable.completed', 'campaign', 'Deliverable completed', '{"type":"object"}', 1, true, null),
+  ('deliverable.due_soon', 'campaign', 'Deliverable due soon', '{"type":"object"}', 1, true, null),
+  ('segment.membership_changed', 'segmentation', 'Segment membership changed', '{"type":"object"}', 1, true, null),
+  ('segment.recomputed', 'segmentation', 'Segment recomputed', '{"type":"object"}', 1, true, null)
+on conflict (key) do update set
+  domain = excluded.domain,
+  label = excluded.label,
+  payload_schema = excluded.payload_schema,
+  schema_version = excluded.schema_version,
+  active = excluded.active,
+  description = excluded.description;

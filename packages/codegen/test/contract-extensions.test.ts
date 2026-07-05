@@ -18,7 +18,7 @@ const deliverable: CollectionDef = defineCollection({
 
 describe('DSL/codegen contract extensions', () => {
   const sql = emitCollectionSql(deliverable)
-  const ts = emitTypes({ collections: [deliverable] })
+  const ts = emitTypes({ collections: [deliverable], events: [] })
 
   it('many-to-one and one-to-one relations emit FK columns', () => {
     expect(sql).toContain('campaign_id uuid not null references public.campaign(id) on delete cascade')

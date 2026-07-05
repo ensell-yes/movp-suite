@@ -1,4 +1,7 @@
 import type {
+  AutomationRuleCreate,
+  AutomationRuleRow,
+  AutomationRuleUpdate,
   CampaignCalendarEventCreate,
   CampaignCalendarEventRow,
   CampaignCalendarEventUpdate,
@@ -17,6 +20,9 @@ import type {
   CampaignSegmentRow,
   CampaignSegmentUpdate,
   CampaignUpdate,
+  EventTypeCreate,
+  EventTypeRow,
+  EventTypeUpdate,
   PlatformEventCreate,
   PlatformEventRow,
   PlatformEventUpdate,
@@ -53,6 +59,12 @@ import type {
   TaskStatusOptionCreate,
   TaskStatusOptionRow,
   TaskStatusOptionUpdate,
+  WebhookSubscriptionCreate,
+  WebhookSubscriptionRow,
+  WebhookSubscriptionUpdate,
+  WorkflowRunCreate,
+  WorkflowRunRow,
+  WorkflowRunUpdate,
 } from './generated/types.ts'
 import { makeCampaignService } from './campaign.ts'
 import { makeCollabService } from './collab.ts'
@@ -65,6 +77,7 @@ import type { Domain, DomainCtx, EmbeddingProvider } from './types.ts'
 
 export function createDomain(ctx: DomainCtx, opts: { embedder?: EmbeddingProvider } = {}): Domain {
   return {
+    event_type: makeCollectionService<EventTypeRow, EventTypeCreate, EventTypeUpdate>(ctx, { table: 'event_type', workspaceScoped: false }),
     note: makeCollectionService<NoteRow, NoteCreate, NoteUpdate>(ctx, { table: 'note' }),
     tag: makeCollectionService<TagRow, TagCreate, TagUpdate>(ctx, { table: 'tag' }),
     marketing_plan: makeCollectionService<MarketingPlanRow, MarketingPlanCreate, MarketingPlanUpdate>(ctx, { table: 'marketing_plan' }),
@@ -82,6 +95,9 @@ export function createDomain(ctx: DomainCtx, opts: { embedder?: EmbeddingProvide
     segment_snapshot: makeCollectionService<SegmentSnapshotRow, SegmentSnapshotCreate, SegmentSnapshotUpdate>(ctx, { table: 'segment_snapshot' }),
     segment_snapshot_member: makeCollectionService<SegmentSnapshotMemberRow, SegmentSnapshotMemberCreate, SegmentSnapshotMemberUpdate>(ctx, { table: 'segment_snapshot_member' }),
     segment_recompute_run: makeCollectionService<SegmentRecomputeRunRow, SegmentRecomputeRunCreate, SegmentRecomputeRunUpdate>(ctx, { table: 'segment_recompute_run' }),
+    automation_rule: makeCollectionService<AutomationRuleRow, AutomationRuleCreate, AutomationRuleUpdate>(ctx, { table: 'automation_rule' }),
+    webhook_subscription: makeCollectionService<WebhookSubscriptionRow, WebhookSubscriptionCreate, WebhookSubscriptionUpdate>(ctx, { table: 'webhook_subscription' }),
+    workflow_run: makeCollectionService<WorkflowRunRow, WorkflowRunCreate, WorkflowRunUpdate>(ctx, { table: 'workflow_run' }),
     task: makeTaskService(ctx),
     content: makeContentService(ctx),
     search: (args) => runSearch(ctx, opts.embedder, args),

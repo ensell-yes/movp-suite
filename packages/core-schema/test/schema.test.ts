@@ -35,6 +35,7 @@ describe('example collections', () => {
 describe('defineSchema aggregate', () => {
   it('aggregates the collections in order', () => {
     expect(schema.collections.map((c) => c.name)).toEqual([
+      'event_type',
       'note',
       'tag',
       'comment',
@@ -76,7 +77,11 @@ describe('defineSchema aggregate', () => {
       'segment_snapshot',
       'segment_snapshot_member',
       'segment_recompute_run',
+      'automation_rule',
+      'webhook_subscription',
+      'workflow_run',
     ])
+    expect(schema.events.map((event) => event.key)).toContain('task.completed')
     expect(comment.internal).toBe(true)
   })
 

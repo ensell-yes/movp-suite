@@ -1,6 +1,7 @@
-import type { CollectionDef, MovpSchema } from './types.ts'
+import type { CollectionDef, EventDef, MovpSchema } from './types.ts'
 
 const IDENT = /^[a-z][a-z0-9_]*$/
+const EVENT_KEY = /^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$/
 
 export function defineCollection(def: CollectionDef): CollectionDef {
   if (!IDENT.test(def.name)) {
@@ -33,11 +34,27 @@ export function defineCollection(def: CollectionDef): CollectionDef {
   return def
 }
 
-export function defineSchema(collections: CollectionDef[]): MovpSchema {
+export function defineEvent(def: EventDef): EventDef {
+  if (!EVENT_KEY.test(def.key)) {
+    throw new Error(`event key must be dotted lower-case matching ${EVENT_KEY} (got "${def.key}")`)
+  }
+  if (def.version < 1) {
+    throw new Error(`event "${def.key}" requires version >= 1`)
+  }
+  return def
+}
+
+export function defineSchema(collections: CollectionDef[], events: EventDef[] = []): MovpSchema {
   const names = new Set<string>()
   for (const c of collections) {
     if (names.has(c.name)) throw new Error(`duplicate collection name "${c.name}"`)
     names.add(c.name)
+  }
+
+  const eventKeys = new Set<string>()
+  for (const event of events) {
+    if (eventKeys.has(event.key)) throw new Error(`duplicate event key "${event.key}"`)
+    eventKeys.add(event.key)
   }
 
   for (const c of collections) {
@@ -48,5 +65,5 @@ export function defineSchema(collections: CollectionDef[]): MovpSchema {
     }
   }
 
-  return { collections }
+  return { collections, events }
 }

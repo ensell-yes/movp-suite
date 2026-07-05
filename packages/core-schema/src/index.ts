@@ -1,14 +1,16 @@
 export type {
   Cardinality,
   CollectionDef,
+  EventDef,
   FieldDef,
   FieldType,
   MovpSchema,
   ReportingRole,
 } from './types.ts'
 export { f, type FieldOptions } from './builders.ts'
-export { defineCollection, defineSchema } from './define.ts'
+export { defineCollection, defineEvent, defineSchema } from './define.ts'
 export { asset } from './collections/asset.ts'
+export { automationRule } from './collections/automation_rule.ts'
 export { campaign } from './collections/campaign.ts'
 export { campaignCalendarEvent } from './collections/campaign_calendar_event.ts'
 export { campaignChannel } from './collections/campaign_channel.ts'
@@ -26,6 +28,7 @@ export { contentRevision } from './collections/content_revision.ts'
 export { contentSchedule } from './collections/content_schedule.ts'
 export { contentSeo } from './collections/content_seo.ts'
 export { contentType } from './collections/content_type.ts'
+export { eventType } from './collections/event_type.ts'
 export { marketingPlan } from './collections/marketing_plan.ts'
 export { mention } from './collections/mention.ts'
 export { note } from './collections/note.ts'
@@ -49,4 +52,7 @@ export { taskPriorityOption } from './collections/task_priority_option.ts'
 export { taskRevision } from './collections/task_revision.ts'
 export { taskStatusHistory } from './collections/task_status_history.ts'
 export { taskStatusOption } from './collections/task_status_option.ts'
+export { webhookSubscription } from './collections/webhook_subscription.ts'
+export { workflowRun } from './collections/workflow_run.ts'
+export { events } from './events.ts'
 export { schema } from './schema.ts'

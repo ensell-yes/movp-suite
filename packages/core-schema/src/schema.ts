@@ -31,6 +31,8 @@ import { campaignChannel } from './collections/campaign_channel.ts'
 import { campaignDeliverable } from './collections/campaign_deliverable.ts'
 import { campaignMetric } from './collections/campaign_metric.ts'
 import { campaignSegment } from './collections/campaign_segment.ts'
+import { automationRule } from './collections/automation_rule.ts'
+import { eventType } from './collections/event_type.ts'
 import { marketingPlan } from './collections/marketing_plan.ts'
 import { platformEvent } from './collections/platform_event.ts'
 import { segment } from './collections/segment.ts'
@@ -39,9 +41,15 @@ import { segmentRecomputeRun } from './collections/segment_recompute_run.ts'
 import { segmentRule } from './collections/segment_rule.ts'
 import { segmentSnapshot } from './collections/segment_snapshot.ts'
 import { segmentSnapshotMember } from './collections/segment_snapshot_member.ts'
+import { webhookSubscription } from './collections/webhook_subscription.ts'
+import { workflowRun } from './collections/workflow_run.ts'
 import { defineSchema } from './define.ts'
+import { events } from './events.ts'
 
 export const schema = defineSchema([
+  // Domain Workflows (Phase 7, Part A). `event_type` is the one global public
+  // collection and must precede workflow FK consumers.
+  eventType,
   note,
   tag,
   comment,
@@ -92,4 +100,7 @@ export const schema = defineSchema([
   segmentSnapshot,
   segmentSnapshotMember,
   segmentRecomputeRun,
-])
+  automationRule,
+  webhookSubscription,
+  workflowRun,
+], events)
