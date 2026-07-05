@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { evaluateCondition } from './condition.ts'
 import { claimDueJobs, completeJob } from './jobs.ts'
+import { dispatchWorkflowAction } from './actions.ts'
 
 type RunOutcome = 'succeeded' | 'failed' | 'skipped' | 'enqueued'
 
@@ -137,10 +138,6 @@ async function finishRun(
   if (error) throw new Error(error.code ?? 'workflow_run_update_failed')
 }
 
-async function defaultDispatchWorkflowAction(): Promise<ActionResult> {
-  return { ok: false, errorCode: 'phase_unavailable' }
-}
-
 async function processRule(
   db: SupabaseClient,
   event: MovpInternalEvent,
@@ -187,7 +184,7 @@ export async function runAutomationWorker(
   limit = 10,
   opts: { dispatch?: WorkflowActionDispatcher } = {},
 ): Promise<{ processed: number; failed: number }> {
-  const dispatch = opts.dispatch ?? defaultDispatchWorkflowAction
+  const dispatch = opts.dispatch ?? dispatchWorkflowAction
   let processed = 0
   let failed = 0
 

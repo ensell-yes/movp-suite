@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { dispatchWorkflowAction } from '../src/actions.ts'
 import { runAutomationWorker, type WorkflowActionDispatcher } from '../src/automation.ts'
 
 type Row = Record<string, unknown>
@@ -7,6 +8,7 @@ type Row = Record<string, unknown>
 class Query {
   private filters: Array<[string, unknown]> = []
   private orders: Array<{ column: string; ascending: boolean }> = []
+  private maxRows: number | null = null
   private op: 'select' | 'insert' | 'update' = 'select'
   private insertRow: Row | null = null
   private updatePatch: Row | null = null
@@ -24,6 +26,11 @@ class Query {
 
   order(column: string, opts: { ascending: boolean }): this {
     this.orders.push({ column, ascending: opts.ascending })
+    return this
+  }
+
+  limit(n: number): this {
+    this.maxRows = n
     return this
   }
 
@@ -96,7 +103,7 @@ class Query {
         return ascending ? cmp : -cmp
       })
     }
-    return rows
+    return this.maxRows == null ? rows : rows.slice(0, this.maxRows)
   }
 }
 
@@ -104,16 +111,37 @@ class FakeDb {
   nextId = 1
   failNextRunUpdate = false
   completed: Row[] = []
+  enqueued: Row[] = []
+  taskCreates: Row[] = []
+  emitted: Row[] = []
   jobs: Row[] = []
   tables: Record<string, Row[]> = {
     movp_events: [],
+    webhooks: [],
     event_type: [],
     automation_rule: [],
     workflow_run: [],
+    webhook_subscription: [],
+    segment: [],
+    campaign_deliverable: [],
+    task_status_option: [],
+    task_priority_option: [],
   }
 
   rpc = vi.fn(async (fn: string, args: Row) => {
     if (fn === 'claim_jobs') return { data: args.job_kind === 'automate' ? this.jobs : [], error: null }
+    if (fn === 'enqueue_job') {
+      this.enqueued.push(args)
+      return { data: null, error: null }
+    }
+    if (fn === 'create_workflow_task_with_revision') {
+      this.taskCreates.push(args)
+      return { data: { id: `task-${this.taskCreates.length}`, workspace_id: args.ws, title: args.p_title }, error: null }
+    }
+    if (fn === 'emit_event') {
+      this.emitted.push(args)
+      return { data: null, error: null }
+    }
     if (fn === 'complete_job') {
       this.completed.push(args)
       return { data: null, error: null }
@@ -152,6 +180,30 @@ function baseDb(): FakeDb {
     status: 'running',
   })
   return db
+}
+
+function baseEvent() {
+  return {
+    id: 'event-1',
+    type: 'task.completed',
+    workspace_id: 'ws-1',
+    payload: { actor_id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', depth: 0 },
+    trace_id: 'trace-1',
+  }
+}
+
+function baseRule(actionType: string, actionConfig: Record<string, unknown>): Row {
+  return {
+    id: 'rule-1',
+    workspace_id: 'ws-1',
+    trigger_event_type_id: 'et-task-completed',
+    condition: {},
+    action_type: actionType,
+    action_config: actionConfig,
+    enabled: true,
+    priority: 1,
+    created_at: '2026-01-01T00:00:00Z',
+  }
 }
 
 function addRule(db: FakeDb, row: Partial<Row>): void {
@@ -255,5 +307,112 @@ describe('runAutomationWorker', () => {
 
     expect(dispatch).not.toHaveBeenCalled()
     expect(db.tables.workflow_run[0]).toMatchObject({ outcome: 'skipped', error_code: 'cross_workspace_target' })
+  })
+})
+
+describe('dispatchWorkflowAction', () => {
+  it('rejects action_config.workspaceId instead of using it as authority', async () => {
+    const db = baseDb()
+    const result = await dispatchWorkflowAction(db as unknown as SupabaseClient, {
+      workspaceId: 'ws-1',
+      event: baseEvent(),
+      rule: baseRule('notify', { workspaceId: 'ws-2', email: 'a@example.test' }) as any,
+      dedupeKey: 'event-1:rule-1',
+    })
+
+    expect(result).toEqual({ ok: false, errorCode: 'cross_workspace_target' })
+    expect(db.enqueued).toHaveLength(0)
+  })
+
+  it('enqueues notify jobs using the event workspace and dedupe key', async () => {
+    const db = baseDb()
+    const result = await dispatchWorkflowAction(db as unknown as SupabaseClient, {
+      workspaceId: 'ws-1',
+      event: baseEvent(),
+      rule: baseRule('notify', { recipient_user_id: 'user-1', title: 'Heads up' }) as any,
+      dedupeKey: 'event-1:rule-1',
+    })
+
+    expect(result).toEqual({ ok: true, outcome: 'enqueued' })
+    expect(db.enqueued[0]).toMatchObject({
+      job_kind: 'notify',
+      idem_key: 'event-1:rule-1',
+      ws: 'ws-1',
+    })
+  })
+
+  it('passes idempotency and actor context into create_task', async () => {
+    const db = baseDb()
+    db.tables.task_status_option.push({ id: 'status-1', workspace_id: 'ws-1', is_default: true, is_active: true, sort_order: 1 })
+    db.tables.task_priority_option.push({ id: 'priority-1', workspace_id: 'ws-1', is_default: true, is_active: true, rank: 1 })
+
+    const result = await dispatchWorkflowAction(db as unknown as SupabaseClient, {
+      workspaceId: 'ws-1',
+      event: baseEvent(),
+      rule: baseRule('create_task', { title: 'Follow up' }) as any,
+      dedupeKey: 'event-1:rule-1',
+    })
+
+    expect(result).toEqual({ ok: true, outcome: 'succeeded' })
+    expect(db.taskCreates[0]).toMatchObject({
+      ws: 'ws-1',
+      p_title: 'Follow up',
+      p_status_id: 'status-1',
+      p_priority_id: 'priority-1',
+      p_idempotency_key: 'event-1:rule-1',
+      p_actor_id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+    })
+  })
+
+  it('proves segment ownership before enqueuing recompute', async () => {
+    const db = baseDb()
+    db.tables.segment.push({ id: 'seg-1', workspace_id: 'ws-1' })
+
+    const ok = await dispatchWorkflowAction(db as unknown as SupabaseClient, {
+      workspaceId: 'ws-1',
+      event: baseEvent(),
+      rule: baseRule('recompute_segment', { segmentId: 'seg-1' }) as any,
+      dedupeKey: 'event-1:rule-1',
+    })
+    const cross = await dispatchWorkflowAction(db as unknown as SupabaseClient, {
+      workspaceId: 'ws-1',
+      event: baseEvent(),
+      rule: baseRule('recompute_segment', { segmentId: 'seg-2' }) as any,
+      dedupeKey: 'event-1:rule-2',
+    })
+
+    expect(ok).toEqual({ ok: true, outcome: 'enqueued' })
+    expect(cross).toEqual({ ok: false, errorCode: 'cross_workspace_target' })
+    expect(db.enqueued[0]).toMatchObject({
+      job_kind: 'segment_recompute',
+      idem_key: 'event-1:rule-1',
+      ws: 'ws-1',
+    })
+  })
+
+  it('enforces the emit_event loop depth cap', async () => {
+    const db = baseDb()
+    const atCap = { ...baseEvent(), payload: { depth: 5 } }
+    const skipped = await dispatchWorkflowAction(db as unknown as SupabaseClient, {
+      workspaceId: 'ws-1',
+      event: atCap,
+      rule: baseRule('emit_event', { eventType: 'task.due_soon' }) as any,
+      dedupeKey: 'event-1:rule-1',
+    })
+    const emitted = await dispatchWorkflowAction(db as unknown as SupabaseClient, {
+      workspaceId: 'ws-1',
+      event: baseEvent(),
+      rule: baseRule('emit_event', { eventType: 'task.due_soon', payload: { id: 'next' } }) as any,
+      dedupeKey: 'event-1:rule-2',
+    })
+
+    expect(skipped).toEqual({ ok: false, errorCode: 'loop_depth_exceeded' })
+    expect(emitted).toEqual({ ok: true, outcome: 'succeeded' })
+    expect(db.emitted[0]).toMatchObject({
+      ev_type: 'task.due_soon',
+      ws: 'ws-1',
+      payload: { id: 'next', depth: 1 },
+      trace: 'trace-1',
+    })
   })
 })
