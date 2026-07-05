@@ -32,6 +32,13 @@ import { campaignDeliverable } from './collections/campaign_deliverable.ts'
 import { campaignMetric } from './collections/campaign_metric.ts'
 import { campaignSegment } from './collections/campaign_segment.ts'
 import { marketingPlan } from './collections/marketing_plan.ts'
+import { platformEvent } from './collections/platform_event.ts'
+import { segment } from './collections/segment.ts'
+import { segmentMembership } from './collections/segment_membership.ts'
+import { segmentRecomputeRun } from './collections/segment_recompute_run.ts'
+import { segmentRule } from './collections/segment_rule.ts'
+import { segmentSnapshot } from './collections/segment_snapshot.ts'
+import { segmentSnapshotMember } from './collections/segment_snapshot_member.ts'
 import { defineSchema } from './define.ts'
 
 export const schema = defineSchema([
@@ -73,4 +80,16 @@ export const schema = defineSchema([
   campaignCalendarEvent,
   campaignMetric,
   campaignSegment,
+  // Segmentation (Phase 6, Part A). Order encodes inline-FK deps:
+  //  - platform_event has no relation (placed first among segmentation collections).
+  //  - segment precedes every child (segment_rule/membership/snapshot/recompute_run -> segment_id).
+  //  - segment_rule precedes segment_membership + segment_snapshot_member (matched_rule_id -> it).
+  //  - segment_snapshot precedes segment_snapshot_member (snapshot_id -> it).
+  platformEvent,
+  segment,
+  segmentRule,
+  segmentMembership,
+  segmentSnapshot,
+  segmentSnapshotMember,
+  segmentRecomputeRun,
 ])
