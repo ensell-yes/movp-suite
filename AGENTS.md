@@ -8,3 +8,12 @@
   not belong to this repo, stop and fix the local Supabase target before trusting pgTAP results.
 - Storage may be temporarily disabled for pure-Postgres DB gates only when the local storage container healthcheck
   blocks `supabase db reset`. Re-enable storage before CMS asset or frontend e2e work.
+
+## Phase Completion Signal
+
+- A phase (`app-01` … `app-06`) is DONE only when **every part in its plan series** is executed —
+  e.g. Segmentation is 04a **and** 04b **and** 04c **and** 04d, not 04a alone. Executing one part
+  and stopping is normal and fine; reporting the *phase* as done when parts are pending is not.
+- The authoritative record is the **Stage B EXECUTION STATUS table** in
+  `docs/superpowers/plans/README.md`. Update it in the same commit that lands a part, and read it
+  before claiming or assuming completion status.

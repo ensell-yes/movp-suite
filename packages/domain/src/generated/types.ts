@@ -979,3 +979,230 @@ export interface CampaignSegmentUpdate {
   weight?: number
   campaign_id?: string
 }
+
+export interface PlatformEventRow {
+  id: string
+  workspace_id: string
+  event_type: string
+  subject_type: string
+  subject_ref: string
+  actor_ref: string | null
+  source: 'internal' | 'external'
+  properties: Record<string, unknown> | null
+  occurred_at: string
+  ingested_at: string
+  created_at: string
+  updated_at: string
+}
+
+export interface PlatformEventCreate {
+  workspace_id: string
+  event_type: string
+  subject_type: string
+  subject_ref: string
+  actor_ref?: string
+  source: 'internal' | 'external'
+  properties?: Record<string, unknown>
+  occurred_at: string
+  ingested_at: string
+}
+
+export interface PlatformEventUpdate {
+  event_type?: string
+  subject_type?: string
+  subject_ref?: string
+  actor_ref?: string
+  source?: 'internal' | 'external'
+  properties?: Record<string, unknown>
+  occurred_at?: string
+  ingested_at?: string
+}
+
+export interface SegmentRow {
+  id: string
+  workspace_id: string
+  name: string
+  description: string | null
+  owner_ref: string | null
+  active: boolean | null
+  mode: 'dynamic' | 'static' | null
+  created_at: string
+  updated_at: string
+}
+
+export interface SegmentCreate {
+  workspace_id: string
+  name: string
+  description?: string
+  owner_ref?: string
+  active?: boolean
+  mode?: 'dynamic' | 'static'
+}
+
+export interface SegmentUpdate {
+  name?: string
+  description?: string
+  owner_ref?: string
+  active?: boolean
+  mode?: 'dynamic' | 'static'
+}
+
+export interface SegmentRuleRow {
+  id: string
+  workspace_id: string
+  predicate: Record<string, unknown> | null
+  version: number | null
+  active: boolean | null
+  description: string | null
+  segment_id: string
+  created_at: string
+  updated_at: string
+}
+
+export interface SegmentRuleCreate {
+  workspace_id: string
+  predicate?: Record<string, unknown>
+  version?: number
+  active?: boolean
+  description?: string
+  segment_id: string
+}
+
+export interface SegmentRuleUpdate {
+  predicate?: Record<string, unknown>
+  version?: number
+  active?: boolean
+  description?: string
+  segment_id?: string
+}
+
+export interface SegmentMembershipRow {
+  id: string
+  workspace_id: string
+  subject_type: string | null
+  subject_ref: string
+  first_matched_at: string | null
+  evaluated_at: string | null
+  evidence: Record<string, unknown> | null
+  segment_id: string
+  matched_rule_id: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface SegmentMembershipCreate {
+  workspace_id: string
+  subject_type?: string
+  subject_ref: string
+  first_matched_at?: string
+  evaluated_at?: string
+  evidence?: Record<string, unknown>
+  segment_id: string
+  matched_rule_id?: string
+}
+
+export interface SegmentMembershipUpdate {
+  subject_type?: string
+  subject_ref?: string
+  first_matched_at?: string
+  evaluated_at?: string
+  evidence?: Record<string, unknown>
+  segment_id?: string
+  matched_rule_id?: string
+}
+
+export interface SegmentSnapshotRow {
+  id: string
+  workspace_id: string
+  taken_at: string | null
+  reason: 'on_demand' | 'scheduled' | 'campaign_launch' | null
+  rule_version_set: Record<string, unknown> | null
+  member_count: number | null
+  segment_id: string
+  created_at: string
+  updated_at: string
+}
+
+export interface SegmentSnapshotCreate {
+  workspace_id: string
+  taken_at?: string
+  reason?: 'on_demand' | 'scheduled' | 'campaign_launch'
+  rule_version_set?: Record<string, unknown>
+  member_count?: number
+  segment_id: string
+}
+
+export interface SegmentSnapshotUpdate {
+  taken_at?: string
+  reason?: 'on_demand' | 'scheduled' | 'campaign_launch'
+  rule_version_set?: Record<string, unknown>
+  member_count?: number
+  segment_id?: string
+}
+
+export interface SegmentSnapshotMemberRow {
+  id: string
+  workspace_id: string
+  subject_ref: string
+  evidence: Record<string, unknown> | null
+  snapshot_id: string
+  matched_rule_id: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface SegmentSnapshotMemberCreate {
+  workspace_id: string
+  subject_ref: string
+  evidence?: Record<string, unknown>
+  snapshot_id: string
+  matched_rule_id?: string
+}
+
+export interface SegmentSnapshotMemberUpdate {
+  subject_ref?: string
+  evidence?: Record<string, unknown>
+  snapshot_id?: string
+  matched_rule_id?: string
+}
+
+export interface SegmentRecomputeRunRow {
+  id: string
+  workspace_id: string
+  mode: string | null
+  started_at: string | null
+  finished_at: string | null
+  added_count: number | null
+  removed_count: number | null
+  evaluated_count: number | null
+  idempotency_key: string | null
+  outcome_code: string | null
+  segment_id: string
+  created_at: string
+  updated_at: string
+}
+
+export interface SegmentRecomputeRunCreate {
+  workspace_id: string
+  mode?: string
+  started_at?: string
+  finished_at?: string
+  added_count?: number
+  removed_count?: number
+  evaluated_count?: number
+  idempotency_key?: string
+  outcome_code?: string
+  segment_id: string
+}
+
+export interface SegmentRecomputeRunUpdate {
+  mode?: string
+  started_at?: string
+  finished_at?: string
+  added_count?: number
+  removed_count?: number
+  evaluated_count?: number
+  idempotency_key?: string
+  outcome_code?: string
+  segment_id?: string
+}

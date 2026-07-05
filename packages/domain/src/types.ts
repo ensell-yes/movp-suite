@@ -26,6 +26,27 @@ import type {
   CampaignSegmentCreate,
   CampaignSegmentRow,
   CampaignSegmentUpdate,
+  PlatformEventCreate,
+  PlatformEventRow,
+  PlatformEventUpdate,
+  SegmentCreate,
+  SegmentMembershipCreate,
+  SegmentMembershipRow,
+  SegmentMembershipUpdate,
+  SegmentRecomputeRunCreate,
+  SegmentRecomputeRunRow,
+  SegmentRecomputeRunUpdate,
+  SegmentRow,
+  SegmentRuleCreate,
+  SegmentRuleRow,
+  SegmentRuleUpdate,
+  SegmentSnapshotCreate,
+  SegmentSnapshotMemberCreate,
+  SegmentSnapshotMemberRow,
+  SegmentSnapshotMemberUpdate,
+  SegmentSnapshotRow,
+  SegmentSnapshotUpdate,
+  SegmentUpdate,
   CampaignUpdate,
   MarketingPlanCreate,
   MarketingPlanRow,
@@ -210,6 +231,13 @@ export interface Domain {
   campaign_calendar_event: CollectionService<CampaignCalendarEventRow, CampaignCalendarEventCreate, CampaignCalendarEventUpdate>
   campaign_metric: CollectionService<CampaignMetricRow, CampaignMetricCreate, CampaignMetricUpdate>
   campaign_segment: CollectionService<CampaignSegmentRow, CampaignSegmentCreate, CampaignSegmentUpdate>
+  platform_event: CollectionService<PlatformEventRow, PlatformEventCreate, PlatformEventUpdate>
+  segment: CollectionService<SegmentRow, SegmentCreate, SegmentUpdate>
+  segment_rule: CollectionService<SegmentRuleRow, SegmentRuleCreate, SegmentRuleUpdate>
+  segment_membership: CollectionService<SegmentMembershipRow, SegmentMembershipCreate, SegmentMembershipUpdate>
+  segment_snapshot: CollectionService<SegmentSnapshotRow, SegmentSnapshotCreate, SegmentSnapshotUpdate>
+  segment_snapshot_member: CollectionService<SegmentSnapshotMemberRow, SegmentSnapshotMemberCreate, SegmentSnapshotMemberUpdate>
+  segment_recompute_run: CollectionService<SegmentRecomputeRunRow, SegmentRecomputeRunCreate, SegmentRecomputeRunUpdate>
   task: TaskService
   content: ContentService
   search(a: SearchArgs): Promise<SearchHit[]>

@@ -33,6 +33,18 @@ copy-paste-correct: transcribe the code samples verbatim and follow the gates.
 dependencies). Build order: Collaboration (`app-05`) → Task (`app-01`) → CMS (`app-02`) →
 Campaigns (`app-03`) → Segmentation (`app-04`) → Domain Workflows (`app-06`).
 
+> **Stage B EXECUTION STATUS (authoritative — update this table when a part lands; a phase is
+> DONE only when every part in its list below is executed):**
+>
+> | Phase | Parts executed | Status |
+> |---|---|---|
+> | Collaboration (`app-05`) | 05a–05b | ✅ EXECUTED (reviewed ≥9.2) |
+> | Task (`app-01`) | 01a–01c | ✅ EXECUTED (reviewed ≥9.2) |
+> | CMS (`app-02`) | 02a–02d | ✅ EXECUTED (reviewed 9.2; `ca10b09`) |
+> | Campaigns (`app-03`) | 03a–03c | ✅ EXECUTED (reviewed 9.2; merged `7d4883f`, PR #1) |
+> | Segmentation (`app-04`) | 04a–04d | ✅ EXECUTED (04a hardened; 04b ingestion; 04c recompute+injection-safe compiler 28/28; 04d surfaces/frontend/BI/e2e — all gates green, `slice-e2e: PASS`) — uncommitted, held for review |
+> | Domain Workflows (`app-06`) | none | 🟢 UNBLOCKED (Campaigns + Segmentation complete) — ready to execute |
+
 **Phase 2 — Collaboration is EXPANDED and EXECUTABLE** (bite-sized TDD, committed
 `31cceed`/`09a75a5`; passed adversarial review at 9.31). Execute **in order**:
 1. `2026-07-01-movp-app-05a-collaboration-data.md` — the 5 collab collections (config-first,

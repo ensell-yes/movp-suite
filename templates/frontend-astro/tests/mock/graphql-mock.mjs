@@ -179,6 +179,27 @@ const contentRevisions = [
 const contentApprovals = [{ id: 'ca1', content_item_id: 'ci1', state: 'pending' }]
 const contentEvents = [{ kind: 'content.scheduled', entity_type: 'content_item', entity_id: 'ci1', ref_id: 'cs1', created_at: '2026-07-03T00:00:00Z' }]
 
+// ── Segmentation (Part D) fixtures ──
+const segmentSummaries = [
+  { id: 'seg-1', name: 'Registered-not-onboarded', active: true, mode: 'dynamic', ownerRef: 'owner-1', memberCount: 3, lastRecomputedAt: '2026-07-02T00:00:00Z' },
+]
+const segmentHeader = { id: 'seg-1', name: 'Registered-not-onboarded', active: true, mode: 'dynamic' }
+const segmentMembers = [
+  { subjectRef: 'user-9', subjectType: 'user', matchedRuleId: 'rule-2', evaluatedAt: '2026-07-02T00:00:00Z' },
+  { subjectRef: 'user-8', subjectType: 'user', matchedRuleId: 'rule-2', evaluatedAt: '2026-07-02T00:00:00Z' },
+]
+// Evidence carries NO `properties` field — the surface never exposes raw payloads (PII discipline).
+const membershipExplanation = {
+  subjectRef: 'user-9', matchedRuleId: 'rule-2', matchedRuleVersion: 2,
+  firstMatchedAt: '2026-07-01T00:00:00Z', evaluatedAt: '2026-07-02T00:00:00Z',
+  evidence: [{ eventId: 'ev1', eventType: 'registration.completed', occurredAt: '2026-06-30T00:00:00Z' }],
+}
+const segmentSnapshots = [
+  { id: 'snap-1', takenAt: '2026-07-01T00:00:00Z', reason: 'on_demand', memberCount: 2 },
+  { id: 'snap-2', takenAt: '2026-07-02T00:00:00Z', reason: 'scheduled', memberCount: 3 },
+]
+const snapshotDiff = { added: ['user-8'], removed: [], addedCount: 1, removedCount: 0 }
+
 createServer(async (req, res) => {
   const url = new URL(req.url ?? '/', `http://127.0.0.1:${port}`)
   if (url.pathname === '/health') return json(res, 200, { ok: true })
@@ -325,6 +346,30 @@ createServer(async (req, res) => {
   if (query.includes('query Inbox')) {
     const inbox = scenario === 'empty' ? [] : [{ kind: 'task.assigned', entity_type: 'task', entity_id: 't1', ref_id: 'a1', created_at: '2026-07-01T00:00:00Z' }, ...contentEvents]
     return json(res, 200, { data: { inbox } })
+  }
+  if (query.includes('query SegmentSummaries')) {
+    return json(res, 200, { data: { segmentSummaries: scenario === 'empty' ? [] : segmentSummaries } })
+  }
+  if (query.includes('query SegmentMembers')) {
+    return json(res, 200, { data: { segmentMembers: { items: scenario === 'empty' ? [] : segmentMembers, nextCursor: null } } })
+  }
+  if (query.includes('query MembershipExplanation')) {
+    return json(res, 200, { data: { segmentMembershipExplained: scenario === 'empty' ? null : membershipExplanation } })
+  }
+  if (query.includes('query SegmentSnapshots')) {
+    return json(res, 200, { data: { segmentSnapshots: scenario === 'empty' ? [] : segmentSnapshots } })
+  }
+  if (query.includes('query SnapshotDiff')) {
+    return json(res, 200, { data: { snapshotDiff: snapshotDiff } })
+  }
+  if (query.includes('query PreviewMatchingCount')) {
+    return json(res, 200, { data: { previewMatchingCount: { count: 12 } } })
+  }
+  if (query.includes('mutation CreateSegmentRuleVersion')) {
+    return json(res, 200, { data: { createSegmentRuleVersion: { id: 'rule-2', version: 2 } } })
+  }
+  if (query.includes('query Segment(')) {
+    return json(res, 200, { data: { segment: scenario === 'empty' ? null : segmentHeader } })
   }
   return json(res, 200, { data: {} })
 }).listen(port, '127.0.0.1')

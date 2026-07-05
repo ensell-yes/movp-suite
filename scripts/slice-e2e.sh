@@ -106,7 +106,7 @@ echo "== serve edge functions =="
 FN_ENV_FILE="$(mktemp "${TMPDIR:-/tmp}/movp-functions.XXXXXX")"
 printf 'MOVP_JWT_ISSUER=%s\n' "$API_URL/auth/v1" >"$FN_ENV_FILE"
 printf 'RESEND_API_KEY=%s\n' "slice-e2e-placeholder" >>"$FN_ENV_FILE"
-supabase_local functions serve graphql mcp index-embeddings flows --env-file "$FN_ENV_FILE" >/tmp/movp-functions.log 2>&1 &
+supabase_local functions serve graphql mcp index-embeddings flows ingest --env-file "$FN_ENV_FILE" >/tmp/movp-functions.log 2>&1 &
 FN_PID=$!
 trap 'kill $FN_PID 2>/dev/null || true; rm -f "$FN_ENV_FILE"' EXIT
 GRAPHQL_READY=0
@@ -454,6 +454,128 @@ curl -sS -X PATCH "$API_URL/rest/v1/campaign?id=eq.$CAMP_ID" \
   -d '{"name":"hijacked"}' >/dev/null
 NAME="$(psql "$DB_URL" -tAc "select name from public.campaign where id='$CAMP_ID';" | tr -d '[:space:]')"
 [ "$NAME" = "keep" ] || { echo "non-owner UPDATE mutated the campaign (name=$NAME)"; exit 1; }
+
+
+echo "== [ingest] external ingestion: API-key path (workspace comes from the KEY) =="
+W2ING="44444444-4444-4444-4444-444444444444"
+psql "$DB_URL" -v ON_ERROR_STOP=1 -q -c "insert into public.workspace (id, name) values ('$W2ING','IngestW2') on conflict (id) do nothing;"
+RAWKEY="$(psql "$DB_URL" -tAc "select public.mint_ingest_key('$WS','slice');" | tr -d '[:space:]')"
+[ "${#RAWKEY}" = "48" ] || { echo "mint_ingest_key did not return a 48-char raw key"; exit 1; }
+# 3 valid events: #1 smuggles workspace_id=W2ING (MUST be ignored); #2 omits subject_type (defaults to user).
+ING1="$(curl -sS "$API_URL/functions/v1/ingest" -H "apikey: $ANON_KEY" -H "x-ingest-key: $RAWKEY" \
+  -H 'content-type: application/json' \
+  -d '{"events":[{"event_type":"slice.signup","subject_ref":"ing-u1","occurred_at":"2026-07-01T00:00:00Z","workspace_id":"'"$W2ING"'"},{"event_type":"slice.login","subject_ref":"ing-u2","occurred_at":"2026-07-01T00:01:00Z"},{"event_type":"slice.login","subject_type":"account","subject_ref":"ing-u3","occurred_at":"2026-07-01T00:02:00Z"}]}')"
+[ "$(echo "$ING1" | json_get inserted)" = "3" ] || { echo "api-key ingest failed: $ING1"; exit 1; }
+[ "$(psql "$DB_URL" -tAc "select count(*) from public.platform_event where workspace_id='$WS' and source='external' and subject_ref like 'ing-u%';" | tr -d '[:space:]')" = "3" ] \
+  || { echo "expected 3 external rows in the key's workspace"; exit 1; }
+[ "$(psql "$DB_URL" -tAc "select count(*) from public.platform_event where workspace_id='$W2ING';" | tr -d '[:space:]')" = "0" ] \
+  || { echo "payload workspace_id was NOT ignored (rows landed in W2)"; exit 1; }
+[ "$(psql "$DB_URL" -tAc "select subject_type from public.platform_event where subject_ref='ing-u2';" | tr -d '[:space:]')" = "user" ] \
+  || { echo "missing subject_type did not default to user"; exit 1; }
+
+echo "== [ingest] bounds: malformed + oversized are dropped (never buffered) =="
+ING2="$(node -e 'process.stdout.write(JSON.stringify({events:[{event_type:"slice.ok",subject_ref:"ing-b1",occurred_at:"2026-07-01T00:03:00Z"},{event_type:"bad"},{event_type:"big",subject_ref:"ing-b3",occurred_at:"2026-07-01T00:04:00Z",properties:{blob:"x".repeat(17000)}}]}))' \
+  | curl -sS "$API_URL/functions/v1/ingest" -H "apikey: $ANON_KEY" -H "x-ingest-key: $RAWKEY" -H 'content-type: application/json' -d @-)"
+[ "$(echo "$ING2" | json_get inserted)" = "1" ] || { echo "bounds: expected inserted=1: $ING2"; exit 1; }
+[ "$(echo "$ING2" | json_get dropped)" = "2" ] || { echo "bounds: expected dropped=2 (malformed+oversized): $ING2"; exit 1; }
+
+echo "== [ingest] auth: invalid key 401; ambiguous both-creds 400 =="
+BADKEY="$(curl -sS -o /dev/null -w '%{http_code}' "$API_URL/functions/v1/ingest" -H "apikey: $ANON_KEY" -H "x-ingest-key: not-a-real-key" \
+  -H 'content-type: application/json' -d '{"events":[]}')"
+[ "$BADKEY" = "401" ] || { echo "invalid ingest key not rejected (got $BADKEY)"; exit 1; }
+AMBIG="$(curl -sS -o /dev/null -w '%{http_code}' "$API_URL/functions/v1/ingest" -H "apikey: $ANON_KEY" -H "x-ingest-key: $RAWKEY" \
+  -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' -d '{"events":[]}')"
+[ "$AMBIG" = "400" ] || { echo "ambiguous both-credentials not rejected (got $AMBIG)"; exit 1; }
+
+echo "== [ingest] JWT path: member write lands; non-member workspace 403 =="
+J1="$(curl -sS "$API_URL/functions/v1/ingest" -H "apikey: $ANON_KEY" -H "Authorization: Bearer $TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{"events":[{"event_type":"slice.jwt","subject_ref":"ing-j1","occurred_at":"2026-07-01T00:05:00Z","workspace_id":"'"$WS"'"}]}')"
+[ "$(echo "$J1" | json_get inserted)" = "1" ] || { echo "member JWT ingest failed: $J1"; exit 1; }
+[ "$(psql "$DB_URL" -tAc "select source from public.platform_event where subject_ref='ing-j1';" | tr -d '[:space:]')" = "external" ] \
+  || { echo "JWT-ingested row is not source=external"; exit 1; }
+NM="$(curl -sS -o /dev/null -w '%{http_code}' "$API_URL/functions/v1/ingest" -H "apikey: $ANON_KEY" -H "Authorization: Bearer $TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{"events":[{"event_type":"slice.jwt","subject_ref":"ing-j2","occurred_at":"2026-07-01T00:06:00Z","workspace_id":"'"$W2ING"'"}]}')"
+[ "$NM" = "403" ] || { echo "non-member workspace JWT write not rejected (got $NM)"; exit 1; }
+
+echo "== [segmentation] (a) internal bridge: emit registration.completed -> platform_event (source internal) =="
+SUBJ="$USER_ID"
+# emit_event signature is (ev_type, ws, payload, trace) — NOT (ws, type, ...).
+psql "$DB_URL" -v ON_ERROR_STOP=1 \
+  -c "select public.emit_event('registration.completed','$WS', jsonb_build_object('subject_type','user','subject_ref','$SUBJ','email','pii@example.com'), null::text);"
+BRIDGED="$(psql "$DB_URL" -tAc "select count(*) from public.platform_event where workspace_id='$WS' and event_type='registration.completed' and source='internal' and subject_ref='$SUBJ';" | tr -d '[:space:]')"
+[ "${BRIDGED:-0}" -ge 1 ] || { echo "internal bridge did not land a platform_event (got $BRIDGED)"; exit 1; }
+psql "$DB_URL" -v ON_ERROR_STOP=1 -c "select public.emit_event('some.unbridged.type','$WS', jsonb_build_object('subject_ref','$SUBJ'), null::text);"
+UNBRIDGED="$(psql "$DB_URL" -tAc "select count(*) from public.platform_event where workspace_id='$WS' and event_type='some.unbridged.type';" | tr -d '[:space:]')"
+[ "${UNBRIDGED:-1}" -eq 0 ] || { echo "a non-allow-listed type leaked into platform_event (got $UNBRIDGED)"; exit 1; }
+
+echo "== [segmentation] (b) external ingest: a WS-A key writes A only; a forged WS-B write is rejected =="
+# CTE-wrap so the top-level statement is a SELECT — a bare `insert … returning` also prints the
+# "INSERT 0 1" command tag, which tr -d would glue onto the uuid.
+WS_B="$(psql "$DB_URL" -tAc "with n as (insert into public.workspace (id, name) values (gen_random_uuid(), 'SegWsB') returning id) select id from n;" | tr -d '[:space:]')"
+[ -n "$WS_B" ] || { echo "failed to create WS_B"; exit 1; }
+INGEST_KEY="e2e-ingest-secret-$$"
+# digest lives in the extensions schema; hash must match Part B's ingest_platform_event resolution.
+psql "$DB_URL" -v ON_ERROR_STOP=1 \
+  -c "insert into movp_internal.ingest_key (workspace_id, key_hash, active) values ('$WS', encode(extensions.digest('$INGEST_KEY','sha256'),'hex'), true) on conflict do nothing;"
+# The RPC resolves the workspace from the KEY HASH, so the forged events[].workspace_id (WS_B) is IGNORED.
+EVENTS_JSON="[{\"event_type\":\"product.viewed\",\"subject_type\":\"user\",\"subject_ref\":\"ext-1\",\"occurred_at\":\"$(date -u +%FT%TZ)\",\"workspace_id\":\"$WS_B\"}]"
+psql "$DB_URL" -v ON_ERROR_STOP=1 -c "select public.ingest_platform_event('$INGEST_KEY', \$seg\$$EVENTS_JSON\$seg\$::jsonb);" >/dev/null
+EXT_A="$(psql "$DB_URL" -tAc "select count(*) from public.platform_event where workspace_id='$WS' and source='external' and subject_ref='ext-1';" | tr -d '[:space:]')"
+[ "${EXT_A:-0}" -ge 1 ] || { echo "external ingest did not write to the key's workspace A (got $EXT_A)"; exit 1; }
+EXT_B="$(psql "$DB_URL" -tAc "select count(*) from public.platform_event where workspace_id='$WS_B';" | tr -d '[:space:]')"
+[ "${EXT_B:-1}" -eq 0 ] || { echo "a WS-A key wrote a platform_event into WS-B (forged workspace_id honoured; got $EXT_B)"; exit 1; }
+
+echo "== [segmentation] (c) segment+rule -> recompute -> membership (matched_rule + evidence); re-run idempotent =="
+SEG_ID="44444444-dddd-0000-0000-000000000001"
+RULE_ID="55555555-dddd-0000-0000-000000000001"
+psql "$DB_URL" -v ON_ERROR_STOP=1 \
+  -c "insert into public.segment (id, workspace_id, name, owner_ref, active, mode) values ('$SEG_ID','$WS','E2E Seg','$USER_ID', true, 'dynamic') on conflict (id) do nothing;" \
+  -c "insert into public.segment_rule (id, workspace_id, segment_id, predicate, version, active) values ('$RULE_ID','$WS','$SEG_ID','{\"all\":[{\"event\":\"registration.completed\"}]}'::jsonb, 1, true) on conflict (id) do nothing;"
+psql "$DB_URL" -tAc "select public.recompute_segment('$SEG_ID');" >/dev/null
+MEMBERS="$(psql "$DB_URL" -tAc "select count(*) from public.segment_membership where segment_id='$SEG_ID' and subject_ref='$SUBJ';" | tr -d '[:space:]')"
+[ "${MEMBERS:-0}" -ge 1 ] || { echo "recompute did not admit the registered subject (got $MEMBERS)"; exit 1; }
+MATCHED="$(psql "$DB_URL" -tAc "select count(*) from public.segment_membership where segment_id='$SEG_ID' and subject_ref='$SUBJ' and matched_rule_id='$RULE_ID';" | tr -d '[:space:]')"
+[ "${MATCHED:-0}" -ge 1 ] || { echo "membership row missing matched_rule_id=$RULE_ID"; exit 1; }
+# idempotency: re-run changes 0 rows and emits 0 NEW membership_changed. The segment id is keyed under entity_id.
+CHANGED1="$(psql "$DB_URL" -tAc "select count(*) from movp_internal.movp_events where type='segment.membership_changed' and payload->>'entity_id'='$SEG_ID';" | tr -d '[:space:]')"
+COUNT1="$(psql "$DB_URL" -tAc "select count(*) from public.segment_membership where segment_id='$SEG_ID';" | tr -d '[:space:]')"
+psql "$DB_URL" -tAc "select public.recompute_segment('$SEG_ID');" >/dev/null
+CHANGED2="$(psql "$DB_URL" -tAc "select count(*) from movp_internal.movp_events where type='segment.membership_changed' and payload->>'entity_id'='$SEG_ID';" | tr -d '[:space:]')"
+COUNT2="$(psql "$DB_URL" -tAc "select count(*) from public.segment_membership where segment_id='$SEG_ID';" | tr -d '[:space:]')"
+[ "${COUNT1:-0}" = "${COUNT2:-1}" ] || { echo "re-run changed membership rows ($COUNT1 -> $COUNT2)"; exit 1; }
+[ "${CHANGED1:-0}" = "${CHANGED2:-1}" ] || { echo "re-run emitted new membership_changed events ($CHANGED1 -> $CHANGED2)"; exit 1; }
+
+echo "== [segmentation] (d) snapshot freezes membership; later events do not change the frozen set =="
+psql "$DB_URL" -tAc "select public.take_segment_snapshot('$SEG_ID','on_demand');" >/dev/null
+SNAP_ID="$(psql "$DB_URL" -tAc "select id from public.segment_snapshot where segment_id='$SEG_ID' order by taken_at desc limit 1;" | tr -d '[:space:]')"
+[ -n "$SNAP_ID" ] || { echo "take_segment_snapshot produced no snapshot"; exit 1; }
+FROZEN1="$(psql "$DB_URL" -tAc "select count(*) from public.segment_snapshot_member where snapshot_id='$SNAP_ID';" | tr -d '[:space:]')"
+psql "$DB_URL" -v ON_ERROR_STOP=1 -c "select public.emit_event('registration.completed','$WS', jsonb_build_object('subject_type','user','subject_ref','$USER2_ID'), null::text);"
+psql "$DB_URL" -tAc "select public.recompute_segment('$SEG_ID');" >/dev/null
+FROZEN2="$(psql "$DB_URL" -tAc "select count(*) from public.segment_snapshot_member where snapshot_id='$SNAP_ID';" | tr -d '[:space:]')"
+[ "${FROZEN1:-0}" = "${FROZEN2:-1}" ] || { echo "snapshot member set changed after later events ($FROZEN1 -> $FROZEN2)"; exit 1; }
+
+echo "== [segmentation] (e) RLS: a non-member sees 0 rows on every segmentation collection =="
+curl -sS "$API_URL/auth/v1/admin/users" \
+  -H "Authorization: Bearer $SERVICE_ROLE_KEY" -H "apikey: $SERVICE_ROLE_KEY" \
+  -H "content-type: application/json" \
+  -d '{"email":"e2e-seg-outsider@example.com","password":"Passw0rd!1","email_confirm":true}' >/dev/null
+TOKEN3="$(curl -sS "$API_URL/auth/v1/token?grant_type=password" \
+  -H "apikey: $ANON_KEY" -H "content-type: application/json" \
+  -d '{"email":"e2e-seg-outsider@example.com","password":"Passw0rd!1"}' | json_get access_token)"
+[ -n "$TOKEN3" ] || { echo "failed to mint outsider token"; exit 1; }
+for COLL in segments platform_events segment_memberships segment_snapshots; do
+  OUT="$(post_graphql_as "$TOKEN3" "{\"query\":\"query{${COLL}(workspaceId:\\\"$WS\\\"){items{id}}}\"}")"
+  echo "$OUT" | grep -q "$SEG_ID" && { echo "non-member saw a row on $COLL: $OUT"; exit 1; }
+done
+IK="$(curl -sS "$API_URL/rest/v1/ingest_key?select=key_hash" -H "Authorization: Bearer $TOKEN2" -H "apikey: $ANON_KEY")"
+echo "$IK" | grep -q 'key_hash' && { echo "ingest_key was readable by an authenticated user: $IK"; exit 1; }
+
+echo "== [segmentation] (f) redaction: segmentation events carry field names not PII values =="
+LEAK="$(psql "$DB_URL" -tAc "select count(*) from movp_internal.movp_events where type like 'segment.%' and payload::text like '%pii@example.com%';" | tr -d '[:space:]')"
+[ "${LEAK:-1}" -eq 0 ] || { echo "a segment.* event leaked a PII property value (found $LEAK)"; exit 1; }
 
 echo "== [8] internal not exposed via PostgREST API =="
 REST="$(curl -sS -o /dev/null -w '%{http_code}' "$API_URL/rest/v1/movp_jobs" -H "apikey: $ANON_KEY")"

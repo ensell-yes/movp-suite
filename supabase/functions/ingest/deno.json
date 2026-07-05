@@ -1,0 +1,8 @@
+{
+  "imports": {
+    "@movp/auth": "../../../packages/auth/src/index.ts",
+    "@movp/obs": "../../../packages/obs/src/index.ts",
+    "@supabase/supabase-js": "npm:@supabase/supabase-js@2",
+    "jose": "npm:jose@5"
+  }
+}

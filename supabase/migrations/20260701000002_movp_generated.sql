@@ -2355,3 +2355,434 @@ on conflict (collection_name, name) do update set
   reporting_role = excluded.reporting_role,
   searchable = excluded.searchable,
   embeddable = excluded.embeddable;
+
+
+create table if not exists public.platform_event (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id uuid not null references public.workspace(id) on delete cascade,
+  event_type text not null,
+  subject_type text not null,
+  subject_ref text not null,
+  actor_ref text,
+  source text not null check (source in ('internal', 'external')),
+  properties jsonb,
+  occurred_at timestamptz not null,
+  ingested_at timestamptz not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+alter table public.platform_event enable row level security;
+grant select, insert, update, delete on public.platform_event to authenticated;
+grant select, insert, update, delete on public.platform_event to service_role;
+create policy platform_event_rw on public.platform_event for all to authenticated
+  using (public.is_workspace_member(workspace_id))
+  with check (public.is_workspace_member(workspace_id));
+
+
+
+create or replace function public.platform_event_delete_chunks()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  delete from public.search_chunk where source_table = 'platform_event' and source_id = old.id;
+  return old;
+end;
+$$;
+revoke all on function public.platform_event_delete_chunks() from public, anon, authenticated;
+
+create trigger platform_event_delete_chunks_tg
+  after delete on public.platform_event
+  for each row execute function public.platform_event_delete_chunks();
+
+insert into public.movp_collections (name, label, label_plural, workspace_scoped)
+values ('platform_event', 'Platform Event', 'Platform Events', true)
+on conflict (name) do update set label = excluded.label, label_plural = excluded.label_plural, workspace_scoped = excluded.workspace_scoped;
+
+insert into public.movp_fields (collection_name, name, type, label, cardinality, reporting_role, searchable, embeddable)
+values
+  ('platform_event', 'event_type', 'text', 'Event Type', null, 'dimension', false, false),
+  ('platform_event', 'subject_type', 'text', 'Subject Type', null, 'dimension', false, false),
+  ('platform_event', 'subject_ref', 'text', 'Subject Ref', null, null, false, false),
+  ('platform_event', 'actor_ref', 'text', 'Actor Ref', null, null, false, false),
+  ('platform_event', 'source', 'enum', 'Source', null, 'dimension', false, false),
+  ('platform_event', 'properties', 'json', 'Properties', null, null, false, false),
+  ('platform_event', 'occurred_at', 'datetime', 'Occurred At', null, 'dimension', false, false),
+  ('platform_event', 'ingested_at', 'datetime', 'Ingested At', null, null, false, false)
+on conflict (collection_name, name) do update set
+  type = excluded.type,
+  label = excluded.label,
+  cardinality = excluded.cardinality,
+  reporting_role = excluded.reporting_role,
+  searchable = excluded.searchable,
+  embeddable = excluded.embeddable;
+
+
+create table if not exists public.segment (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id uuid not null references public.workspace(id) on delete cascade,
+  name text not null,
+  description text,
+  owner_ref text,
+  active boolean,
+  mode text check (mode in ('dynamic', 'static')),
+  search_vector tsvector,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+alter table public.segment enable row level security;
+grant select, insert, update, delete on public.segment to authenticated;
+grant select, insert, update, delete on public.segment to service_role;
+create policy segment_rw on public.segment for all to authenticated
+  using (public.is_workspace_member(workspace_id))
+  with check (public.is_workspace_member(workspace_id));
+
+create or replace function public.segment_search_vector_update()
+returns trigger
+language plpgsql
+as $$
+begin
+  new.search_vector := to_tsvector('english', coalesce(new.name, '') || ' ' || coalesce(new.description, ''));
+  return new;
+end;
+$$;
+
+create trigger segment_search_vector_tg
+  before insert or update on public.segment
+  for each row execute function public.segment_search_vector_update();
+
+create index segment_search_idx on public.segment using gin (search_vector);
+
+
+create or replace function public.segment_delete_chunks()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  delete from public.search_chunk where source_table = 'segment' and source_id = old.id;
+  return old;
+end;
+$$;
+revoke all on function public.segment_delete_chunks() from public, anon, authenticated;
+
+create trigger segment_delete_chunks_tg
+  after delete on public.segment
+  for each row execute function public.segment_delete_chunks();
+
+insert into public.movp_collections (name, label, label_plural, workspace_scoped)
+values ('segment', 'Segment', 'Segments', true)
+on conflict (name) do update set label = excluded.label, label_plural = excluded.label_plural, workspace_scoped = excluded.workspace_scoped;
+
+insert into public.movp_fields (collection_name, name, type, label, cardinality, reporting_role, searchable, embeddable)
+values
+  ('segment', 'name', 'text', 'Name', null, null, true, false),
+  ('segment', 'description', 'richText', 'Description', null, null, true, false),
+  ('segment', 'owner_ref', 'text', 'Owner Ref', null, null, false, false),
+  ('segment', 'active', 'boolean', 'Active', null, 'dimension', false, false),
+  ('segment', 'mode', 'enum', 'Mode', null, 'dimension', false, false)
+on conflict (collection_name, name) do update set
+  type = excluded.type,
+  label = excluded.label,
+  cardinality = excluded.cardinality,
+  reporting_role = excluded.reporting_role,
+  searchable = excluded.searchable,
+  embeddable = excluded.embeddable;
+
+
+create table if not exists public.segment_rule (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id uuid not null references public.workspace(id) on delete cascade,
+  predicate jsonb,
+  version numeric,
+  active boolean,
+  description text,
+  segment_id uuid not null references public.segment(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+alter table public.segment_rule enable row level security;
+grant select, insert, update, delete on public.segment_rule to authenticated;
+grant select, insert, update, delete on public.segment_rule to service_role;
+create policy segment_rule_rw on public.segment_rule for all to authenticated
+  using (public.is_workspace_member(workspace_id))
+  with check (public.is_workspace_member(workspace_id));
+
+
+
+create or replace function public.segment_rule_delete_chunks()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  delete from public.search_chunk where source_table = 'segment_rule' and source_id = old.id;
+  return old;
+end;
+$$;
+revoke all on function public.segment_rule_delete_chunks() from public, anon, authenticated;
+
+create trigger segment_rule_delete_chunks_tg
+  after delete on public.segment_rule
+  for each row execute function public.segment_rule_delete_chunks();
+
+insert into public.movp_collections (name, label, label_plural, workspace_scoped)
+values ('segment_rule', 'Segment Rule', 'Segment Rules', true)
+on conflict (name) do update set label = excluded.label, label_plural = excluded.label_plural, workspace_scoped = excluded.workspace_scoped;
+
+insert into public.movp_fields (collection_name, name, type, label, cardinality, reporting_role, searchable, embeddable)
+values
+  ('segment_rule', 'segment', 'relation', 'Segment', 'many-to-one', null, false, false),
+  ('segment_rule', 'predicate', 'json', 'Predicate', null, null, false, false),
+  ('segment_rule', 'version', 'number', 'Version', null, null, false, false),
+  ('segment_rule', 'active', 'boolean', 'Active', null, 'dimension', false, false),
+  ('segment_rule', 'description', 'text', 'Description', null, null, false, false)
+on conflict (collection_name, name) do update set
+  type = excluded.type,
+  label = excluded.label,
+  cardinality = excluded.cardinality,
+  reporting_role = excluded.reporting_role,
+  searchable = excluded.searchable,
+  embeddable = excluded.embeddable;
+
+
+create table if not exists public.segment_membership (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id uuid not null references public.workspace(id) on delete cascade,
+  subject_type text,
+  subject_ref text not null,
+  first_matched_at timestamptz,
+  evaluated_at timestamptz,
+  evidence jsonb,
+  segment_id uuid not null references public.segment(id) on delete cascade,
+  matched_rule_id uuid references public.segment_rule(id) on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+alter table public.segment_membership enable row level security;
+grant select, insert, update, delete on public.segment_membership to authenticated;
+grant select, insert, update, delete on public.segment_membership to service_role;
+create policy segment_membership_rw on public.segment_membership for all to authenticated
+  using (public.is_workspace_member(workspace_id))
+  with check (public.is_workspace_member(workspace_id));
+
+
+
+create or replace function public.segment_membership_delete_chunks()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  delete from public.search_chunk where source_table = 'segment_membership' and source_id = old.id;
+  return old;
+end;
+$$;
+revoke all on function public.segment_membership_delete_chunks() from public, anon, authenticated;
+
+create trigger segment_membership_delete_chunks_tg
+  after delete on public.segment_membership
+  for each row execute function public.segment_membership_delete_chunks();
+
+insert into public.movp_collections (name, label, label_plural, workspace_scoped)
+values ('segment_membership', 'Segment Membership', 'Segment Memberships', true)
+on conflict (name) do update set label = excluded.label, label_plural = excluded.label_plural, workspace_scoped = excluded.workspace_scoped;
+
+insert into public.movp_fields (collection_name, name, type, label, cardinality, reporting_role, searchable, embeddable)
+values
+  ('segment_membership', 'segment', 'relation', 'Segment', 'many-to-one', null, false, false),
+  ('segment_membership', 'subject_type', 'text', 'Subject Type', null, 'dimension', false, false),
+  ('segment_membership', 'subject_ref', 'text', 'Subject Ref', null, null, false, false),
+  ('segment_membership', 'matched_rule', 'relation', 'Matched Rule', 'many-to-one', null, false, false),
+  ('segment_membership', 'first_matched_at', 'datetime', 'First Matched At', null, null, false, false),
+  ('segment_membership', 'evaluated_at', 'datetime', 'Evaluated At', null, null, false, false),
+  ('segment_membership', 'evidence', 'json', 'Evidence', null, null, false, false)
+on conflict (collection_name, name) do update set
+  type = excluded.type,
+  label = excluded.label,
+  cardinality = excluded.cardinality,
+  reporting_role = excluded.reporting_role,
+  searchable = excluded.searchable,
+  embeddable = excluded.embeddable;
+
+
+create table if not exists public.segment_snapshot (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id uuid not null references public.workspace(id) on delete cascade,
+  taken_at timestamptz,
+  reason text check (reason in ('on_demand', 'scheduled', 'campaign_launch')),
+  rule_version_set jsonb,
+  member_count numeric,
+  segment_id uuid not null references public.segment(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+alter table public.segment_snapshot enable row level security;
+grant select, insert, update, delete on public.segment_snapshot to authenticated;
+grant select, insert, update, delete on public.segment_snapshot to service_role;
+create policy segment_snapshot_rw on public.segment_snapshot for all to authenticated
+  using (public.is_workspace_member(workspace_id))
+  with check (public.is_workspace_member(workspace_id));
+
+
+
+create or replace function public.segment_snapshot_delete_chunks()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  delete from public.search_chunk where source_table = 'segment_snapshot' and source_id = old.id;
+  return old;
+end;
+$$;
+revoke all on function public.segment_snapshot_delete_chunks() from public, anon, authenticated;
+
+create trigger segment_snapshot_delete_chunks_tg
+  after delete on public.segment_snapshot
+  for each row execute function public.segment_snapshot_delete_chunks();
+
+insert into public.movp_collections (name, label, label_plural, workspace_scoped)
+values ('segment_snapshot', 'Segment Snapshot', 'Segment Snapshots', true)
+on conflict (name) do update set label = excluded.label, label_plural = excluded.label_plural, workspace_scoped = excluded.workspace_scoped;
+
+insert into public.movp_fields (collection_name, name, type, label, cardinality, reporting_role, searchable, embeddable)
+values
+  ('segment_snapshot', 'segment', 'relation', 'Segment', 'many-to-one', null, false, false),
+  ('segment_snapshot', 'taken_at', 'datetime', 'Taken At', null, null, false, false),
+  ('segment_snapshot', 'reason', 'enum', 'Reason', null, 'dimension', false, false),
+  ('segment_snapshot', 'rule_version_set', 'json', 'Rule Version Set', null, null, false, false),
+  ('segment_snapshot', 'member_count', 'number', 'Member Count', null, 'measure', false, false)
+on conflict (collection_name, name) do update set
+  type = excluded.type,
+  label = excluded.label,
+  cardinality = excluded.cardinality,
+  reporting_role = excluded.reporting_role,
+  searchable = excluded.searchable,
+  embeddable = excluded.embeddable;
+
+
+create table if not exists public.segment_snapshot_member (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id uuid not null references public.workspace(id) on delete cascade,
+  subject_ref text not null,
+  evidence jsonb,
+  snapshot_id uuid not null references public.segment_snapshot(id) on delete cascade,
+  matched_rule_id uuid references public.segment_rule(id) on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+alter table public.segment_snapshot_member enable row level security;
+grant select, insert, update, delete on public.segment_snapshot_member to authenticated;
+grant select, insert, update, delete on public.segment_snapshot_member to service_role;
+create policy segment_snapshot_member_rw on public.segment_snapshot_member for all to authenticated
+  using (public.is_workspace_member(workspace_id))
+  with check (public.is_workspace_member(workspace_id));
+
+
+
+create or replace function public.segment_snapshot_member_delete_chunks()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  delete from public.search_chunk where source_table = 'segment_snapshot_member' and source_id = old.id;
+  return old;
+end;
+$$;
+revoke all on function public.segment_snapshot_member_delete_chunks() from public, anon, authenticated;
+
+create trigger segment_snapshot_member_delete_chunks_tg
+  after delete on public.segment_snapshot_member
+  for each row execute function public.segment_snapshot_member_delete_chunks();
+
+insert into public.movp_collections (name, label, label_plural, workspace_scoped)
+values ('segment_snapshot_member', 'Segment Snapshot Member', 'Segment Snapshot Members', true)
+on conflict (name) do update set label = excluded.label, label_plural = excluded.label_plural, workspace_scoped = excluded.workspace_scoped;
+
+insert into public.movp_fields (collection_name, name, type, label, cardinality, reporting_role, searchable, embeddable)
+values
+  ('segment_snapshot_member', 'snapshot', 'relation', 'Snapshot', 'many-to-one', null, false, false),
+  ('segment_snapshot_member', 'subject_ref', 'text', 'Subject Ref', null, null, false, false),
+  ('segment_snapshot_member', 'matched_rule', 'relation', 'Matched Rule', 'many-to-one', null, false, false),
+  ('segment_snapshot_member', 'evidence', 'json', 'Evidence', null, null, false, false)
+on conflict (collection_name, name) do update set
+  type = excluded.type,
+  label = excluded.label,
+  cardinality = excluded.cardinality,
+  reporting_role = excluded.reporting_role,
+  searchable = excluded.searchable,
+  embeddable = excluded.embeddable;
+
+
+create table if not exists public.segment_recompute_run (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id uuid not null references public.workspace(id) on delete cascade,
+  mode text,
+  started_at timestamptz,
+  finished_at timestamptz,
+  added_count numeric,
+  removed_count numeric,
+  evaluated_count numeric,
+  idempotency_key text,
+  outcome_code text,
+  segment_id uuid not null references public.segment(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+alter table public.segment_recompute_run enable row level security;
+grant select, insert, update, delete on public.segment_recompute_run to authenticated;
+grant select, insert, update, delete on public.segment_recompute_run to service_role;
+create policy segment_recompute_run_rw on public.segment_recompute_run for all to authenticated
+  using (public.is_workspace_member(workspace_id))
+  with check (public.is_workspace_member(workspace_id));
+
+
+
+create or replace function public.segment_recompute_run_delete_chunks()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  delete from public.search_chunk where source_table = 'segment_recompute_run' and source_id = old.id;
+  return old;
+end;
+$$;
+revoke all on function public.segment_recompute_run_delete_chunks() from public, anon, authenticated;
+
+create trigger segment_recompute_run_delete_chunks_tg
+  after delete on public.segment_recompute_run
+  for each row execute function public.segment_recompute_run_delete_chunks();
+
+insert into public.movp_collections (name, label, label_plural, workspace_scoped)
+values ('segment_recompute_run', 'Segment Recompute Run', 'Segment Recompute Runs', true)
+on conflict (name) do update set label = excluded.label, label_plural = excluded.label_plural, workspace_scoped = excluded.workspace_scoped;
+
+insert into public.movp_fields (collection_name, name, type, label, cardinality, reporting_role, searchable, embeddable)
+values
+  ('segment_recompute_run', 'segment', 'relation', 'Segment', 'many-to-one', null, false, false),
+  ('segment_recompute_run', 'mode', 'text', 'Mode', null, 'dimension', false, false),
+  ('segment_recompute_run', 'started_at', 'datetime', 'Started At', null, null, false, false),
+  ('segment_recompute_run', 'finished_at', 'datetime', 'Finished At', null, null, false, false),
+  ('segment_recompute_run', 'added_count', 'number', 'Added Count', null, 'measure', false, false),
+  ('segment_recompute_run', 'removed_count', 'number', 'Removed Count', null, 'measure', false, false),
+  ('segment_recompute_run', 'evaluated_count', 'number', 'Evaluated Count', null, 'measure', false, false),
+  ('segment_recompute_run', 'idempotency_key', 'text', 'Idempotency Key', null, null, false, false),
+  ('segment_recompute_run', 'outcome_code', 'text', 'Outcome Code', null, null, false, false)
+on conflict (collection_name, name) do update set
+  type = excluded.type,
+  label = excluded.label,
+  cardinality = excluded.cardinality,
+  reporting_role = excluded.reporting_role,
+  searchable = excluded.searchable,
+  embeddable = excluded.embeddable;

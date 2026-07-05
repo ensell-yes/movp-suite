@@ -1,0 +1,37 @@
+---
+import Base from '../../../layouts/Base.astro'
+import AuthFailure from '../../../components/states/AuthFailure.astro'
+import ErrorRetry from '../../../components/states/ErrorRetry.astro'
+import { readServerEnv } from '../../../lib/env.ts'
+import { getSessionToken } from '../../../lib/session.ts'
+import { gqlRequest } from '../../../lib/graphql.ts'
+import { SEGMENT_GET_QUERY, type SegmentHeader } from '../../../lib/segment-queries.ts'
+import RuleBuilder from '../../../components/segments/RuleBuilder.tsx'
+
+const id = String(Astro.params.id)
+const token = getSessionToken(Astro.cookies)
+let state: 'auth' | 'error' | 'ok' = 'auth'
+let segment: SegmentHeader | null = null
+
+if (token) {
+  const { graphqlEndpoint } = readServerEnv()
+  const r = await gqlRequest<{ segment: SegmentHeader | null }>(
+    { endpoint: graphqlEndpoint, token },
+    SEGMENT_GET_QUERY,
+    { id },
+  )
+  if (!r.ok) state = 'error'
+  else { segment = r.data.segment; state = 'ok' }
+}
+---
+<Base title="Segment rules">
+  <h1 tabindex="-1">Rules — {segment?.name ?? id}</h1>
+  {state === 'auth' && <AuthFailure resource="segment" />}
+  {state === 'error' && <ErrorRetry message="Could not load segment." retryHref={Astro.url.pathname} />}
+  {state === 'ok' && (
+    <section data-testid="rule-builder">
+      <p><a href={`/segments/${id}/members`}>Members</a> · <a href={`/segments/${id}/snapshots`}>Snapshots</a></p>
+      <RuleBuilder client:load segmentId={id} />
+    </section>
+  )}
+</Base>
