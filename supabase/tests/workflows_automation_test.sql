@@ -1,11 +1,46 @@
 begin;
-select plan(7);
+select plan(16);
 
 insert into public.workspace (id, name) values
   ('11111111-1111-1111-1111-111111111111', 'W1'),
   ('22222222-2222-2222-2222-222222222222', 'W2');
 insert into public.workspace_membership (workspace_id, user_id, role) values
   ('11111111-1111-1111-1111-111111111111', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'owner');
+
+select is((select count(*)::int from public.automation_rule where workspace_id='11111111-1111-1111-1111-111111111111'),
+          3, 'workspace insert seeds three disabled workflow rule templates');
+select is((select count(*)::int
+             from public.automation_rule ar
+             join public.event_type et on et.id = ar.trigger_event_type_id
+            where ar.workspace_id='11111111-1111-1111-1111-111111111111'
+              and not ar.enabled
+              and (
+                (et.key='deliverable.due_soon' and ar.action_type='create_task')
+                or (et.key='content.approved' and ar.action_type='advance_deliverable')
+                or (et.key='segment.membership_changed' and ar.action_type='recompute_segment')
+              )),
+          3, 'default workflow templates are disabled and bind to canonical event/action pairs');
+
+select throws_ok(
+  $$insert into public.automation_rule (workspace_id, trigger_event_type_id, condition, action_type, action_config)
+    values ('11111111-1111-1111-1111-111111111111', (select id from public.event_type where key='task.completed'), '{}'::jsonb, 'bogus', '{}'::jsonb)$$,
+  '23514', NULL,
+  'unknown action types are rejected by the enum check');
+select throws_ok(
+  $$insert into public.automation_rule (workspace_id, trigger_event_type_id, condition, action_type, action_config)
+    values ('11111111-1111-1111-1111-111111111111', 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee', '{}'::jsonb, 'notify', '{}'::jsonb)$$,
+  '23503', NULL,
+  'unknown event type ids are rejected by the FK');
+select throws_ok(
+  $$insert into public.automation_rule (workspace_id, trigger_event_type_id, condition, action_type, action_config)
+    values ('11111111-1111-1111-1111-111111111111', (select id from public.event_type where key='task.completed'), '[]'::jsonb, 'notify', '{}'::jsonb)$$,
+  '23514', NULL,
+  'condition must be a JSON object');
+select throws_ok(
+  $$insert into public.automation_rule (workspace_id, trigger_event_type_id, condition, action_type, action_config)
+    values ('11111111-1111-1111-1111-111111111111', (select id from public.event_type where key='task.completed'), '{}'::jsonb, 'notify', '[]'::jsonb)$$,
+  '23514', NULL,
+  'action_config must be a JSON object');
 
 delete from movp_internal.movp_jobs;
 delete from movp_internal.movp_events;
@@ -55,5 +90,38 @@ select is(
                    '11111111-1111-1111-1111-111111111111'),
   null,
   'non-member gets null');
+
+reset role;
+select is((select count(*)::int
+             from pg_proc p
+             join pg_namespace n on n.oid = p.pronamespace
+            where n.nspname = 'public'
+              and p.proname = 'create_workflow_task_with_revision'),
+          1,
+          'workflow-specific task create RPC exists without overloading create_task_with_revision');
+select throws_ok(
+  $$select public.create_workflow_task_with_revision(
+    '11111111-1111-1111-1111-111111111111',
+    'Task',
+    null,
+    null,
+    null,
+    null,
+    null,
+    'Body',
+    null,
+    'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+  )$$,
+  '23514', NULL,
+  'workflow task RPC requires an idempotency key');
+select ok(
+  exists (
+    select 1
+      from pg_indexes
+     where schemaname='public'
+       and tablename='task'
+       and indexname='task_workflow_idempotency_key_unique'
+  ),
+  'workflow-created tasks have a unique idempotency index');
 
 rollback;

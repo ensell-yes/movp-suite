@@ -44,6 +44,57 @@ create unique index if not exists task_workflow_idempotency_key_unique
   on public.task (workspace_id, workflow_idempotency_key)
   where workflow_idempotency_key is not null;
 
+alter table public.automation_rule
+  add constraint automation_rule_condition_object
+  check (jsonb_typeof(condition) = 'object');
+
+alter table public.automation_rule
+  add constraint automation_rule_action_config_object
+  check (jsonb_typeof(action_config) = 'object');
+
+create or replace function public.seed_workflow_default_rules()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  insert into public.automation_rule
+    (workspace_id, trigger_event_type_id, condition, action_type, action_config, enabled, priority)
+  select
+    new.id,
+    et.id,
+    '{}'::jsonb,
+    seed.action_type,
+    seed.action_config,
+    false,
+    seed.priority
+  from (values
+    ('deliverable.due_soon', 'create_task', '{"title":"Follow up deliverable"}'::jsonb, 100),
+    ('content.approved', 'advance_deliverable', '{"deliverableId":"$event.deliverable_id"}'::jsonb, 110),
+    ('segment.membership_changed', 'recompute_segment', '{"segmentId":"$event.entity_id"}'::jsonb, 120)
+  ) as seed(event_key, action_type, action_config, priority)
+  join public.event_type et on et.key = seed.event_key
+  where not exists (
+    select 1
+      from public.automation_rule ar
+     where ar.workspace_id = new.id
+       and ar.trigger_event_type_id = et.id
+       and ar.action_type = seed.action_type
+       and ar.action_config = seed.action_config
+  );
+
+  return new;
+end;
+$$;
+
+revoke all on function public.seed_workflow_default_rules() from public, anon, authenticated;
+
+drop trigger if exists workspace_seed_workflow_rules_tg on public.workspace;
+create trigger workspace_seed_workflow_rules_tg
+  after insert on public.workspace
+  for each row execute function public.seed_workflow_default_rules();
+
 create or replace function public.create_workflow_task_with_revision(
   ws uuid,
   p_title text,
