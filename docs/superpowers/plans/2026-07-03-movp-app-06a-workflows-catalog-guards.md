@@ -258,7 +258,10 @@ Expected: generated migration contains all four tables, `event_type` has no `wor
 **Gate**
 
 ```sh
-pnpm codegen && ! rg -n "create policy event_type_rw|event_type.*workspace_id|public.is_workspace_member\\(workspace_id\\)" supabase/migrations/20260701000002_movp_generated.sql && git diff --check packages/domain/src/generated/types.ts supabase/migrations/20260701000002_movp_generated.sql
+pnpm codegen
+sed -n '/create table if not exists public.event_type /,/insert into public.movp_collections/p' supabase/migrations/20260701000002_movp_generated.sql > /tmp/movp_event_type_block.sql
+! rg -n "event_type_rw|workspace_id|public.is_workspace_member\\(workspace_id\\)" /tmp/movp_event_type_block.sql
+git diff --check packages/domain/src/generated/types.ts supabase/migrations/20260701000002_movp_generated.sql
 ```
 
 Expected: the negative `rg` prints no event_type policy/workspace hits; `git diff --check` reports no whitespace/conflict-marker errors in the generated files.
