@@ -42,6 +42,16 @@ export interface CollectionDef {
   fields: Record<string, FieldDef>
 }
 
+export interface EventDef {
+  key: string
+  domain: 'collaboration' | 'task' | 'cms' | 'campaign' | 'segmentation' | 'lifecycle' | 'workflow'
+  payloadSchema: Record<string, unknown>
+  version: number
+  label?: string
+  description?: string
+}
+
 export interface MovpSchema {
   collections: CollectionDef[]
+  events: EventDef[]
 }

@@ -1,13 +1,14 @@
 export type {
   Cardinality,
   CollectionDef,
+  EventDef,
   FieldDef,
   FieldType,
   MovpSchema,
   ReportingRole,
 } from './types.ts'
 export { f, type FieldOptions } from './builders.ts'
-export { defineCollection, defineSchema } from './define.ts'
+export { defineCollection, defineEvent, defineSchema } from './define.ts'
 export { asset } from './collections/asset.ts'
 export { campaign } from './collections/campaign.ts'
 export { campaignCalendarEvent } from './collections/campaign_calendar_event.ts'
