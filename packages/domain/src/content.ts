@@ -220,10 +220,10 @@ export function makeContentService(ctx: DomainCtx): ContentService {
         p_content_hash: prepared.hash,
         p_search_text: prepared.searchText,
         p_search_body: prepared.searchBody,
+        p_expected_revision_id: input.expectedRevisionId ?? null,
       }
-      if (input.expectedRevisionId) args.p_expected_revision_id = input.expectedRevisionId
       const { data, error } = await ctx.db.rpc('update_content', args)
-      if (error) fail('update', error.code)
+      if (error) fail('update', error.message?.includes('content_update_conflict') ? 'content_update_conflict' : error.code)
       return data as ContentItemRow
     },
 

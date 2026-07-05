@@ -7,6 +7,7 @@ import { readServerEnv } from '../../lib/env.ts'
 import { getSessionToken } from '../../lib/session.ts'
 import { gqlRequest } from '../../lib/graphql.ts'
 import { TASK_BOARD_QUERY, type TaskBoardColumn } from '../../lib/task-queries.ts'
+import TaskBoardColumns from '../../components/TaskBoardColumns.astro'
 
 const token = getSessionToken(Astro.cookies)
 let state: 'auth' | 'error' | 'empty' | 'ok' = 'auth'
@@ -28,18 +29,5 @@ if (token) {
   {state === 'auth' && <AuthFailure resource="task board" />}
   {state === 'error' && <ErrorRetry message="Could not load the task board." retryHref={Astro.url.pathname} />}
   {state === 'empty' && <EmptyState message="No task statuses yet." />}
-  {state === 'ok' && (
-    <section data-testid="task-board" class="board" aria-label="Task board columns">
-      {columns.map((col) => (
-        <section class="board-column" aria-labelledby={`status-${col.status.id}`}>
-          <h2 id={`status-${col.status.id}`}>{col.status.label}</h2>
-          {col.tasks.length === 0 ? <p>No tasks</p> : (
-            <ul>
-              {col.tasks.map((task) => <li><a href={`/tasks/${task.id}`}>{task.title}</a></li>)}
-            </ul>
-          )}
-        </section>
-      ))}
-    </section>
-  )}
+  {state === 'ok' && <TaskBoardColumns columns={columns} />}
 </Base>

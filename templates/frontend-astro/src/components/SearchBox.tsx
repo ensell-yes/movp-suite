@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { SearchHit } from '../lib/graphql.ts'
 
 type View =
@@ -11,6 +11,11 @@ type View =
 export default function SearchBox() {
   const [q, setQ] = useState('')
   const [view, setView] = useState<View>({ kind: 'idle' })
+  const [hydrated, setHydrated] = useState(false)
+
+  useEffect(() => {
+    setHydrated(true)
+  }, [])
 
   async function run(query: string) {
     if (!query.trim()) return
@@ -30,7 +35,7 @@ export default function SearchBox() {
   }
 
   return (
-    <div>
+    <div data-testid="search-box" data-ready={hydrated ? 'true' : 'false'}>
       <form
         onSubmit={(e) => {
           e.preventDefault()

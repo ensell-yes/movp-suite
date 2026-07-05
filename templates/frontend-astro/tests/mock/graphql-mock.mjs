@@ -1,11 +1,30 @@
 import { createServer } from 'node:http'
 
 const port = Number(process.argv[2] ?? 4322)
-let scenario = 'ok'
+let fallbackScenario = 'ok'
+const scenarios = new Map()
+const counts = new Map()
 
 function json(res, status, body) {
   res.writeHead(status, { 'content-type': 'application/json' })
   res.end(JSON.stringify(body))
+}
+
+function scenarioFor(req) {
+  const auth = String(req.headers.authorization ?? '')
+  const match = auth.match(/^Bearer\s+(.+)$/i)
+  return match ? scenarios.get(match[1]) ?? fallbackScenario : fallbackScenario
+}
+
+function tokenFor(req) {
+  const auth = String(req.headers.authorization ?? '')
+  return auth.match(/^Bearer\s+(.+)$/i)?.[1] ?? 'fallback'
+}
+
+function bump(token, key) {
+  const current = counts.get(token) ?? {}
+  current[key] = (current[key] ?? 0) + 1
+  counts.set(token, current)
 }
 
 const notes = [
@@ -41,9 +60,89 @@ const tasks = [
     dependency_blocked: false,
     completed_at: null,
   },
+  {
+    id: 'task-1',
+    title: 'Campaign launch task',
+    status_id: 's1',
+    priority_id: 'p1',
+    parent_id: null,
+    description: 'Backs the launch email deliverable',
+    due_date: '2026-07-10',
+    dependency_blocked: false,
+    completed_at: null,
+  },
+  {
+    id: 'task-2',
+    title: 'Unlinked task',
+    status_id: 's1',
+    priority_id: 'p1',
+    parent_id: null,
+    description: 'Should not appear on the campaign board',
+    due_date: '2026-07-12',
+    dependency_blocked: false,
+    completed_at: null,
+  },
 ]
 const statuses = [{ id: 's1', label: 'Todo', category: 'backlog', sort_order: 0 }]
 const comments = [{ id: 'c1', body: 'Looks good', author_id: 'u2', created_at: '2026-07-01T00:00:00Z' }]
+const campaigns = [
+  {
+    id: 'camp-1',
+    name: 'Launch campaign',
+    status: 'active',
+    priority: 'high',
+    rank: '1',
+    start_date: '2026-07-01',
+    end_date: '2026-07-31',
+  },
+  {
+    id: 'camp-2',
+    name: 'Planning campaign',
+    status: 'scheduled',
+    priority: 'low',
+    rank: '2',
+    start_date: '2026-06-15',
+    end_date: '2026-06-30',
+  },
+  {
+    id: 'camp-3',
+    name: 'Wrap-up campaign',
+    status: 'completed',
+    priority: 'urgent',
+    rank: '3',
+    start_date: '2026-08-01',
+    end_date: '2026-08-15',
+  },
+  {
+    id: 'camp-4',
+    name: 'Cancelled campaign',
+    status: 'cancelled',
+    priority: 'medium',
+    rank: '4',
+    start_date: '2026-09-01',
+    end_date: '2026-09-15',
+  },
+]
+const campaignDeliverables = [{ id: 'd1', name: 'Launch email' }]
+const campaignSchedules = [{ deliverableId: 'd1', taskId: 'task-1', startDate: '2026-07-03', dueDate: '2026-07-10' }]
+const campaignCalendarEvents = [{ id: 'cal-1', title: 'Launch day', event_date: '2026-07-08', event_type: 'launch' }]
+const campaignDetail = {
+  id: 'camp-1',
+  name: 'Launch campaign',
+  brief: 'Launch the summer campaign across owned and paid channels.',
+  status: 'active',
+  priority: 'high',
+  rank: '1',
+  startDate: '2026-07-01',
+  endDate: '2026-07-31',
+  ownerId: 'owner-1',
+  marketingPlanId: 'plan-1',
+  goalMetrics: [{ metricKey: 'clicks', targetValue: '100', unit: 'count' }],
+  actuals: [{ metricKey: 'clicks', total: 40 }],
+  deliverables: [{ id: 'd1', name: 'Launch email', taskId: 'task-1' }],
+  channels: [{ id: 'ch1', channelType: 'email', name: 'Email' }],
+  stakeholders: { ownerId: 'owner-1', observerIds: [] },
+}
 const contentTypes = [
   {
     id: 'ct1',
@@ -84,10 +183,24 @@ createServer(async (req, res) => {
   const url = new URL(req.url ?? '/', `http://127.0.0.1:${port}`)
   if (url.pathname === '/health') return json(res, 200, { ok: true })
   if (url.pathname === '/scenario') {
-    scenario = url.searchParams.get('name') ?? 'ok'
-    return json(res, 200, { scenario })
+    const next = url.searchParams.get('name') ?? 'ok'
+    const token = url.searchParams.get('token')
+    if (token) {
+      scenarios.set(token, next)
+      counts.set(token, {})
+    } else {
+      fallbackScenario = next
+      counts.set('fallback', {})
+    }
+    return json(res, 200, { scenario: next })
+  }
+  if (url.pathname === '/counts') {
+    const token = url.searchParams.get('token') ?? 'fallback'
+    return json(res, 200, counts.get(token) ?? {})
   }
   if (url.pathname !== '/graphql') return json(res, 404, { error: 'not_found' })
+  const scenario = scenarioFor(req)
+  const token = tokenFor(req)
   if (scenario === 'auth') return json(res, 401, { error: 'auth_error' })
   if (scenario === 'error') return json(res, 200, { errors: [{ message: 'seeded' }] })
 
@@ -111,6 +224,25 @@ createServer(async (req, res) => {
             { collection: 'content_item', id: 'ci1', title: 'Launch article', snippet: 'Draft body', score: 0.89 },
           ]
     return json(res, 200, { data: { search: hits } })
+  }
+  if (query.includes('query Campaigns')) {
+    return json(res, 200, { data: { campaigns: { items: scenario === 'empty' ? [] : campaigns, nextCursor: null } } })
+  }
+  if (query.includes('query CampaignDetail')) {
+    return json(res, 200, { data: { campaignDetail: scenario === 'empty' ? null : campaignDetail } })
+  }
+  if (query.includes('query CampaignComments')) {
+    return json(res, 200, { data: { comments: scenario === 'empty' ? [] : [{ ...comments[0], body: 'Campaign note' }] } })
+  }
+  if (query.includes('query Deliverables')) {
+    return json(res, 200, { data: { campaign_deliverables: { items: scenario === 'empty' ? [] : campaignDeliverables, nextCursor: null } } })
+  }
+  if (query.includes('query DeliverableSchedules')) {
+    bump(token, 'DeliverableSchedules')
+    return json(res, 200, { data: { deliverableSchedules: scenario === 'empty' ? [] : campaignSchedules } })
+  }
+  if (query.includes('query CalendarEvents')) {
+    return json(res, 200, { data: { campaign_calendar_events: { items: scenario === 'empty' ? [] : campaignCalendarEvents, nextCursor: null } } })
   }
   if (query.includes('query ContentTypes')) {
     return json(res, 200, { data: { contentTypes: scenario === 'empty' ? [] : contentTypes } })

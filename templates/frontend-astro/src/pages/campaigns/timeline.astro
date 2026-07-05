@@ -1,0 +1,119 @@
+---
+import Base from '../../layouts/Base.astro'
+import AuthFailure from '../../components/states/AuthFailure.astro'
+import ErrorRetry from '../../components/states/ErrorRetry.astro'
+import EmptyState from '../../components/states/EmptyState.astro'
+import { readServerEnv } from '../../lib/env.ts'
+import { getSessionToken } from '../../lib/session.ts'
+import { gqlRequest } from '../../lib/graphql.ts'
+import {
+  CALENDAR_EVENTS_QUERY,
+  DELIVERABLE_SCHEDULES_QUERY,
+  DELIVERABLES_QUERY,
+  type CampaignCalendarEventPage,
+  type CampaignDeliverablePage,
+  type CampaignDeliverableSchedule,
+} from '../../lib/campaign-queries.ts'
+
+const token = getSessionToken(Astro.cookies)
+let state: 'auth' | 'error' | 'empty' | 'ok' = 'auth'
+let deliverables: CampaignDeliverablePage['items'] = []
+let schedules: CampaignDeliverableSchedule[] = []
+let events: CampaignCalendarEventPage['items'] = []
+
+if (token) {
+  const { graphqlEndpoint, workspaceId } = readServerEnv()
+  const [deliverablesRes, eventsRes] = await Promise.all([
+    gqlRequest<{ campaign_deliverables: CampaignDeliverablePage }>(
+      { endpoint: graphqlEndpoint, token },
+      DELIVERABLES_QUERY,
+      { workspaceId, first: 100 },
+    ),
+    gqlRequest<{ campaign_calendar_events: CampaignCalendarEventPage }>(
+      { endpoint: graphqlEndpoint, token },
+      CALENDAR_EVENTS_QUERY,
+      { workspaceId, first: 100 },
+    ),
+  ])
+
+  if (
+    (!deliverablesRes.ok && deliverablesRes.code === 'auth_error') ||
+    (!eventsRes.ok && eventsRes.code === 'auth_error')
+  ) state = 'auth'
+  else if (!deliverablesRes.ok || !eventsRes.ok) state = 'error'
+  else {
+    deliverables = deliverablesRes.data.campaign_deliverables.items
+    events = eventsRes.data.campaign_calendar_events.items
+    const deliverableIds = deliverables.map((deliverable) => deliverable.id)
+    if (deliverableIds.length > 0) {
+      const schedulesRes = await gqlRequest<{ deliverableSchedules: CampaignDeliverableSchedule[] }>(
+        { endpoint: graphqlEndpoint, token },
+        DELIVERABLE_SCHEDULES_QUERY,
+        { deliverableIds },
+      )
+      if (!schedulesRes.ok && schedulesRes.code === 'auth_error') state = 'auth'
+      else if (!schedulesRes.ok) state = 'error'
+      else {
+        schedules = schedulesRes.data.deliverableSchedules
+        state = deliverables.length === 0 && events.length === 0 ? 'empty' : 'ok'
+      }
+    } else {
+      state = events.length === 0 ? 'empty' : 'ok'
+    }
+  }
+}
+
+const schedulesByDeliverable = new Map(schedules.map((schedule) => [schedule.deliverableId, schedule]))
+const scheduled = deliverables.filter((deliverable) => schedulesByDeliverable.has(deliverable.id))
+const unscheduled = deliverables.filter((deliverable) => !schedulesByDeliverable.has(deliverable.id))
+---
+<Base title="Campaign Timeline">
+  <h1 tabindex="-1" id="campaign-timeline-heading">Campaign Timeline</h1>
+  <p><a href="/campaigns">Campaigns</a> <a href="/campaigns/calendar">Calendar</a></p>
+  {state === 'auth' && <AuthFailure resource="campaign timeline" />}
+  {state === 'error' && <ErrorRetry message="Could not load campaign timeline." retryHref={Astro.url.pathname} />}
+  {state === 'empty' && <EmptyState message="No dated campaign work yet." />}
+  {state === 'ok' && (
+    <section aria-labelledby="timeline-heading" data-testid="campaign-timeline">
+      <h2 id="timeline-heading">Timeline</h2>
+      {scheduled.length === 0 ? <p>No scheduled deliverables.</p> : (
+        <ul aria-label="Scheduled deliverables">
+          {scheduled.map((deliverable) => {
+            const schedule = schedulesByDeliverable.get(deliverable.id)
+            return (
+              <li>
+                <strong>{deliverable.name ?? deliverable.id}</strong>
+                <div role="img" aria-label={`${deliverable.name ?? deliverable.id} spans ${schedule?.startDate ?? 'unscheduled'} to ${schedule?.dueDate ?? 'unscheduled'}`}>
+                  <span>[{schedule?.startDate ?? 'unscheduled'} to {schedule?.dueDate ?? 'unscheduled'}]</span>
+                </div>
+                {schedule?.taskId && <small>Task {schedule.taskId}</small>}
+              </li>
+            )
+          })}
+        </ul>
+      )}
+
+      {unscheduled.length > 0 && (
+        <section aria-labelledby="unscheduled-heading">
+          <h3 id="unscheduled-heading">Unscheduled</h3>
+          <ul>{unscheduled.map((deliverable) => <li>{deliverable.name ?? deliverable.id}</li>)}</ul>
+        </section>
+      )}
+
+      <section aria-labelledby="milestones-heading">
+        <h3 id="milestones-heading">Milestones</h3>
+        {events.length === 0 ? <p>No milestones.</p> : (
+          <ul>
+            {events.map((event) => (
+              <li>
+                <strong>{event.title ?? event.id}</strong>
+                <span> {event.event_date ?? 'undated'}</span>
+                <small> {event.event_type ?? ''}</small>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+    </section>
+  )}
+</Base>

@@ -1,0 +1,130 @@
+---
+import Base from '../../layouts/Base.astro'
+import AuthFailure from '../../components/states/AuthFailure.astro'
+import ErrorRetry from '../../components/states/ErrorRetry.astro'
+import EmptyState from '../../components/states/EmptyState.astro'
+import { readServerEnv } from '../../lib/env.ts'
+import { getSessionToken } from '../../lib/session.ts'
+import { clampFirst, gqlRequest } from '../../lib/graphql.ts'
+import { CAMPAIGNS_QUERY, type CampaignPage } from '../../lib/campaign-queries.ts'
+
+const token = getSessionToken(Astro.cookies)
+let state: 'auth' | 'error' | 'empty' | 'ok' = 'auth'
+let campaigns: CampaignPage['items'] = []
+
+const PRIORITY_ORDER: Record<string, number> = { low: 0, medium: 1, high: 2, urgent: 3 }
+const STATUS_ORDER: Record<string, number> = { draft: 0, scheduled: 1, active: 2, completed: 3, cancelled: 4 }
+
+function rankValue(rank: string | null): number {
+  const parsed = Number.parseFloat(rank ?? '')
+  return Number.isFinite(parsed) ? parsed : Number.POSITIVE_INFINITY
+}
+
+function orderedValue(value: string | null, order: Record<string, number>): number {
+  const key = (value ?? '').toLowerCase()
+  return order[key] ?? Number.POSITIVE_INFINITY
+}
+
+if (token) {
+  const { graphqlEndpoint, workspaceId } = readServerEnv()
+  const first = clampFirst(Number(Astro.url.searchParams.get('first') ?? '') || undefined)
+  const r = await gqlRequest<{ campaigns: CampaignPage }>({ endpoint: graphqlEndpoint, token }, CAMPAIGNS_QUERY, { workspaceId, first })
+  if (!r.ok && r.code === 'auth_error') state = 'auth'
+  else if (!r.ok) state = 'error'
+  else {
+    campaigns = [...r.data.campaigns.items].sort((a, b) => rankValue(a.rank) - rankValue(b.rank))
+    state = campaigns.length === 0 ? 'empty' : 'ok'
+  }
+}
+---
+<Base title="Campaigns">
+  <h1 tabindex="-1" id="campaigns-heading">Campaigns</h1>
+  <p><a href="/campaigns/timeline">Timeline</a> <a href="/campaigns/calendar">Calendar</a></p>
+  {state === 'auth' && <AuthFailure resource="campaigns" />}
+  {state === 'error' && <ErrorRetry message="Could not load campaigns." retryHref={Astro.url.pathname + Astro.url.search} />}
+  {state === 'empty' && <EmptyState message="No campaigns yet." />}
+  {state === 'ok' && (
+    <section aria-labelledby="campaigns-list-heading">
+      <h2 id="campaigns-list-heading">Prioritization</h2>
+      <div role="group" aria-label="Campaign sort controls">
+        <button type="button" data-sort-key="rank" aria-pressed="true">Sort by rank</button>
+        <button type="button" data-sort-key="priority" aria-pressed="false">Sort by priority</button>
+        <button type="button" data-sort-key="status" aria-pressed="false">Sort by status</button>
+        <button type="button" data-sort-key="start" aria-pressed="false">Sort by start date</button>
+      </div>
+      <table data-testid="campaigns-list">
+        <caption>Campaign prioritization list</caption>
+        <thead>
+          <tr>
+            <th scope="col" data-sort-heading="name">Campaign</th>
+            <th scope="col" data-sort-heading="rank" aria-sort="ascending">Rank</th>
+            <th scope="col" data-sort-heading="priority">Priority</th>
+            <th scope="col" data-sort-heading="status">Status</th>
+            <th scope="col" data-sort-heading="start">Window</th>
+          </tr>
+        </thead>
+        <tbody data-campaign-rows>
+          {campaigns.map((campaign) => (
+            <tr
+              data-rank={campaign.rank ?? ''}
+              data-priority={campaign.priority ?? ''}
+              data-priority-order={String(orderedValue(campaign.priority, PRIORITY_ORDER))}
+              data-status={campaign.status ?? ''}
+              data-status-order={String(orderedValue(campaign.status, STATUS_ORDER))}
+              data-start={campaign.start_date ?? ''}
+            >
+              <th scope="row"><a href={`/campaigns/${campaign.id}`}>{campaign.name ?? campaign.id}</a></th>
+              <td>{campaign.rank ?? ''}</td>
+              <td>{campaign.priority ?? ''}</td>
+              <td>{campaign.status ?? ''}</td>
+              <td>{[campaign.start_date, campaign.end_date].filter(Boolean).join(' to ')}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </section>
+  )}
+  <script>
+    const tbody = document.querySelector('[data-campaign-rows]')
+    const buttons = Array.from(document.querySelectorAll<HTMLButtonElement>('[data-sort-key]'))
+    const headings = Array.from(document.querySelectorAll<HTMLElement>('[data-sort-heading]'))
+
+    function valueFor(row: HTMLTableRowElement, key: string): string | number {
+      if (key === 'rank') {
+        const parsed = Number.parseFloat(row.dataset.rank ?? '')
+        return Number.isFinite(parsed) ? parsed : Number.POSITIVE_INFINITY
+      }
+      if (key === 'priority') {
+        const parsed = Number.parseFloat(row.dataset.priorityOrder ?? '')
+        return Number.isFinite(parsed) ? parsed : Number.POSITIVE_INFINITY
+      }
+      if (key === 'status') {
+        const parsed = Number.parseFloat(row.dataset.statusOrder ?? '')
+        return Number.isFinite(parsed) ? parsed : Number.POSITIVE_INFINITY
+      }
+      return row.dataset[key] ?? ''
+    }
+
+    function applySort(key: string) {
+      if (!tbody) return
+      const rows = Array.from(tbody.querySelectorAll<HTMLTableRowElement>('tr'))
+      rows.sort((a, b) => {
+        const av = valueFor(a, key)
+        const bv = valueFor(b, key)
+        return typeof av === 'number' && typeof bv === 'number'
+          ? av - bv
+          : String(av).localeCompare(String(bv))
+      })
+      rows.forEach((row) => tbody.append(row))
+      buttons.forEach((button) => button.setAttribute('aria-pressed', String(button.dataset.sortKey === key)))
+      headings.forEach((heading) => {
+        if (heading.dataset.sortHeading === key) heading.setAttribute('aria-sort', 'ascending')
+        else heading.removeAttribute('aria-sort')
+      })
+    }
+
+    buttons.forEach((button) => {
+      button.addEventListener('click', () => applySort(button.dataset.sortKey ?? 'rank'))
+    })
+  </script>
+</Base>

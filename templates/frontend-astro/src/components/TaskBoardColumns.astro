@@ -1,0 +1,28 @@
+---
+import type { TaskBoardColumn } from '../lib/task-queries.ts'
+
+interface Props {
+  columns: TaskBoardColumn[]
+  taskIds?: string[]
+}
+
+const { columns, taskIds } = Astro.props
+const allowedTaskIds = taskIds ? new Set(taskIds) : null
+const filteredColumns = columns.map((col) => ({
+  ...col,
+  tasks: allowedTaskIds ? col.tasks.filter((task) => allowedTaskIds.has(task.id)) : col.tasks,
+}))
+---
+
+<section data-testid="task-board" class="board" aria-label="Task board columns">
+  {filteredColumns.map((col) => (
+    <section class="board-column" aria-labelledby={`status-${col.status.id}`}>
+      <h2 id={`status-${col.status.id}`}>{col.status.label}</h2>
+      {col.tasks.length === 0 ? <p>No tasks</p> : (
+        <ul>
+          {col.tasks.map((task) => <li><a href={`/tasks/${task.id}`}>{task.title}</a></li>)}
+        </ul>
+      )}
+    </section>
+  ))}
+</section>

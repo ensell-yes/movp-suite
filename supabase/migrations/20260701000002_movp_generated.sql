@@ -1856,3 +1856,502 @@ on conflict (collection_name, name) do update set
   reporting_role = excluded.reporting_role,
   searchable = excluded.searchable,
   embeddable = excluded.embeddable;
+
+
+create table if not exists public.marketing_plan (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id uuid not null references public.workspace(id) on delete cascade,
+  name text not null,
+  description text,
+  period_start date,
+  period_end date,
+  goals jsonb,
+  owner_id uuid,
+  status text not null default 'draft' check (status in ('draft', 'active', 'archived')),
+  search_vector tsvector,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+alter table public.marketing_plan enable row level security;
+grant select, insert, update, delete on public.marketing_plan to authenticated;
+grant select, insert, update, delete on public.marketing_plan to service_role;
+create policy marketing_plan_rw on public.marketing_plan for all to authenticated
+  using (public.is_workspace_member(workspace_id))
+  with check (public.is_workspace_member(workspace_id));
+
+create or replace function public.marketing_plan_search_vector_update()
+returns trigger
+language plpgsql
+as $$
+begin
+  new.search_vector := to_tsvector('english', coalesce(new.name, '') || ' ' || coalesce(new.description, ''));
+  return new;
+end;
+$$;
+
+create trigger marketing_plan_search_vector_tg
+  before insert or update on public.marketing_plan
+  for each row execute function public.marketing_plan_search_vector_update();
+
+create index marketing_plan_search_idx on public.marketing_plan using gin (search_vector);
+
+
+create or replace function public.marketing_plan_delete_chunks()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  delete from public.search_chunk where source_table = 'marketing_plan' and source_id = old.id;
+  return old;
+end;
+$$;
+revoke all on function public.marketing_plan_delete_chunks() from public, anon, authenticated;
+
+create trigger marketing_plan_delete_chunks_tg
+  after delete on public.marketing_plan
+  for each row execute function public.marketing_plan_delete_chunks();
+
+insert into public.movp_collections (name, label, label_plural, workspace_scoped)
+values ('marketing_plan', 'Marketing Plan', 'Marketing Plans', true)
+on conflict (name) do update set label = excluded.label, label_plural = excluded.label_plural, workspace_scoped = excluded.workspace_scoped;
+
+insert into public.movp_fields (collection_name, name, type, label, cardinality, reporting_role, searchable, embeddable)
+values
+  ('marketing_plan', 'name', 'text', 'Name', null, null, true, false),
+  ('marketing_plan', 'description', 'richText', 'Description', null, null, true, false),
+  ('marketing_plan', 'period_start', 'date', 'Period Start', null, 'dimension', false, false),
+  ('marketing_plan', 'period_end', 'date', 'Period End', null, 'dimension', false, false),
+  ('marketing_plan', 'goals', 'json', 'Goals', null, null, false, false),
+  ('marketing_plan', 'owner_id', 'uuid', 'Owner', null, null, false, false),
+  ('marketing_plan', 'status', 'enum', 'Status', null, 'dimension', false, false)
+on conflict (collection_name, name) do update set
+  type = excluded.type,
+  label = excluded.label,
+  cardinality = excluded.cardinality,
+  reporting_role = excluded.reporting_role,
+  searchable = excluded.searchable,
+  embeddable = excluded.embeddable;
+
+
+create table if not exists public.campaign (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id uuid not null references public.workspace(id) on delete cascade,
+  name text not null,
+  brief text,
+  start_date date,
+  end_date date,
+  owner_id uuid,
+  goal_metrics jsonb,
+  priority text not null default 'medium' check (priority in ('low', 'medium', 'high', 'urgent')),
+  rank numeric,
+  status text not null default 'draft' check (status in ('draft', 'scheduled', 'active', 'completed', 'cancelled')),
+  marketing_plan_id uuid references public.marketing_plan(id) on delete set null,
+  search_vector tsvector,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+alter table public.campaign enable row level security;
+grant select, insert, update, delete on public.campaign to authenticated;
+grant select, insert, update, delete on public.campaign to service_role;
+create policy campaign_rw on public.campaign for all to authenticated
+  using (public.is_workspace_member(workspace_id))
+  with check (public.is_workspace_member(workspace_id));
+
+create or replace function public.campaign_search_vector_update()
+returns trigger
+language plpgsql
+as $$
+begin
+  new.search_vector := to_tsvector('english', coalesce(new.name, '') || ' ' || coalesce(new.brief, ''));
+  return new;
+end;
+$$;
+
+create trigger campaign_search_vector_tg
+  before insert or update on public.campaign
+  for each row execute function public.campaign_search_vector_update();
+
+create index campaign_search_idx on public.campaign using gin (search_vector);
+
+create or replace function public.campaign_brief_enqueue_embed()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_hash text;
+begin
+  v_hash := encode(extensions.digest(coalesce(new.brief, ''), 'sha256'), 'hex');
+  if tg_op = 'UPDATE' and v_hash = encode(extensions.digest(coalesce(old.brief, ''), 'sha256'), 'hex') then
+    return new;
+  end if;
+
+  insert into movp_internal.movp_jobs (kind, idempotency_key, payload, workspace_id)
+  values (
+    'embed',
+    'campaign' || ':' || new.id::text || ':brief:' || v_hash,
+    jsonb_build_object('source_table', 'campaign', 'source_id', new.id, 'field', 'brief', 'content_hash', v_hash),
+    new.workspace_id
+  )
+  on conflict (kind, idempotency_key) do nothing;
+  return new;
+end;
+$$;
+revoke all on function public.campaign_brief_enqueue_embed() from public, anon, authenticated;
+
+create trigger campaign_brief_enqueue_embed_tg
+  after insert or update on public.campaign
+  for each row execute function public.campaign_brief_enqueue_embed();
+
+create or replace function public.campaign_delete_chunks()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  delete from public.search_chunk where source_table = 'campaign' and source_id = old.id;
+  return old;
+end;
+$$;
+revoke all on function public.campaign_delete_chunks() from public, anon, authenticated;
+
+create trigger campaign_delete_chunks_tg
+  after delete on public.campaign
+  for each row execute function public.campaign_delete_chunks();
+
+insert into public.movp_collections (name, label, label_plural, workspace_scoped)
+values ('campaign', 'Campaign', 'Campaigns', true)
+on conflict (name) do update set label = excluded.label, label_plural = excluded.label_plural, workspace_scoped = excluded.workspace_scoped;
+
+insert into public.movp_fields (collection_name, name, type, label, cardinality, reporting_role, searchable, embeddable)
+values
+  ('campaign', 'marketing_plan', 'relation', 'Marketing Plan', 'many-to-one', null, false, false),
+  ('campaign', 'name', 'text', 'Name', null, null, true, false),
+  ('campaign', 'brief', 'richText', 'Brief', null, null, true, true),
+  ('campaign', 'start_date', 'date', 'Start Date', null, 'dimension', false, false),
+  ('campaign', 'end_date', 'date', 'End Date', null, 'dimension', false, false),
+  ('campaign', 'owner_id', 'uuid', 'Owner', null, null, false, false),
+  ('campaign', 'goal_metrics', 'json', 'Goal Metrics', null, null, false, false),
+  ('campaign', 'priority', 'enum', 'Priority', null, 'dimension', false, false),
+  ('campaign', 'rank', 'number', 'Rank', null, 'dimension', false, false),
+  ('campaign', 'status', 'enum', 'Status', null, 'dimension', false, false)
+on conflict (collection_name, name) do update set
+  type = excluded.type,
+  label = excluded.label,
+  cardinality = excluded.cardinality,
+  reporting_role = excluded.reporting_role,
+  searchable = excluded.searchable,
+  embeddable = excluded.embeddable;
+
+
+create table if not exists public.campaign_channel (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id uuid not null references public.workspace(id) on delete cascade,
+  channel_type text check (channel_type in ('email', 'social', 'web', 'paid', 'event', 'sms', 'other')),
+  name text,
+  campaign_id uuid not null references public.campaign(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+alter table public.campaign_channel enable row level security;
+grant select, insert, update, delete on public.campaign_channel to authenticated;
+grant select, insert, update, delete on public.campaign_channel to service_role;
+create policy campaign_channel_rw on public.campaign_channel for all to authenticated
+  using (public.is_workspace_member(workspace_id))
+  with check (public.is_workspace_member(workspace_id));
+
+
+
+create or replace function public.campaign_channel_delete_chunks()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  delete from public.search_chunk where source_table = 'campaign_channel' and source_id = old.id;
+  return old;
+end;
+$$;
+revoke all on function public.campaign_channel_delete_chunks() from public, anon, authenticated;
+
+create trigger campaign_channel_delete_chunks_tg
+  after delete on public.campaign_channel
+  for each row execute function public.campaign_channel_delete_chunks();
+
+insert into public.movp_collections (name, label, label_plural, workspace_scoped)
+values ('campaign_channel', 'Campaign Channel', 'Campaign Channels', true)
+on conflict (name) do update set label = excluded.label, label_plural = excluded.label_plural, workspace_scoped = excluded.workspace_scoped;
+
+insert into public.movp_fields (collection_name, name, type, label, cardinality, reporting_role, searchable, embeddable)
+values
+  ('campaign_channel', 'campaign', 'relation', 'Campaign', 'many-to-one', null, false, false),
+  ('campaign_channel', 'channel_type', 'enum', 'Channel Type', null, 'dimension', false, false),
+  ('campaign_channel', 'name', 'text', 'Name', null, null, false, false)
+on conflict (collection_name, name) do update set
+  type = excluded.type,
+  label = excluded.label,
+  cardinality = excluded.cardinality,
+  reporting_role = excluded.reporting_role,
+  searchable = excluded.searchable,
+  embeddable = excluded.embeddable;
+
+
+create table if not exists public.campaign_deliverable (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id uuid not null references public.workspace(id) on delete cascade,
+  name text not null,
+  deliverable_type text check (deliverable_type in ('asset', 'post', 'email', 'landing_page', 'ad', 'event')),
+  campaign_id uuid not null references public.campaign(id) on delete cascade,
+  channel_id uuid references public.campaign_channel(id) on delete set null,
+  search_vector tsvector,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+alter table public.campaign_deliverable enable row level security;
+grant select, insert, update, delete on public.campaign_deliverable to authenticated;
+grant select, insert, update, delete on public.campaign_deliverable to service_role;
+create policy campaign_deliverable_rw on public.campaign_deliverable for all to authenticated
+  using (public.is_workspace_member(workspace_id))
+  with check (public.is_workspace_member(workspace_id));
+
+create or replace function public.campaign_deliverable_search_vector_update()
+returns trigger
+language plpgsql
+as $$
+begin
+  new.search_vector := to_tsvector('english', coalesce(new.name, ''));
+  return new;
+end;
+$$;
+
+create trigger campaign_deliverable_search_vector_tg
+  before insert or update on public.campaign_deliverable
+  for each row execute function public.campaign_deliverable_search_vector_update();
+
+create index campaign_deliverable_search_idx on public.campaign_deliverable using gin (search_vector);
+
+
+create or replace function public.campaign_deliverable_delete_chunks()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  delete from public.search_chunk where source_table = 'campaign_deliverable' and source_id = old.id;
+  return old;
+end;
+$$;
+revoke all on function public.campaign_deliverable_delete_chunks() from public, anon, authenticated;
+
+create trigger campaign_deliverable_delete_chunks_tg
+  after delete on public.campaign_deliverable
+  for each row execute function public.campaign_deliverable_delete_chunks();
+
+insert into public.movp_collections (name, label, label_plural, workspace_scoped)
+values ('campaign_deliverable', 'Campaign Deliverable', 'Campaign Deliverables', true)
+on conflict (name) do update set label = excluded.label, label_plural = excluded.label_plural, workspace_scoped = excluded.workspace_scoped;
+
+insert into public.movp_fields (collection_name, name, type, label, cardinality, reporting_role, searchable, embeddable)
+values
+  ('campaign_deliverable', 'campaign', 'relation', 'Campaign', 'many-to-one', null, false, false),
+  ('campaign_deliverable', 'channel', 'relation', 'Channel', 'many-to-one', null, false, false),
+  ('campaign_deliverable', 'name', 'text', 'Name', null, null, true, false),
+  ('campaign_deliverable', 'deliverable_type', 'enum', 'Deliverable Type', null, 'dimension', false, false)
+on conflict (collection_name, name) do update set
+  type = excluded.type,
+  label = excluded.label,
+  cardinality = excluded.cardinality,
+  reporting_role = excluded.reporting_role,
+  searchable = excluded.searchable,
+  embeddable = excluded.embeddable;
+
+
+create table if not exists public.campaign_calendar_event (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id uuid not null references public.workspace(id) on delete cascade,
+  title text not null,
+  event_date date not null,
+  event_type text check (event_type in ('milestone', 'launch', 'review', 'deadline')),
+  campaign_id uuid not null references public.campaign(id) on delete cascade,
+  search_vector tsvector,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+alter table public.campaign_calendar_event enable row level security;
+grant select, insert, update, delete on public.campaign_calendar_event to authenticated;
+grant select, insert, update, delete on public.campaign_calendar_event to service_role;
+create policy campaign_calendar_event_rw on public.campaign_calendar_event for all to authenticated
+  using (public.is_workspace_member(workspace_id))
+  with check (public.is_workspace_member(workspace_id));
+
+create or replace function public.campaign_calendar_event_search_vector_update()
+returns trigger
+language plpgsql
+as $$
+begin
+  new.search_vector := to_tsvector('english', coalesce(new.title, ''));
+  return new;
+end;
+$$;
+
+create trigger campaign_calendar_event_search_vector_tg
+  before insert or update on public.campaign_calendar_event
+  for each row execute function public.campaign_calendar_event_search_vector_update();
+
+create index campaign_calendar_event_search_idx on public.campaign_calendar_event using gin (search_vector);
+
+
+create or replace function public.campaign_calendar_event_delete_chunks()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  delete from public.search_chunk where source_table = 'campaign_calendar_event' and source_id = old.id;
+  return old;
+end;
+$$;
+revoke all on function public.campaign_calendar_event_delete_chunks() from public, anon, authenticated;
+
+create trigger campaign_calendar_event_delete_chunks_tg
+  after delete on public.campaign_calendar_event
+  for each row execute function public.campaign_calendar_event_delete_chunks();
+
+insert into public.movp_collections (name, label, label_plural, workspace_scoped)
+values ('campaign_calendar_event', 'Campaign Calendar Event', 'Campaign Calendar Events', true)
+on conflict (name) do update set label = excluded.label, label_plural = excluded.label_plural, workspace_scoped = excluded.workspace_scoped;
+
+insert into public.movp_fields (collection_name, name, type, label, cardinality, reporting_role, searchable, embeddable)
+values
+  ('campaign_calendar_event', 'campaign', 'relation', 'Campaign', 'many-to-one', null, false, false),
+  ('campaign_calendar_event', 'title', 'text', 'Title', null, null, true, false),
+  ('campaign_calendar_event', 'event_date', 'date', 'Event Date', null, 'dimension', false, false),
+  ('campaign_calendar_event', 'event_type', 'enum', 'Event Type', null, 'dimension', false, false)
+on conflict (collection_name, name) do update set
+  type = excluded.type,
+  label = excluded.label,
+  cardinality = excluded.cardinality,
+  reporting_role = excluded.reporting_role,
+  searchable = excluded.searchable,
+  embeddable = excluded.embeddable;
+
+
+create table if not exists public.campaign_metric (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id uuid not null references public.workspace(id) on delete cascade,
+  metric_key text,
+  value numeric,
+  unit text,
+  measured_at date,
+  campaign_id uuid not null references public.campaign(id) on delete cascade,
+  deliverable_id uuid references public.campaign_deliverable(id) on delete set null,
+  channel_id uuid references public.campaign_channel(id) on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+alter table public.campaign_metric enable row level security;
+grant select, insert, update, delete on public.campaign_metric to authenticated;
+grant select, insert, update, delete on public.campaign_metric to service_role;
+create policy campaign_metric_rw on public.campaign_metric for all to authenticated
+  using (public.is_workspace_member(workspace_id))
+  with check (public.is_workspace_member(workspace_id));
+
+
+
+create or replace function public.campaign_metric_delete_chunks()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  delete from public.search_chunk where source_table = 'campaign_metric' and source_id = old.id;
+  return old;
+end;
+$$;
+revoke all on function public.campaign_metric_delete_chunks() from public, anon, authenticated;
+
+create trigger campaign_metric_delete_chunks_tg
+  after delete on public.campaign_metric
+  for each row execute function public.campaign_metric_delete_chunks();
+
+insert into public.movp_collections (name, label, label_plural, workspace_scoped)
+values ('campaign_metric', 'Campaign Metric', 'Campaign Metrics', true)
+on conflict (name) do update set label = excluded.label, label_plural = excluded.label_plural, workspace_scoped = excluded.workspace_scoped;
+
+insert into public.movp_fields (collection_name, name, type, label, cardinality, reporting_role, searchable, embeddable)
+values
+  ('campaign_metric', 'campaign', 'relation', 'Campaign', 'many-to-one', null, false, false),
+  ('campaign_metric', 'deliverable', 'relation', 'Deliverable', 'many-to-one', null, false, false),
+  ('campaign_metric', 'channel', 'relation', 'Channel', 'many-to-one', null, false, false),
+  ('campaign_metric', 'metric_key', 'text', 'Metric Key', null, 'dimension', false, false),
+  ('campaign_metric', 'value', 'number', 'Value', null, 'measure', false, false),
+  ('campaign_metric', 'unit', 'text', 'Unit', null, 'dimension', false, false),
+  ('campaign_metric', 'measured_at', 'date', 'Measured At', null, 'dimension', false, false)
+on conflict (collection_name, name) do update set
+  type = excluded.type,
+  label = excluded.label,
+  cardinality = excluded.cardinality,
+  reporting_role = excluded.reporting_role,
+  searchable = excluded.searchable,
+  embeddable = excluded.embeddable;
+
+
+create table if not exists public.campaign_segment (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id uuid not null references public.workspace(id) on delete cascade,
+  targeting_role text not null default 'primary' check (targeting_role in ('primary', 'lookalike', 'exclusion')),
+  weight numeric,
+  campaign_id uuid not null references public.campaign(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+alter table public.campaign_segment enable row level security;
+grant select, insert, update, delete on public.campaign_segment to authenticated;
+grant select, insert, update, delete on public.campaign_segment to service_role;
+create policy campaign_segment_rw on public.campaign_segment for all to authenticated
+  using (public.is_workspace_member(workspace_id))
+  with check (public.is_workspace_member(workspace_id));
+
+
+
+create or replace function public.campaign_segment_delete_chunks()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  delete from public.search_chunk where source_table = 'campaign_segment' and source_id = old.id;
+  return old;
+end;
+$$;
+revoke all on function public.campaign_segment_delete_chunks() from public, anon, authenticated;
+
+create trigger campaign_segment_delete_chunks_tg
+  after delete on public.campaign_segment
+  for each row execute function public.campaign_segment_delete_chunks();
+
+insert into public.movp_collections (name, label, label_plural, workspace_scoped)
+values ('campaign_segment', 'Campaign Segment', 'Campaign Segments', true)
+on conflict (name) do update set label = excluded.label, label_plural = excluded.label_plural, workspace_scoped = excluded.workspace_scoped;
+
+insert into public.movp_fields (collection_name, name, type, label, cardinality, reporting_role, searchable, embeddable)
+values
+  ('campaign_segment', 'campaign', 'relation', 'Campaign', 'many-to-one', null, false, false),
+  ('campaign_segment', 'targeting_role', 'enum', 'Targeting Role', null, 'dimension', false, false),
+  ('campaign_segment', 'weight', 'number', 'Weight', null, null, false, false)
+on conflict (collection_name, name) do update set
+  type = excluded.type,
+  label = excluded.label,
+  cardinality = excluded.cardinality,
+  reporting_role = excluded.reporting_role,
+  searchable = excluded.searchable,
+  embeddable = excluded.embeddable;

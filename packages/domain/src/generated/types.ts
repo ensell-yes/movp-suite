@@ -767,3 +767,215 @@ export interface ContentSeoUpdate {
   checklist?: Record<string, unknown>
   content_item_id?: string
 }
+
+export interface MarketingPlanRow {
+  id: string
+  workspace_id: string
+  name: string
+  description: string | null
+  period_start: string | null
+  period_end: string | null
+  goals: Record<string, unknown> | null
+  owner_id: string | null
+  status: 'draft' | 'active' | 'archived'
+  created_at: string
+  updated_at: string
+}
+
+export interface MarketingPlanCreate {
+  workspace_id: string
+  name: string
+  description?: string
+  period_start?: string
+  period_end?: string
+  goals?: Record<string, unknown>
+  owner_id?: string
+  status?: 'draft' | 'active' | 'archived'
+}
+
+export interface MarketingPlanUpdate {
+  name?: string
+  description?: string
+  period_start?: string
+  period_end?: string
+  goals?: Record<string, unknown>
+  owner_id?: string
+  status?: 'draft' | 'active' | 'archived'
+}
+
+export interface CampaignRow {
+  id: string
+  workspace_id: string
+  name: string
+  brief: string | null
+  start_date: string | null
+  end_date: string | null
+  owner_id: string | null
+  goal_metrics: Record<string, unknown> | null
+  priority: 'low' | 'medium' | 'high' | 'urgent'
+  rank: number | null
+  status: 'draft' | 'scheduled' | 'active' | 'completed' | 'cancelled'
+  marketing_plan_id: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface CampaignCreate {
+  workspace_id: string
+  name: string
+  brief?: string
+  start_date?: string
+  end_date?: string
+  owner_id?: string
+  goal_metrics?: Record<string, unknown>
+  priority?: 'low' | 'medium' | 'high' | 'urgent'
+  rank?: number
+  status?: 'draft' | 'scheduled' | 'active' | 'completed' | 'cancelled'
+  marketing_plan_id?: string
+}
+
+export interface CampaignUpdate {
+  name?: string
+  brief?: string
+  start_date?: string
+  end_date?: string
+  owner_id?: string
+  goal_metrics?: Record<string, unknown>
+  priority?: 'low' | 'medium' | 'high' | 'urgent'
+  rank?: number
+  status?: 'draft' | 'scheduled' | 'active' | 'completed' | 'cancelled'
+  marketing_plan_id?: string
+}
+
+export interface CampaignChannelRow {
+  id: string
+  workspace_id: string
+  channel_type: 'email' | 'social' | 'web' | 'paid' | 'event' | 'sms' | 'other' | null
+  name: string | null
+  campaign_id: string
+  created_at: string
+  updated_at: string
+}
+
+export interface CampaignChannelCreate {
+  workspace_id: string
+  channel_type?: 'email' | 'social' | 'web' | 'paid' | 'event' | 'sms' | 'other'
+  name?: string
+  campaign_id: string
+}
+
+export interface CampaignChannelUpdate {
+  channel_type?: 'email' | 'social' | 'web' | 'paid' | 'event' | 'sms' | 'other'
+  name?: string
+  campaign_id?: string
+}
+
+export interface CampaignDeliverableRow {
+  id: string
+  workspace_id: string
+  name: string
+  deliverable_type: 'asset' | 'post' | 'email' | 'landing_page' | 'ad' | 'event' | null
+  campaign_id: string
+  channel_id: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface CampaignDeliverableCreate {
+  workspace_id: string
+  name: string
+  deliverable_type?: 'asset' | 'post' | 'email' | 'landing_page' | 'ad' | 'event'
+  campaign_id: string
+  channel_id?: string
+}
+
+export interface CampaignDeliverableUpdate {
+  name?: string
+  deliverable_type?: 'asset' | 'post' | 'email' | 'landing_page' | 'ad' | 'event'
+  campaign_id?: string
+  channel_id?: string
+}
+
+export interface CampaignCalendarEventRow {
+  id: string
+  workspace_id: string
+  title: string
+  event_date: string
+  event_type: 'milestone' | 'launch' | 'review' | 'deadline' | null
+  campaign_id: string
+  created_at: string
+  updated_at: string
+}
+
+export interface CampaignCalendarEventCreate {
+  workspace_id: string
+  title: string
+  event_date: string
+  event_type?: 'milestone' | 'launch' | 'review' | 'deadline'
+  campaign_id: string
+}
+
+export interface CampaignCalendarEventUpdate {
+  title?: string
+  event_date?: string
+  event_type?: 'milestone' | 'launch' | 'review' | 'deadline'
+  campaign_id?: string
+}
+
+export interface CampaignMetricRow {
+  id: string
+  workspace_id: string
+  metric_key: string | null
+  value: number | null
+  unit: string | null
+  measured_at: string | null
+  campaign_id: string
+  deliverable_id: string | null
+  channel_id: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface CampaignMetricCreate {
+  workspace_id: string
+  metric_key?: string
+  value?: number
+  unit?: string
+  measured_at?: string
+  campaign_id: string
+  deliverable_id?: string
+  channel_id?: string
+}
+
+export interface CampaignMetricUpdate {
+  metric_key?: string
+  value?: number
+  unit?: string
+  measured_at?: string
+  campaign_id?: string
+  deliverable_id?: string
+  channel_id?: string
+}
+
+export interface CampaignSegmentRow {
+  id: string
+  workspace_id: string
+  targeting_role: 'primary' | 'lookalike' | 'exclusion'
+  weight: number | null
+  campaign_id: string
+  created_at: string
+  updated_at: string
+}
+
+export interface CampaignSegmentCreate {
+  workspace_id: string
+  targeting_role?: 'primary' | 'lookalike' | 'exclusion'
+  weight?: number
+  campaign_id: string
+}
+
+export interface CampaignSegmentUpdate {
+  targeting_role?: 'primary' | 'lookalike' | 'exclusion'
+  weight?: number
+  campaign_id?: string
+}

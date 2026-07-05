@@ -67,7 +67,7 @@ begin
   end if;
 
   if p_expected_revision_id is not null and v_parent is distinct from p_expected_revision_id then
-    raise exception 'content_update_conflict' using errcode = '40001';
+    raise exception 'content_update_conflict';
   end if;
 
   if current_hash is not null and current_hash = p_content_hash then

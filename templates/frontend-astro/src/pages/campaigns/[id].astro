@@ -1,0 +1,150 @@
+---
+import Base from '../../layouts/Base.astro'
+import AuthFailure from '../../components/states/AuthFailure.astro'
+import ErrorRetry from '../../components/states/ErrorRetry.astro'
+import EmptyState from '../../components/states/EmptyState.astro'
+import { readServerEnv } from '../../lib/env.ts'
+import { getSessionToken } from '../../lib/session.ts'
+import { gqlRequest } from '../../lib/graphql.ts'
+import {
+  CAMPAIGN_COMMENTS_QUERY,
+  CAMPAIGN_DETAIL_QUERY,
+  type CampaignCommentRow,
+  type CampaignDetail,
+} from '../../lib/campaign-queries.ts'
+
+const { id } = Astro.params
+const token = getSessionToken(Astro.cookies)
+let state: 'auth' | 'error' | 'empty' | 'ok' = 'auth'
+let campaign: CampaignDetail | null = null
+let comments: CampaignCommentRow[] = []
+
+function targetActualText(target: string | null, actual: number): string {
+  return `${actual} / ${target ?? '0'}`
+}
+
+function varianceText(target: string | null, actual: number): string {
+  const parsed = Number.parseFloat(target ?? '')
+  if (!Number.isFinite(parsed) || parsed === 0) return 'n/a'
+  const percent = Math.round((actual / parsed) * 100)
+  const delta = actual - parsed
+  return `${percent}% (${delta >= 0 ? '+' : ''}${delta})`
+}
+
+if (token) {
+  const { graphqlEndpoint, workspaceId } = readServerEnv()
+  const [detailRes, commentsRes] = await Promise.all([
+    gqlRequest<{ campaignDetail: CampaignDetail | null }>({ endpoint: graphqlEndpoint, token }, CAMPAIGN_DETAIL_QUERY, { campaignId: id }),
+    gqlRequest<{ comments: CampaignCommentRow[] }>({ endpoint: graphqlEndpoint, token }, CAMPAIGN_COMMENTS_QUERY, { workspaceId, entityId: id }),
+  ])
+
+  if (
+    (!detailRes.ok && detailRes.code === 'auth_error') ||
+    (!commentsRes.ok && commentsRes.code === 'auth_error')
+  ) state = 'auth'
+  else if (!detailRes.ok || !commentsRes.ok) state = 'error'
+  else if (!detailRes.data.campaignDetail) state = 'empty'
+  else {
+    campaign = detailRes.data.campaignDetail
+    comments = commentsRes.data.comments
+    state = 'ok'
+  }
+}
+
+const actuals = new Map((campaign?.actuals ?? []).map((actual) => [actual.metricKey, actual.total]))
+---
+<Base title={campaign?.name ?? 'Campaign'}>
+  {state === 'auth' && <AuthFailure resource="this campaign" />}
+  {state === 'error' && <ErrorRetry message="Could not load this campaign." retryHref={Astro.url.pathname} />}
+  {state === 'empty' && <EmptyState message="Campaign not found."><a href="/campaigns">Back to campaigns</a></EmptyState>}
+  {state === 'ok' && campaign && (
+    <article data-testid="campaign-detail">
+      <h1 tabindex="-1" id="campaign-heading">{campaign.name ?? campaign.id}</h1>
+      <p><small>Status {campaign.status ?? 'unknown'}{campaign.priority ? ` · ${campaign.priority}` : ''}</small></p>
+      <nav aria-label="Campaign views">
+        <a href="/campaigns">List</a>
+        <a href="/campaigns/timeline">Timeline</a>
+        <a href="/campaigns/calendar">Calendar</a>
+        <a href={`/campaigns/${campaign.id}/board`}>Board</a>
+      </nav>
+
+      <section aria-labelledby="brief-heading" data-testid="campaign-brief">
+        <h2 id="brief-heading">Brief</h2>
+        <p>{campaign.brief ?? 'No brief yet.'}</p>
+        <p>
+          <small>
+            {[campaign.startDate, campaign.endDate].filter(Boolean).join(' to ')}
+            {campaign.marketingPlanId ? ` · Plan ${campaign.marketingPlanId}` : ''}
+          </small>
+        </p>
+      </section>
+
+      <section aria-labelledby="metrics-heading" data-testid="campaign-metrics">
+        <h2 id="metrics-heading">Targets vs Actuals</h2>
+        {campaign.goalMetrics.length === 0 ? <p>No goal metrics yet.</p> : (
+          <table>
+            <caption>Campaign target and actual metrics</caption>
+            <thead>
+              <tr>
+                <th scope="col">Metric</th>
+                <th scope="col">Actual / Target</th>
+                <th scope="col">Variance</th>
+                <th scope="col">Unit</th>
+              </tr>
+            </thead>
+            <tbody>
+              {campaign.goalMetrics.map((metric) => {
+                const actual = actuals.get(metric.metricKey) ?? 0
+                return (
+                  <tr>
+                    <th scope="row">{metric.metricKey}</th>
+                    <td>{targetActualText(metric.targetValue, actual)}</td>
+                    <td>{varianceText(metric.targetValue, actual)}</td>
+                    <td>{metric.unit ?? ''}</td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        )}
+      </section>
+
+      <section aria-labelledby="stakeholders-heading" data-testid="campaign-stakeholders">
+        <h2 id="stakeholders-heading">Stakeholders</h2>
+        <p>Owner {campaign.stakeholders.ownerId ?? campaign.ownerId ?? 'unassigned'}</p>
+        {campaign.stakeholders.observerIds.length === 0 ? <p>No observers.</p> : (
+          <ul>{campaign.stakeholders.observerIds.map((observer) => <li>{observer}</li>)}</ul>
+        )}
+      </section>
+
+      <section aria-labelledby="deliverables-heading" data-testid="campaign-deliverables">
+        <h2 id="deliverables-heading">Deliverables</h2>
+        {campaign.deliverables.length === 0 ? <p>No deliverables yet.</p> : (
+          <ul>
+            {campaign.deliverables.map((deliverable) => (
+              <li>
+                {deliverable.name ?? deliverable.id}
+                {deliverable.taskId ? <> <a href={`/tasks/${deliverable.taskId}`}>Task</a></> : null}
+                {' '}<a href={`/campaigns/${campaign.id}/board`}>Board</a>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section aria-labelledby="channels-heading" data-testid="campaign-channels">
+        <h2 id="channels-heading">Channels</h2>
+        {campaign.channels.length === 0 ? <p>No channels yet.</p> : (
+          <ul>{campaign.channels.map((channel) => <li>{channel.channelType ?? 'channel'} {channel.name ? `· ${channel.name}` : ''}</li>)}</ul>
+        )}
+      </section>
+
+      <section aria-labelledby="discussion-heading" data-testid="campaign-comments">
+        <h2 id="discussion-heading">Discussion</h2>
+        {comments.length === 0 ? <p>No comments yet.</p> : (
+          <ul>{comments.map((comment) => <li>{comment.body ?? ''} <small>{comment.author_id ?? ''}</small></li>)}</ul>
+        )}
+      </section>
+    </article>
+  )}
+</Base>

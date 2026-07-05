@@ -1,4 +1,5 @@
 export { makeCollectionService } from './collection.ts'
+export { makeCampaignService } from './campaign.ts'
 export { makeCollabService, resolveShareLink } from './collab.ts'
 export { makeContentService } from './content.ts'
 export { createDomain } from './domain.ts'
@@ -6,6 +7,7 @@ export { makeGraphService } from './graph.ts'
 export { runSearch } from './search.ts'
 export { makeTaskService } from './task.ts'
 export type {
+  CampaignService,
   CollabService,
   CollectionService,
   ContentService,
@@ -31,6 +33,13 @@ export type {
   ContentScheduleRow,
   ContentSeoRow,
   ContentTypeRow,
+  CampaignCalendarEventRow,
+  CampaignChannelRow,
+  CampaignDeliverableRow,
+  CampaignMetricRow,
+  CampaignRow,
+  CampaignSegmentRow,
+  MarketingPlanRow,
   NoteCreate,
   NoteRow,
   NoteUpdate,

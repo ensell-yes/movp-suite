@@ -134,7 +134,22 @@ async function sha256Hex(buffer: ArrayBuffer): Promise<string> {
   return Array.from(new Uint8Array(digest)).map((byte) => byte.toString(16).padStart(2, '0')).join('')
 }
 
-async function loadItem(endpoint: string, workspaceId: string): Promise<'error' | 'empty' | 'ok'> {
+type LoadResult =
+  | {
+      state: 'ok'
+      item: ContentItemRow
+      comments: CommentRow[]
+      revisions: ContentRevisionRow[]
+      fields: FieldDescriptor[]
+      values: Record<string, unknown>
+    }
+  | { state: 'auth' | 'error' | 'empty' }
+
+// Returns the loaded data rather than mutating the outer `let`s via closure side-effect:
+// closure assignments are invisible to TS's control-flow narrowing (which would then narrow
+// `item` to its `null` initializer and, under `item && …`, to `never`). Callers assign the
+// module vars from the discriminated result in the outer scope, where TS can track them.
+async function loadItem(endpoint: string, workspaceId: string): Promise<LoadResult> {
   const [itemRes, commentsRes, revisionsRes] = await Promise.all([
     gqlRequest<{ contentItem: ContentItemRow | null }>({ endpoint, token: token ?? '' }, CONTENT_ITEM_QUERY, { id }),
     gqlRequest<{ comments: CommentRow[] }>({ endpoint, token: token ?? '' }, CONTENT_COMMENTS_QUERY, { workspaceId, entityId: id }),
@@ -144,15 +159,18 @@ async function loadItem(endpoint: string, workspaceId: string): Promise<'error' 
     (!itemRes.ok && itemRes.code === 'auth_error') ||
     (!commentsRes.ok && commentsRes.code === 'auth_error') ||
     (!revisionsRes.ok && revisionsRes.code === 'auth_error')
-  ) return 'auth'
-  if (!itemRes.ok || !commentsRes.ok || !revisionsRes.ok) return 'error'
-  if (!itemRes.data.contentItem) return 'empty'
-  item = itemRes.data.contentItem
-  comments = commentsRes.data.comments
-  revisions = revisionsRes.data.contentRevisions
-  fields = parseFields(item.content_type?.field_schema)
-  values = parseJsonObject(item.data)
-  return 'ok'
+  ) return { state: 'auth' }
+  if (!itemRes.ok || !commentsRes.ok || !revisionsRes.ok) return { state: 'error' }
+  if (!itemRes.data.contentItem) return { state: 'empty' }
+  const loaded = itemRes.data.contentItem
+  return {
+    state: 'ok',
+    item: loaded,
+    comments: commentsRes.data.comments,
+    revisions: revisionsRes.data.contentRevisions,
+    fields: parseFields(loaded.content_type?.field_schema),
+    values: parseJsonObject(loaded.data),
+  }
 }
 
 if (token) {
@@ -163,17 +181,22 @@ if (token) {
     let mutationOk = true
 
     if (intent === 'save') {
-      const loadState = await loadItem(graphqlEndpoint, workspaceId)
-      if (loadState !== 'ok') {
-        state = loadState
+      const loaded = await loadItem(graphqlEndpoint, workspaceId)
+      if (loaded.state !== 'ok') {
+        state = loaded.state
         mutationOk = false
       } else {
         state = 'ok'
+        item = loaded.item
+        comments = loaded.comments
+        revisions = loaded.revisions
+        fields = loaded.fields
+        values = loaded.values
         const data = { ...values, ...collectFieldData(form, fields) }
         const r = await gqlRequest({ endpoint: graphqlEndpoint, token }, UPDATE_CONTENT_MUTATION, {
           id,
           data: JSON.stringify(data),
-          expectedRevisionId: item?.current_revision_id ?? undefined,
+          expectedRevisionId: loaded.item.current_revision_id ?? undefined,
         })
         if (r.ok) notice = 'Saved'
         else {
@@ -209,9 +232,14 @@ if (token) {
       mutationOk = r.ok
       if (r.ok) notice = 'Scheduled'
     } else if (intent === 'asset') {
-      const loadState = await loadItem(graphqlEndpoint, workspaceId)
-      if (loadState === 'ok' && item) {
+      const loaded = await loadItem(graphqlEndpoint, workspaceId)
+      if (loaded.state === 'ok') {
         state = 'ok'
+        item = loaded.item
+        comments = loaded.comments
+        revisions = loaded.revisions
+        fields = loaded.fields
+        values = loaded.values
         const file = form.get('asset')
         const field = String(form.get('field') ?? '')
         if (file instanceof File && file.size > 0 && field) {
@@ -235,7 +263,7 @@ if (token) {
                 const update = await gqlRequest({ endpoint: graphqlEndpoint, token }, UPDATE_CONTENT_MUTATION, {
                   id,
                   data: JSON.stringify(next),
-                  expectedRevisionId: item.current_revision_id ?? undefined,
+                  expectedRevisionId: loaded.item.current_revision_id ?? undefined,
                 })
                 if (update.ok) notice = 'Asset uploaded'
                 else {
@@ -254,7 +282,17 @@ if (token) {
     if (!mutationOk && !postError) state = 'error'
   }
 
-  if (state !== 'error' && shouldReload) state = await loadItem(graphqlEndpoint, workspaceId)
+  if (state !== 'error' && shouldReload) {
+    const loaded = await loadItem(graphqlEndpoint, workspaceId)
+    state = loaded.state
+    if (loaded.state === 'ok') {
+      item = loaded.item
+      comments = loaded.comments
+      revisions = loaded.revisions
+      fields = loaded.fields
+      values = loaded.values
+    }
+  }
 }
 
 const frozenIds = new Set([item?.approved_revision_id, item?.published_revision_id].filter(Boolean))

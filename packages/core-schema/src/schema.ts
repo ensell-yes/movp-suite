@@ -25,6 +25,13 @@ import { taskPriorityOption } from './collections/task_priority_option.ts'
 import { taskRevision } from './collections/task_revision.ts'
 import { taskStatusHistory } from './collections/task_status_history.ts'
 import { taskStatusOption } from './collections/task_status_option.ts'
+import { campaign } from './collections/campaign.ts'
+import { campaignCalendarEvent } from './collections/campaign_calendar_event.ts'
+import { campaignChannel } from './collections/campaign_channel.ts'
+import { campaignDeliverable } from './collections/campaign_deliverable.ts'
+import { campaignMetric } from './collections/campaign_metric.ts'
+import { campaignSegment } from './collections/campaign_segment.ts'
+import { marketingPlan } from './collections/marketing_plan.ts'
 import { defineSchema } from './define.ts'
 
 export const schema = defineSchema([
@@ -55,4 +62,15 @@ export const schema = defineSchema([
   contentCollection,
   contentCollectionEntry,
   contentSeo,
+  // Campaigns (Phase 5, Part A). Order encodes inline-FK deps:
+  //  - marketing_plan precedes campaign (campaign.marketing_plan_id -> it).
+  //  - campaign precedes every campaign_* child (child.campaign_id -> campaign).
+  //  - campaign + campaign_channel precede deliverable/metric (channel_id/deliverable_id).
+  marketingPlan,
+  campaign,
+  campaignChannel,
+  campaignDeliverable,
+  campaignCalendarEvent,
+  campaignMetric,
+  campaignSegment,
 ])
