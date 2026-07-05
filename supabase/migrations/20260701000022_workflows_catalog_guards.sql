@@ -49,7 +49,11 @@ begin
 
   insert into movp_internal.movp_jobs (kind, idempotency_key, payload, workspace_id)
   values ('automate', v_event_id::text,
-          jsonb_build_object('event_id', v_event_id, 'event_type', ev_type, 'depth', coalesce((payload->>'depth')::int, 0)),
+          jsonb_build_object(
+            'event_id', v_event_id,
+            'event_type', ev_type,
+            'depth', case when payload->>'depth' ~ '^\d+$' then (payload->>'depth')::int else 0 end
+          ),
           ws)
   on conflict (kind, idempotency_key) do nothing;
 end;
