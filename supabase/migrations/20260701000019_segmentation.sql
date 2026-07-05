@@ -50,6 +50,10 @@ insert into movp_internal.segmentation_bridged_type (event_type) values
   ('account.created'), ('registration.completed'), ('onboarding.completed')
   on conflict (event_type) do nothing;
 
+-- CONTENT DISCIPLINE (allow-listing a type is a data-exposure decision): the bridge copies the
+-- WHOLE internal event payload into public.platform_event.properties, which is MEMBER-READABLE.
+-- Allow-listed lifecycle payloads must therefore stay ids/classifiers only (no emails, no free
+-- text) — enforce that at the emitter before adding a type to segmentation_bridged_type.
 create or replace function movp_internal.bridge_event_to_platform()
 returns trigger language plpgsql security definer set search_path = '' as $$
 declare
@@ -62,20 +66,34 @@ begin
        where t.event_type = new.type
      )
   then
-    insert into public.platform_event (
-      workspace_id, event_type, subject_type, subject_ref, actor_ref,
-      source, properties, occurred_at, ingested_at
-    ) values (
-      new.workspace_id,
-      new.type,
-      coalesce(new.payload->>'subject_type', new.payload->>'entity_type', 'user'),
-      v_subject_ref,
-      new.payload->>'actor_ref',
-      'internal',
-      new.payload,
-      new.created_at,
-      now()
-    );
+    -- DEFENSE-IN-DEPTH: the mirror insert must NEVER abort the emitting business write. Today no
+    -- payload value can make it raise (subject_type/subject_ref/actor_ref are unconstrained text;
+    -- source is hardcoded to the valid 'internal'), but a FUTURE check/not-null/FK added to
+    -- platform_event would otherwise become a dormant abort bomb inside every allow-listed
+    -- emitter's transaction. Narrowed to data-shape errors (the schema-drift vectors) — a
+    -- genuinely unexpected fault still surfaces; the mirror is best-effort by design
+    -- (platform_event is at-least-once and dedup-safe downstream, 04a F6).
+    begin
+      insert into public.platform_event (
+        workspace_id, event_type, subject_type, subject_ref, actor_ref,
+        source, properties, occurred_at, ingested_at
+      ) values (
+        new.workspace_id,
+        new.type,
+        coalesce(new.payload->>'subject_type', new.payload->>'entity_type', 'user'),
+        v_subject_ref,
+        new.payload->>'actor_ref',
+        'internal',
+        new.payload,
+        new.created_at,
+        now()
+      );
+    exception
+      when check_violation or not_null_violation or foreign_key_violation
+        or string_data_right_truncation or invalid_text_representation then
+        -- names/codes only — never payload values.
+        raise warning 'segmentation bridge skipped event type % (sqlstate %)', new.type, sqlstate;
+    end;
   end if;
   return new;
 end;

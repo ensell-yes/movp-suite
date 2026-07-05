@@ -1,5 +1,5 @@
 begin;
-select plan(52);
+select plan(59);
 
 insert into public.workspace (id, name) values
   ('11111111-1111-1111-1111-111111111111', 'W1');
@@ -64,6 +64,8 @@ select has_index('public', 'platform_event', 'platform_event_type_time_idx', 'pl
 
 select col_is_unique('public', 'segment_membership', ARRAY['segment_id','subject_ref'],
   'segment_membership is unique on (segment_id, subject_ref)');
+select col_is_unique('public', 'segment_rule', ARRAY['segment_id','version'],
+  'segment_rule is unique on (segment_id, version) so concurrent version assignment cannot duplicate versions');
 
 select is((select reporting_role from public.movp_fields
            where collection_name='segment_snapshot' and name='member_count'),
@@ -159,6 +161,29 @@ insert into movp_internal.movp_events (id, type, workspace_id, payload, trace_id
 select is((select count(*)::int from public.platform_event where properties->>'id'='note-1'),
           0, 'non-bridged event_type fans out no platform_event');
 
+-- ── bridge defense-in-depth: a FAILING mirror insert must not abort the business write ──
+-- Simulate future schema drift: a CHECK on platform_event that the bridged row violates.
+-- The narrowed exception handler must swallow the check_violation (warning only), so the
+-- movp_events insert (the "business write" here) survives; after the constraint is gone,
+-- mirroring must work again (the handler skips one row, it does not disable the bridge).
+alter table public.platform_event
+  add constraint pe_bridge_block check (subject_ref is distinct from 'blocked-999');
+select lives_ok(
+  $$insert into movp_internal.movp_events (id, type, workspace_id, payload, trace_id, created_at) values
+    ('e1000000-0000-0000-0000-00000000000b', 'account.created',
+     '11111111-1111-1111-1111-111111111111',
+     jsonb_build_object('id', 'blocked-999'), gen_random_uuid()::text, now())$$,
+  'a failing mirror insert does NOT abort the emitting write (narrowed handler)');
+select is((select count(*)::int from public.platform_event where subject_ref='blocked-999'),
+          0, 'the blocked mirror row was skipped, not inserted');
+alter table public.platform_event drop constraint pe_bridge_block;
+insert into movp_internal.movp_events (id, type, workspace_id, payload, trace_id, created_at) values
+  ('e1000000-0000-0000-0000-00000000000c', 'account.created',
+   '11111111-1111-1111-1111-111111111111',
+   jsonb_build_object('id', 'recovered-999'), gen_random_uuid()::text, now());
+select is((select count(*)::int from public.platform_event where subject_ref='recovered-999'),
+          1, 'mirroring recovers once the constraint is gone (handler skipped one row, bridge not disabled)');
+
 set local role authenticated;
 
 set local request.jwt.claims = '{"sub":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"}';
@@ -168,6 +193,22 @@ select is((select count(*)::int from public.platform_event
 select is((select count(*)::int from public.segment
            where id='52000000-0000-0000-0000-000000000001'),
           1, 'a workspace member CAN SELECT segment');
+
+create temp table _rule_rpc1 as
+  select public.create_segment_rule_version(
+    '52000000-0000-0000-0000-000000000001',
+    '{"all":[{"event":"rpc.version.one"}]}'::jsonb) as r;
+select is((select r->>'version' from _rule_rpc1), '2',
+  'create_segment_rule_version assigns the next version under the caller membership boundary');
+create temp table _rule_rpc2 as
+  select public.create_segment_rule_version(
+    '52000000-0000-0000-0000-000000000001',
+    '{"all":[{"event":"rpc.version.two"}]}'::jsonb) as r;
+select is((select r->>'version' from _rule_rpc2), '3',
+  'create_segment_rule_version serializes repeated saves to the following version');
+select is((select count(distinct version)::int from public.segment_rule
+           where segment_id='52000000-0000-0000-0000-000000000001'),
+          3, 'rule versions remain distinct for the segment');
 
 select lives_ok(
   $$delete from public.segment_snapshot_member where id='56000000-0000-0000-0000-000000000001'$$,

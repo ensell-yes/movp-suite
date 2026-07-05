@@ -1206,5 +1206,274 @@ export function buildSchema(schema: MovpSchema): GraphQLSchema {
     )
   }
 
+  // ── Segmentation Part D — custom READ queries + the campaign audience seam ──
+  // Codegen owns the generic segmentation create+read CRUD. These reads bridge the generic
+  // surface's limits: jsonb serialises to "[object Object]", relation FKs are not queryable
+  // scalars, and the generic list has no per-field filter (see plan "Inputs consumed").
+  if (refs.has('segment_membership')) {
+    const CAP = 500   // bounded arrays for diff/audience — full counts always returned
+
+    // ── previewMatchingCount: bounded, injection-safe preview (Part C compiler via RPC) ──
+    const previewCount = builder.objectRef<{ count: number }>('PreviewCount').implement({
+      fields: (t: any) => ({ count: t.int({ complexity: 0, resolve: (r: { count: number }) => r.count }) }),
+    })
+    builder.queryField('previewMatchingCount', (t: any) =>
+      t.field({
+        type: previewCount, nullable: false, complexity: 20,
+        args: { segmentId: t.arg.id({ required: true }), predicate: t.arg.string({ required: true }) },
+        resolve: async (_r: unknown, a: any, ctx: GraphQLContext): Promise<{ count: number }> => {
+          // Resolve ctx.db at call time (workerd has no per-request module instance).
+          let parsed: unknown
+          try { parsed = JSON.parse(String(a.predicate)) } catch { return { count: 0 } }
+          // ctx.db.rpc runs under the caller; preview_segment_predicate is DEFINER + member-gated
+          // and reuses Part C's SAME injection-safe compiler — never a new SQL-building path.
+          const { data, error } = await ctx.db.rpc('preview_segment_predicate', {
+            seg_id: String(a.segmentId), predicate: parsed,
+          })
+          // F6: a failed RPC must NOT masquerade as "0 matched" — throw a coded error the client can see.
+          if (error) throw new Error('segment.read_failed: field=previewMatchingCount code=preview_failed')
+          const n = typeof data === 'number' ? data : Number(data ?? 0)
+          return { count: Number.isFinite(n) ? n : 0 }
+        },
+      }),
+    )
+
+    // ── segmentMembershipExplained: the per-member explanation (PII-disciplined) ──
+    const evidenceEvent = builder.objectRef<{ eventId: string; eventType: string | null; occurredAt: string | null }>('EvidenceEvent').implement({
+      fields: (t: any) => ({
+        eventId: t.exposeID('eventId', { complexity: 0 }),
+        eventType: t.string({ nullable: true, complexity: 0, resolve: (r: any) => r.eventType }),
+        occurredAt: t.string({ nullable: true, complexity: 0, resolve: (r: any) => r.occurredAt }),
+      }),
+    })
+    type ExplainShape = {
+      subjectRef: string; subjectType: string | null; matchedRuleId: string | null
+      matchedRuleVersion: number | null; firstMatchedAt: string | null; evaluatedAt: string | null
+      evidence: Array<{ eventId: string; eventType: string | null; occurredAt: string | null }>
+    }
+    const explanation = builder.objectRef<ExplainShape>('MembershipExplanation').implement({
+      fields: (t: any) => ({
+        subjectRef: t.exposeString('subjectRef', { complexity: 0 }),
+        subjectType: t.string({ nullable: true, complexity: 0, resolve: (r: ExplainShape) => r.subjectType }),
+        matchedRuleId: t.string({ nullable: true, complexity: 0, resolve: (r: ExplainShape) => r.matchedRuleId }),
+        matchedRuleVersion: t.int({ nullable: true, complexity: 0, resolve: (r: ExplainShape) => r.matchedRuleVersion }),
+        firstMatchedAt: t.string({ nullable: true, complexity: 0, resolve: (r: ExplainShape) => r.firstMatchedAt }),
+        evaluatedAt: t.string({ nullable: true, complexity: 0, resolve: (r: ExplainShape) => r.evaluatedAt }),
+        evidence: t.field({ type: [evidenceEvent], complexity: 0, resolve: (r: ExplainShape) => r.evidence }),
+      }),
+    })
+    builder.queryField('segmentMembershipExplained', (t: any) =>
+      t.field({
+        type: explanation, nullable: true, complexity: 15,
+        args: { segmentId: t.arg.id({ required: true }), subjectRef: t.arg.string({ required: true }) },
+        resolve: async (_r: unknown, a: any, ctx: GraphQLContext): Promise<ExplainShape | null> => {
+          const { data: m, error: mErr } = await ctx.db
+            .from('segment_membership')
+            .select('id, segment_id, subject_type, subject_ref, matched_rule_id, first_matched_at, evaluated_at, evidence')
+            .eq('segment_id', String(a.segmentId)).eq('subject_ref', String(a.subjectRef))
+            .maybeSingle()
+          if (mErr) throw new Error('segment.read_failed: field=segmentMembershipExplained code=membership')
+          if (!m) return null
+          const mem = m as { subject_type: string | null; matched_rule_id: string | null;
+            first_matched_at: string | null; evaluated_at: string | null; evidence: unknown }
+          let version: number | null = null
+          if (mem.matched_rule_id) {
+            const { data: rule, error: rErr } = await ctx.db
+              .from('segment_rule').select('id, version').eq('id', mem.matched_rule_id).maybeSingle()
+            if (rErr) throw new Error('segment.read_failed: field=segmentMembershipExplained code=rule')
+            if (rule) version = Number((rule as { version: number | string }).version)
+          }
+          // evidence jsonb → event_ids array (Part B's shape; reconcile the key if different).
+          const ev = mem.evidence as { event_ids?: unknown } | null
+          const eventIds = Array.isArray(ev?.event_ids) ? (ev!.event_ids as unknown[]).map(String) : []
+          let evidence: ExplainShape['evidence'] = []
+          if (eventIds.length > 0) {
+            // PII BOUNDARY: select ONLY typed dimensions — never `properties`.
+            const { data: evs, error: eErr } = await ctx.db
+              .from('platform_event').select('id, event_type, occurred_at').in('id', eventIds)
+            if (eErr) throw new Error('segment.read_failed: field=segmentMembershipExplained code=evidence')
+            evidence = ((evs ?? []) as Array<{ id: string; event_type: string | null; occurred_at: string | null }>)
+              .map((e) => ({ eventId: e.id, eventType: e.event_type, occurredAt: e.occurred_at }))
+          }
+          return {
+            subjectRef: String(a.subjectRef), subjectType: mem.subject_type,
+            matchedRuleId: mem.matched_rule_id, matchedRuleVersion: version,
+            firstMatchedAt: mem.first_matched_at, evaluatedAt: mem.evaluated_at, evidence,
+          }
+        },
+      }),
+    )
+
+    // ── snapshotDiff: added/removed subject_refs between two snapshots ──
+    type DiffShape = { added: string[]; removed: string[]; addedCount: number; removedCount: number }
+    const snapshotDiff = builder.objectRef<DiffShape>('SnapshotDiff').implement({
+      fields: (t: any) => ({
+        added: t.field({ type: ['String'], complexity: 0, resolve: (r: DiffShape) => r.added }),
+        removed: t.field({ type: ['String'], complexity: 0, resolve: (r: DiffShape) => r.removed }),
+        addedCount: t.int({ complexity: 0, resolve: (r: DiffShape) => r.addedCount }),
+        removedCount: t.int({ complexity: 0, resolve: (r: DiffShape) => r.removedCount }),
+      }),
+    })
+    builder.queryField('snapshotDiff', (t: any) =>
+      t.field({
+        type: snapshotDiff, nullable: false, complexity: 20,
+        args: { snapshotAId: t.arg.id({ required: true }), snapshotBId: t.arg.id({ required: true }) },
+        resolve: async (_r: unknown, a: any, ctx: GraphQLContext): Promise<DiffShape> => {
+          const load = async (snapId: string): Promise<Set<string>> => {
+            // A correct diff needs BOTH full member sets — you cannot compute a true added/removed COUNT
+            // from capped sets. This on-demand read is bounded by the snapshot's frozen size (≤ the segment
+            // size at snapshot time), not an unbounded hot-path scan, so we load the full subject_ref set for
+            // counting and cap only the RETURNED arrays below (full counts + bounded arrays; contract holds).
+            const { data, error } = await ctx.db
+              .from('segment_snapshot_member').select('subject_ref').eq('snapshot_id', snapId)
+            if (error) throw new Error('segment.read_failed: field=snapshotDiff code=snapshot_member')
+            return new Set(((data ?? []) as Array<{ subject_ref: string }>).map((r) => r.subject_ref))
+          }
+          const [A, B] = [await load(String(a.snapshotAId)), await load(String(a.snapshotBId))]
+          const added = [...B].filter((s) => !A.has(s))     // in B (after), not in A (before)
+          const removed = [...A].filter((s) => !B.has(s))   // in A (before), not in B (after)
+          return { added: added.slice(0, CAP), removed: removed.slice(0, CAP),
+                   addedCount: added.length, removedCount: removed.length }
+        },
+      }),
+    )
+
+    // ── campaignAudience: DEFERRED (Phase 7) ──
+    // The campaign→segment/snapshot audience seam is deferred out of Part D: nothing writes the
+    // targets_segment / targets_snapshot edges yet, so there is no producer/consumer to resolve (YAGNI).
+
+    // ── enumeration bridges (limits 2+3: no per-segment generic filter) ──
+    type SummaryShape = { id: string; name: string | null; active: boolean | null; mode: string | null
+      ownerRef: string | null; memberCount: number; lastRecomputedAt: string | null }
+    const summary = builder.objectRef<SummaryShape>('SegmentSummary').implement({
+      fields: (t: any) => ({
+        id: t.exposeID('id', { complexity: 0 }),
+        name: t.string({ nullable: true, complexity: 0, resolve: (r: SummaryShape) => r.name }),
+        active: t.boolean({ nullable: true, complexity: 0, resolve: (r: SummaryShape) => r.active }),
+        mode: t.string({ nullable: true, complexity: 0, resolve: (r: SummaryShape) => r.mode }),
+        ownerRef: t.string({ nullable: true, complexity: 0, resolve: (r: SummaryShape) => r.ownerRef }),
+        memberCount: t.int({ complexity: 0, resolve: (r: SummaryShape) => r.memberCount }),
+        lastRecomputedAt: t.string({ nullable: true, complexity: 0, resolve: (r: SummaryShape) => r.lastRecomputedAt }),
+      }),
+    })
+    builder.queryField('segmentSummaries', (t: any) =>
+      t.field({
+        type: [summary], nullable: false, complexity: 25,
+        args: { workspaceId: t.arg.id({ required: true }) },
+        resolve: async (_r: unknown, a: any, ctx: GraphQLContext): Promise<SummaryShape[]> => {
+          const ws = String(a.workspaceId)
+          const { data: segs, error: sErr } = await ctx.db
+            .from('segment').select('id, name, active, mode, owner_ref').eq('workspace_id', ws).order('name', { ascending: true })
+          if (sErr) throw new Error('segment.read_failed: field=segmentSummaries code=segment')
+          const rows = (segs ?? []) as Array<{ id: string; name: string | null; active: boolean | null; mode: string | null; owner_ref: string | null }>
+          // F7: push aggregation into SQL — never fold every membership/run row in JS. Member counts via
+          // PostgREST count() grouped by segment_id; last recompute via max(finished_at) grouped likewise.
+          const { data: memRows, error: mErr } = await ctx.db
+            .from('segment_membership').select('segment_id, member_count:count()').eq('workspace_id', ws)
+          if (mErr) throw new Error('segment.read_failed: field=segmentSummaries code=membership')
+          const counts = new Map<string, number>()
+          for (const m of (memRows ?? []) as Array<{ segment_id: string; member_count: number | string }>) counts.set(m.segment_id, Number(m.member_count))
+          const { data: runRows, error: rErr } = await ctx.db
+            .from('segment_recompute_run').select('segment_id, last_finished_at:finished_at.max()').eq('workspace_id', ws)
+          if (rErr) throw new Error('segment.read_failed: field=segmentSummaries code=run')
+          const last = new Map<string, string>()
+          for (const r of (runRows ?? []) as unknown as Array<{ segment_id: string; last_finished_at: string | null }>) {
+            if (r.last_finished_at) last.set(r.segment_id, r.last_finished_at)
+          }
+          return rows.map((s) => ({ id: s.id, name: s.name, active: s.active, mode: s.mode, ownerRef: s.owner_ref,
+            memberCount: counts.get(s.id) ?? 0, lastRecomputedAt: last.get(s.id) ?? null }))
+        },
+      }),
+    )
+
+    type MemberEntry = { subjectRef: string; subjectType: string | null; matchedRuleId: string | null; evaluatedAt: string | null }
+    const memberEntry = builder.objectRef<MemberEntry>('SegmentMemberEntry').implement({
+      fields: (t: any) => ({
+        subjectRef: t.exposeString('subjectRef', { complexity: 0 }),
+        subjectType: t.string({ nullable: true, complexity: 0, resolve: (r: MemberEntry) => r.subjectType }),
+        matchedRuleId: t.string({ nullable: true, complexity: 0, resolve: (r: MemberEntry) => r.matchedRuleId }),
+        evaluatedAt: t.string({ nullable: true, complexity: 0, resolve: (r: MemberEntry) => r.evaluatedAt }),
+      }),
+    })
+    const memberPage = builder.objectRef<{ items: MemberEntry[]; nextCursor: string | null }>('SegmentMemberPage').implement({
+      fields: (t: any) => ({
+        items: t.field({ type: [memberEntry], complexity: 0, resolve: (r: any) => r.items }),
+        nextCursor: t.string({ nullable: true, complexity: 0, resolve: (r: any) => r.nextCursor }),
+      }),
+    })
+    builder.queryField('segmentMembers', (t: any) =>
+      t.field({
+        type: memberPage, nullable: false, complexity: 20,
+        args: { segmentId: t.arg.id({ required: true }), first: t.arg.int(), after: t.arg.string() },
+        resolve: async (_r: unknown, a: any, ctx: GraphQLContext) => {
+          const limit = Math.min(Number(a.first ?? 50), 200)
+          let q = ctx.db.from('segment_membership')
+            .select('subject_ref, subject_type, matched_rule_id, evaluated_at')
+            .eq('segment_id', String(a.segmentId)).order('subject_ref', { ascending: true })
+          if (a.after) q = q.gt('subject_ref', String(a.after))   // keyset pagination on subject_ref
+          const { data, error } = await q.limit(limit + 1)         // query bounded to limit+1 rows
+          if (error) throw new Error('segment.read_failed: field=segmentMembers code=membership')
+          const all = (data ?? []) as Array<{ subject_ref: string; subject_type: string | null; matched_rule_id: string | null; evaluated_at: string | null }>
+          const items = all.slice(0, limit).map((m) => ({ subjectRef: m.subject_ref, subjectType: m.subject_type, matchedRuleId: m.matched_rule_id, evaluatedAt: m.evaluated_at }))
+          const nextCursor = all.length > limit ? items[items.length - 1]?.subjectRef ?? null : null
+          return { items, nextCursor }
+        },
+      }),
+    )
+
+    type SnapEntry = { id: string; takenAt: string | null; reason: string | null; memberCount: number | null }
+    const snapEntry = builder.objectRef<SnapEntry>('SnapshotEntry').implement({
+      fields: (t: any) => ({
+        id: t.exposeID('id', { complexity: 0 }),
+        takenAt: t.string({ nullable: true, complexity: 0, resolve: (r: SnapEntry) => r.takenAt }),
+        reason: t.string({ nullable: true, complexity: 0, resolve: (r: SnapEntry) => r.reason }),
+        memberCount: t.int({ nullable: true, complexity: 0, resolve: (r: SnapEntry) => r.memberCount }),
+      }),
+    })
+    builder.queryField('segmentSnapshots', (t: any) =>
+      t.field({
+        type: [snapEntry], nullable: false, complexity: 15,
+        args: { segmentId: t.arg.id({ required: true }) },
+        resolve: async (_r: unknown, a: any, ctx: GraphQLContext): Promise<SnapEntry[]> => {
+          const { data, error } = await ctx.db.from('segment_snapshot')
+            .select('id, taken_at, reason, member_count').eq('segment_id', String(a.segmentId)).order('taken_at', { ascending: true })
+          if (error) throw new Error('segment.read_failed: field=segmentSnapshots code=snapshot')
+          return ((data ?? []) as Array<{ id: string; taken_at: string | null; reason: string | null; member_count: number | null }>)
+            .map((s) => ({ id: s.id, takenAt: s.taken_at, reason: s.reason, memberCount: s.member_count }))
+        },
+      }),
+    )
+
+    // ── createSegmentRuleVersion: the ONE custom WRITE (the rule builder's Save) ──
+    // The generic createSegmentRule input SKIPS the segment_id RELATION FK, so a rule can't be attached
+    // to its segment through the generic surface. Version assignment lives in a DB RPC with a
+    // per-segment advisory lock + unique(segment_id, version); never read max(version)+1 here.
+    type RuleVersionShape = { id: string; version: number }
+    const ruleVersion = builder.objectRef<RuleVersionShape>('SegmentRuleVersion').implement({
+      fields: (t: any) => ({
+        id: t.exposeID('id', { complexity: 0 }),
+        version: t.int({ complexity: 0, resolve: (r: RuleVersionShape) => r.version }),
+      }),
+    })
+    builder.mutationField('createSegmentRuleVersion', (t: any) =>
+      t.field({
+        type: ruleVersion, nullable: true, complexity: 15,
+        args: { segmentId: t.arg.id({ required: true }), predicate: t.arg.string({ required: true }) },
+        resolve: async (_r: unknown, a: any, ctx: GraphQLContext): Promise<RuleVersionShape | null> => {
+          let predicate: unknown
+          try { predicate = JSON.parse(String(a.predicate)) } catch { throw new Error('segment.write_failed: field=createSegmentRuleVersion code=invalid_predicate_json') }
+          const { data, error } = await ctx.db.rpc('create_segment_rule_version', {
+            seg_id: String(a.segmentId),
+            predicate,
+          })
+          if (error) throw new Error('segment.write_failed: field=createSegmentRuleVersion code=insert')
+          if (!data) return null
+          const row = data as { id: string; version: number | string }
+          return { id: row.id, version: Number(row.version) }
+        },
+      }),
+    )
+  }
+
   return builder.toSchema()
 }

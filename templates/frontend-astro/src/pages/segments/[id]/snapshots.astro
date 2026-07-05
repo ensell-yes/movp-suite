@@ -1,0 +1,77 @@
+---
+import Base from '../../../layouts/Base.astro'
+import AuthFailure from '../../../components/states/AuthFailure.astro'
+import ErrorRetry from '../../../components/states/ErrorRetry.astro'
+import EmptyState from '../../../components/states/EmptyState.astro'
+import { readServerEnv } from '../../../lib/env.ts'
+import { getSessionToken } from '../../../lib/session.ts'
+import { gqlRequest } from '../../../lib/graphql.ts'
+import { SEGMENT_SNAPSHOTS_QUERY, SNAPSHOT_DIFF_QUERY,
+  type SnapshotEntry, type SnapshotDiff } from '../../../lib/segment-queries.ts'
+
+const id = String(Astro.params.id)
+const a = Astro.url.searchParams.get('a')
+const b = Astro.url.searchParams.get('b')
+const token = getSessionToken(Astro.cookies)
+let state: 'auth' | 'error' | 'empty' | 'ok' = 'auth'
+let snapshots: SnapshotEntry[] = []
+// The diff is resolved SSR from a GET form (?a=&b=) — the browser cannot POST GraphQL directly.
+let diff: SnapshotDiff | null = null
+
+if (token) {
+  const { graphqlEndpoint } = readServerEnv()
+  const r = await gqlRequest<{ segmentSnapshots: SnapshotEntry[] }>(
+    { endpoint: graphqlEndpoint, token },
+    SEGMENT_SNAPSHOTS_QUERY,
+    { segmentId: id },
+  )
+  if (!r.ok) {
+    state = 'error'
+  } else {
+    snapshots = r.data.segmentSnapshots
+    state = snapshots.length === 0 ? 'empty' : 'ok'
+    if (a && b) {
+      const d = await gqlRequest<{ snapshotDiff: SnapshotDiff }>(
+        { endpoint: graphqlEndpoint, token },
+        SNAPSHOT_DIFF_QUERY,
+        { snapshotAId: a, snapshotBId: b },
+      )
+      if (d.ok) diff = d.data.snapshotDiff
+    }
+  }
+}
+---
+<Base title="Segment snapshots">
+  <h1 tabindex="-1">Snapshots — {id}</h1>
+  {state === 'auth' && <AuthFailure resource="segment snapshots" />}
+  {state === 'error' && <ErrorRetry message="Could not load snapshots." retryHref={Astro.url.pathname} />}
+  {state === 'empty' && <EmptyState message="No snapshots yet." />}
+  {state === 'ok' && (
+    <div>
+      <ol data-testid="snapshot-trend">
+        {snapshots.map((s) => (
+          <li>{s.takenAt ?? s.id} — <strong>{s.memberCount ?? 0}</strong> members <small>({s.reason ?? 'on_demand'})</small></li>
+        ))}
+      </ol>
+      <form method="get" data-testid="diff-form">
+        <label for="a">Snapshot A</label>
+        <select id="a" name="a">
+          {snapshots.map((s) => <option value={s.id}>{s.takenAt ?? s.id}</option>)}
+        </select>
+        <label for="b">Snapshot B</label>
+        <select id="b" name="b">
+          {snapshots.map((s) => <option value={s.id}>{s.takenAt ?? s.id}</option>)}
+        </select>
+        <button type="submit">Diff</button>
+      </form>
+      {diff && (
+        <section data-testid="snapshot-diff" aria-label="Snapshot diff">
+          <p data-testid="diff-added">+{diff.addedCount} added</p>
+          <p data-testid="diff-removed">-{diff.removedCount} removed</p>
+          <ul>{diff.added.map((s) => <li>+ {s}</li>)}</ul>
+          <ul>{diff.removed.map((s) => <li>- {s}</li>)}</ul>
+        </section>
+      )}
+    </div>
+  )}
+</Base>

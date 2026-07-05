@@ -16,6 +16,11 @@ verify_jwt = false
 [functions.flows]
 verify_jwt = false
 
+# The ingest API-key path carries NO Authorization header, so the gateway JWT check would 401
+# it before our code runs; the function does its OWN fail-closed auth for BOTH paths.
+[functions.ingest]
+verify_jwt = false
+
 [api]
 enabled = true
 # Port to use for the API URL.

@@ -1,0 +1,55 @@
+---
+import Base from '../../layouts/Base.astro'
+import AuthFailure from '../../components/states/AuthFailure.astro'
+import ErrorRetry from '../../components/states/ErrorRetry.astro'
+import EmptyState from '../../components/states/EmptyState.astro'
+import { readServerEnv } from '../../lib/env.ts'
+import { getSessionToken } from '../../lib/session.ts'
+import { gqlRequest } from '../../lib/graphql.ts'
+import { SEGMENT_SUMMARIES_QUERY, type SegmentSummary } from '../../lib/segment-queries.ts'
+
+const token = getSessionToken(Astro.cookies)
+let state: 'auth' | 'error' | 'empty' | 'ok' = 'auth'
+let segments: SegmentSummary[] = []
+
+if (token) {
+  const { graphqlEndpoint, workspaceId } = readServerEnv()
+  const r = await gqlRequest<{ segmentSummaries: SegmentSummary[] }>(
+    { endpoint: graphqlEndpoint, token },
+    SEGMENT_SUMMARIES_QUERY,
+    { workspaceId },
+  )
+  if (!r.ok) {
+    state = 'error'
+  } else {
+    segments = r.data.segmentSummaries
+    state = segments.length === 0 ? 'empty' : 'ok'
+  }
+}
+---
+<Base title="Segments">
+  <h1 tabindex="-1" id="segments-heading">Segments</h1>
+  {state === 'auth' && <AuthFailure resource="segments" />}
+  {state === 'error' && <ErrorRetry message="Could not load segments." retryHref={Astro.url.pathname + Astro.url.search} />}
+  {state === 'empty' && <EmptyState message="No segments yet." />}
+  {state === 'ok' && (
+    <table data-testid="segments-list">
+      <thead>
+        <tr><th>Name</th><th>Members</th><th>Owner</th><th>State</th><th>Last recompute</th><th>Rules</th></tr>
+      </thead>
+      <tbody>
+        {segments.map((s) => (
+          <tr>
+            <td><a href={`/segments/${s.id}/members`}>{s.name ?? s.id}</a></td>
+            <td>{s.memberCount}</td>
+            <td>{s.ownerRef ?? '—'}</td>
+            {/* text badges, never colour-only, for a11y */}
+            <td><span>{s.active ? 'active' : 'inactive'}</span> · <span>{s.mode ?? 'dynamic'}</span></td>
+            <td>{s.lastRecomputedAt ?? 'never'}</td>
+            <td><a href={`/segments/${s.id}/rules`}>Edit rules</a></td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  )}
+</Base>

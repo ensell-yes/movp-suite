@@ -69,6 +69,13 @@ describe('defineSchema aggregate', () => {
       'campaign_calendar_event',
       'campaign_metric',
       'campaign_segment',
+      'platform_event',
+      'segment',
+      'segment_rule',
+      'segment_membership',
+      'segment_snapshot',
+      'segment_snapshot_member',
+      'segment_recompute_run',
     ])
     expect(comment.internal).toBe(true)
   })

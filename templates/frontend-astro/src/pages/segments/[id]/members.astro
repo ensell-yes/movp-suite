@@ -1,0 +1,81 @@
+---
+import Base from '../../../layouts/Base.astro'
+import AuthFailure from '../../../components/states/AuthFailure.astro'
+import ErrorRetry from '../../../components/states/ErrorRetry.astro'
+import EmptyState from '../../../components/states/EmptyState.astro'
+import { readServerEnv } from '../../../lib/env.ts'
+import { getSessionToken } from '../../../lib/session.ts'
+import { gqlRequest } from '../../../lib/graphql.ts'
+import { SEGMENT_MEMBERS_QUERY, MEMBERSHIP_EXPLANATION_QUERY,
+  type SegmentMemberPage, type MembershipExplanation } from '../../../lib/segment-queries.ts'
+
+const id = String(Astro.params.id)
+const subject = Astro.url.searchParams.get('subject')
+const after = Astro.url.searchParams.get('after')
+const token = getSessionToken(Astro.cookies)
+let state: 'auth' | 'error' | 'empty' | 'ok' = 'auth'
+let page: SegmentMemberPage = { items: [], nextCursor: null }
+// The explanation panel is resolved SSR from ?subject=<ref> — the browser cannot POST GraphQL
+// directly (server-only endpoint + httpOnly cookie), so member rows are links, not client fetches.
+let explanation: MembershipExplanation | null = null
+
+if (token) {
+  const { graphqlEndpoint } = readServerEnv()
+  const r = await gqlRequest<{ segmentMembers: SegmentMemberPage }>(
+    { endpoint: graphqlEndpoint, token },
+    SEGMENT_MEMBERS_QUERY,
+    { segmentId: id, first: 50, after },
+  )
+  if (!r.ok) {
+    state = 'error'
+  } else {
+    page = r.data.segmentMembers
+    state = page.items.length === 0 ? 'empty' : 'ok'
+    if (subject) {
+      const e = await gqlRequest<{ segmentMembershipExplained: MembershipExplanation | null }>(
+        { endpoint: graphqlEndpoint, token },
+        MEMBERSHIP_EXPLANATION_QUERY,
+        { segmentId: id, subjectRef: subject },
+      )
+      if (e.ok) explanation = e.data.segmentMembershipExplained
+    }
+  }
+}
+---
+<Base title="Segment members">
+  <h1 tabindex="-1">Members — {id}</h1>
+  {state === 'auth' && <AuthFailure resource="segment members" />}
+  {state === 'error' && <ErrorRetry message="Could not load members." retryHref={Astro.url.pathname} />}
+  {state === 'empty' && <EmptyState message="No members yet." />}
+  {state === 'ok' && (
+    <div>
+      <ul data-testid="members-list">
+        {page.items.map((m) => (
+          <li>
+            {/* keyboard-focusable link opens the SSR explanation panel */}
+            <a href={`/segments/${id}/members?subject=${encodeURIComponent(m.subjectRef)}`}>{m.subjectRef}</a>
+            <small> rule {m.matchedRuleId ?? '—'} · {m.evaluatedAt ?? '—'}</small>
+          </li>
+        ))}
+      </ul>
+      {page.nextCursor && (
+        <a data-testid="members-more" href={`/segments/${id}/members?after=${encodeURIComponent(page.nextCursor)}`}>Load more</a>
+      )}
+      {explanation && (
+        <section data-testid="member-explanation" aria-label="Membership explanation">
+          <h2 tabindex="-1">{explanation.subjectRef}</h2>
+          <p data-testid="matched-rule-version">Matched rule v{explanation.matchedRuleVersion ?? '—'}</p>
+          {/* evidence trail: ids + typed dimensions ONLY — the query never selects `properties`. */}
+          <table data-testid="evidence-trail">
+            <thead><tr><th>Event id</th><th>Type</th><th>Occurred</th></tr></thead>
+            <tbody>
+              {explanation.evidence.map((ev) => (
+                <tr><td>{ev.eventId}</td><td>{ev.eventType ?? '—'}</td><td>{ev.occurredAt ?? '—'}</td></tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      )}
+    </div>
+  )}
+</Base>

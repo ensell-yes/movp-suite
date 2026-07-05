@@ -41,6 +41,13 @@ vi.mock('@movp/domain', () => ({
     campaign_calendar_event: crud(),
     campaign_metric: crud(),
     campaign_segment: crud(),
+    platform_event: crud(),
+    segment: crud(),
+    segment_rule: crud(),
+    segment_membership: crud(),
+    segment_snapshot: crud(),
+    segment_snapshot_member: crud(),
+    segment_recompute_run: crud(),
     search,
     graph: { link: vi.fn(async () => undefined), traverse: vi.fn() },
     collab: {
