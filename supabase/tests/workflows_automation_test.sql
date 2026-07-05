@@ -1,5 +1,5 @@
 begin;
-select plan(19);
+select plan(24);
 
 insert into public.workspace (id, name) values
   ('11111111-1111-1111-1111-111111111111', 'W1'),
@@ -48,7 +48,7 @@ delete from movp_internal.movp_events;
 select public.emit_event(
   'task.completed',
   '11111111-1111-1111-1111-111111111111',
-  jsonb_build_object('id', 'task-1', 'depth', 'abc'),
+  jsonb_build_object('id', 'task-1', 'depth', 'abc', 'email', 'redacted@example.test'),
   'trace-workflows-automation'
 );
 
@@ -78,6 +78,10 @@ select ok(
                    '11111111-1111-1111-1111-111111111111')
     ?& array['id','type','workspace_id','payload','trace_id','created_at'],
   'get_event returns the audit fields needed by the worker');
+select ok(
+  not (public.get_event((select id from _workflow_event_id),
+                        '11111111-1111-1111-1111-111111111111')->'payload' ? 'email'),
+  'member get_event redacts top-level email payload values');
 select is(
   public.get_event((select id from _workflow_event_id),
                    '22222222-2222-2222-2222-222222222222'),
@@ -98,6 +102,10 @@ select isnt(
                    '11111111-1111-1111-1111-111111111111'),
   null,
   'service-role worker can read an event through get_event without exposing movp_internal');
+select ok(
+  public.get_event((select id from _workflow_event_id),
+                   '11111111-1111-1111-1111-111111111111')->'payload' ? 'email',
+  'service-role get_event preserves raw payload for the worker');
 reset all;
 
 insert into movp_internal.webhooks (id, workspace_id, event_type, url, secret, active)
@@ -133,6 +141,44 @@ select throws_ok(
   '42501', NULL,
   'authenticated cannot execute the workflow webhook secret RPC');
 reset role;
+
+select ok(
+  exists (
+    select 1
+      from pg_indexes
+     where schemaname='movp_internal'
+       and tablename='movp_events'
+       and indexname='movp_events_workflow_dedupe_unique'
+  ),
+  'workflow chained emits are backed by a dedupe index');
+
+set local role service_role;
+set local request.jwt.claims = '{"role":"service_role"}';
+select public.workflow_emit_event(
+  'task.due_soon',
+  '11111111-1111-1111-1111-111111111111',
+  jsonb_build_object('id', 'chained-1'),
+  'trace-workflow-emit',
+  'event-1:rule-emit'
+);
+select public.workflow_emit_event(
+  'task.due_soon',
+  '11111111-1111-1111-1111-111111111111',
+  jsonb_build_object('id', 'chained-1'),
+  'trace-workflow-emit',
+  'event-1:rule-emit'
+);
+reset role;
+select is(
+  (select count(*)::int
+     from movp_internal.movp_events
+    where payload->>'workflow_dedupe' = 'event-1:rule-emit'),
+  1,
+  'workflow_emit_event emits exactly once for the same dedupe key');
+select throws_ok(
+  $$select public.workflow_emit_event('task.due_soon', '11111111-1111-1111-1111-111111111111', '{}'::jsonb, 'trace', null)$$,
+  '23514', NULL,
+  'workflow_emit_event requires an explicit dedupe key');
 
 select is((select count(*)::int
              from pg_proc p

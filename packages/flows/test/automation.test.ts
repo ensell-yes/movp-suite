@@ -142,7 +142,7 @@ class FakeDb {
       this.taskCreates.push(args)
       return { data: { id: `task-${this.taskCreates.length}`, workspace_id: args.ws, title: args.p_title }, error: null }
     }
-    if (fn === 'emit_event') {
+    if (fn === 'workflow_emit_event') {
       this.emitted.push(args)
       return { data: null, error: null }
     }
@@ -317,6 +317,35 @@ describe('runAutomationWorker', () => {
     expect(dispatch).not.toHaveBeenCalled()
     expect(db.tables.workflow_run[0]).toMatchObject({ outcome: 'skipped', error_code: 'cross_workspace_target' })
   })
+
+  it('resolves seeded $event placeholders before dispatching an enabled template rule', async () => {
+    const db = baseDb()
+    db.tables.event_type.push({ id: 'et-segment-membership', key: 'segment.membership_changed' })
+    db.tables.movp_events[0] = {
+      id: 'event-1',
+      type: 'segment.membership_changed',
+      workspace_id: 'ws-1',
+      payload: { entity_id: '11111111-1111-1111-1111-111111111111' },
+      trace_id: 'trace-1',
+    }
+    db.tables.segment.push({ id: '11111111-1111-1111-1111-111111111111', workspace_id: 'ws-1' })
+    addRule(db, {
+      id: 'seed-recompute',
+      trigger_event_type_id: 'et-segment-membership',
+      action_type: 'recompute_segment',
+      action_config: { segmentId: '$event.entity_id' },
+    })
+
+    await runAutomationWorker(db as unknown as SupabaseClient)
+
+    expect(db.enqueued[0]).toMatchObject({
+      job_kind: 'segment_recompute',
+      idem_key: 'event-1:seed-recompute',
+      ws: 'ws-1',
+      payload: { segment_id: '11111111-1111-1111-1111-111111111111' },
+    })
+    expect(db.tables.workflow_run[0]).toMatchObject({ automation_rule_id: 'seed-recompute', outcome: 'enqueued' })
+  })
 })
 
 describe('dispatchWorkflowAction', () => {
@@ -375,18 +404,18 @@ describe('dispatchWorkflowAction', () => {
 
   it('proves segment ownership before enqueuing recompute', async () => {
     const db = baseDb()
-    db.tables.segment.push({ id: 'seg-1', workspace_id: 'ws-1' })
+    db.tables.segment.push({ id: '11111111-1111-1111-1111-111111111111', workspace_id: 'ws-1' })
 
     const ok = await dispatchWorkflowAction(db as unknown as SupabaseClient, {
       workspaceId: 'ws-1',
       event: baseEvent(),
-      rule: baseRule('recompute_segment', { segmentId: 'seg-1' }) as any,
+      rule: baseRule('recompute_segment', { segmentId: '11111111-1111-1111-1111-111111111111' }) as any,
       dedupeKey: 'event-1:rule-1',
     })
     const cross = await dispatchWorkflowAction(db as unknown as SupabaseClient, {
       workspaceId: 'ws-1',
       event: baseEvent(),
-      rule: baseRule('recompute_segment', { segmentId: 'seg-2' }) as any,
+      rule: baseRule('recompute_segment', { segmentId: '22222222-2222-2222-2222-222222222222' }) as any,
       dedupeKey: 'event-1:rule-2',
     })
 
@@ -448,6 +477,7 @@ describe('dispatchWorkflowAction', () => {
       ws: 'ws-1',
       payload: { id: 'next', depth: 1 },
       trace: 'trace-1',
+      dedupe_key: 'event-1:rule-2',
     })
   })
 })

@@ -5,6 +5,7 @@ import type { ActionResult, AutomationRuleRow, MovpInternalEvent } from './autom
 
 const MAX_WORKFLOW_DEPTH = 5
 const SYSTEM_ACTOR_ID = '00000000-0000-0000-0000-000000000000'
+const BLOCKED_PATH = new Set(['__proto__', 'prototype', 'constructor'])
 
 function stringField(value: unknown): string | null {
   return typeof value === 'string' && value.length > 0 ? value : null
@@ -22,6 +23,34 @@ function uuidField(value: unknown): string | null {
   return typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)
     ? value
     : null
+}
+
+function readPath(payload: Record<string, unknown>, path: string): unknown {
+  let cur: unknown = payload
+  for (const part of path.split('.')) {
+    if (!part || BLOCKED_PATH.has(part)) return undefined
+    if (cur == null || typeof cur !== 'object' || !Object.prototype.hasOwnProperty.call(cur, part)) return undefined
+    cur = (cur as Record<string, unknown>)[part]
+  }
+  return cur
+}
+
+function resolveConfig(value: unknown, event: MovpInternalEvent): unknown {
+  if (typeof value === 'string' && value.startsWith('$event.')) {
+    const eventScope = {
+      id: event.id,
+      type: event.type,
+      workspace_id: event.workspace_id,
+      trace_id: event.trace_id,
+      ...event.payload,
+    }
+    return readPath(eventScope, value.slice('$event.'.length))
+  }
+  return value
+}
+
+function resolveActionConfig(cfg: Record<string, unknown>, event: MovpInternalEvent): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(cfg).map(([key, value]) => [key, resolveConfig(value, event)]))
 }
 
 async function rowBelongsToWorkspace(
@@ -143,8 +172,9 @@ async function advanceDeliverableForWorkspace(
   workspaceId: string,
   deliverableId: unknown,
 ): Promise<ActionResult> {
-  if (typeof deliverableId !== 'string') return { ok: false, errorCode: 'action_config_invalid' }
-  const ownership = await rowBelongsToWorkspace(db, 'campaign_deliverable', deliverableId, workspaceId)
+  const id = uuidField(deliverableId)
+  if (!id) return { ok: false, errorCode: 'action_config_invalid' }
+  const ownership = await rowBelongsToWorkspace(db, 'campaign_deliverable', id, workspaceId)
   if (ownership === 'error') return { ok: false, errorCode: 'action_dispatch_failed' }
   if (ownership === 'missing') return { ok: false, errorCode: 'cross_workspace_target' }
   return { ok: false, errorCode: 'phase_unavailable' }
@@ -157,15 +187,16 @@ async function enqueueSegmentRecomputeForWorkspace(
   event: MovpInternalEvent,
   dedupeKey: string,
 ): Promise<ActionResult> {
-  if (typeof segmentId !== 'string') return { ok: false, errorCode: 'action_config_invalid' }
-  const ownership = await rowBelongsToWorkspace(db, 'segment', segmentId, workspaceId)
+  const id = uuidField(segmentId)
+  if (!id) return { ok: false, errorCode: 'action_config_invalid' }
+  const ownership = await rowBelongsToWorkspace(db, 'segment', id, workspaceId)
   if (ownership === 'error') return { ok: false, errorCode: 'action_dispatch_failed' }
   if (ownership === 'missing') return { ok: false, errorCode: 'cross_workspace_target' }
   try {
     await enqueueJob(db, {
       kind: 'segment_recompute',
       idempotencyKey: dedupeKey,
-      payload: { segment_id: segmentId, mode: stringField((event.payload as Record<string, unknown>).mode) ?? 'full', trace_id: event.trace_id },
+      payload: { segment_id: id, mode: stringField((event.payload as Record<string, unknown>).mode) ?? 'full', trace_id: event.trace_id },
       workspaceId,
     })
     return { ok: true, outcome: 'enqueued' }
@@ -179,17 +210,19 @@ async function emitChainedEvent(
   workspaceId: string,
   event: MovpInternalEvent,
   cfg: Record<string, unknown>,
+  dedupeKey: string,
 ): Promise<ActionResult> {
   const eventType = stringField(cfg.eventType)
   if (!eventType) return { ok: false, errorCode: 'action_config_invalid' }
   const depth = intField(event.payload.depth)
   if (depth >= MAX_WORKFLOW_DEPTH) return { ok: false, errorCode: 'loop_depth_exceeded' }
   const payload = { ...objectField(cfg.payload), depth: depth + 1 }
-  const { error } = await db.rpc('emit_event', {
+  const { error } = await db.rpc('workflow_emit_event', {
     ev_type: eventType,
     ws: workspaceId,
     payload,
     trace: event.trace_id,
+    dedupe_key: dedupeKey,
   })
   if (error) return { ok: false, errorCode: error.code ?? 'action_dispatch_failed' }
   return { ok: true, outcome: 'succeeded' }
@@ -204,7 +237,7 @@ export async function dispatchWorkflowAction(
     dedupeKey: string
   },
 ): Promise<ActionResult> {
-  const cfg = input.rule.action_config as Record<string, unknown>
+  const cfg = resolveActionConfig(input.rule.action_config as Record<string, unknown>, input.event)
   if (typeof cfg.workspaceId === 'string' && cfg.workspaceId !== input.workspaceId) {
     return { ok: false, errorCode: 'cross_workspace_target' }
   }
@@ -220,7 +253,7 @@ export async function dispatchWorkflowAction(
     case 'recompute_segment':
       return enqueueSegmentRecomputeForWorkspace(db, input.workspaceId, cfg.segmentId, input.event, input.dedupeKey)
     case 'emit_event':
-      return emitChainedEvent(db, input.workspaceId, input.event, cfg)
+      return emitChainedEvent(db, input.workspaceId, input.event, cfg, input.dedupeKey)
     default:
       return { ok: false, errorCode: 'action_config_invalid' }
   }

@@ -8,6 +8,7 @@ set search_path = ''
 as $$
 declare
   v_event movp_internal.movp_events%rowtype;
+  v_payload jsonb;
 begin
   if coalesce(auth.role(), '') <> 'service_role' and not public.is_workspace_member(ws) then
     return null;
@@ -23,11 +24,16 @@ begin
     return null;
   end if;
 
+  v_payload := v_event.payload;
+  if coalesce(auth.role(), '') <> 'service_role' then
+    v_payload := v_payload - 'email';
+  end if;
+
   return jsonb_build_object(
     'id', v_event.id,
     'type', v_event.type,
     'workspace_id', v_event.workspace_id,
-    'payload', v_event.payload,
+    'payload', v_payload,
     'trace_id', v_event.trace_id,
     'created_at', v_event.created_at
   );
@@ -67,6 +73,37 @@ $$;
 
 revoke all on function public.workflow_webhook_for_action(uuid, uuid) from public, anon, authenticated;
 grant execute on function public.workflow_webhook_for_action(uuid, uuid) to service_role;
+
+create unique index if not exists movp_events_workflow_dedupe_unique
+  on movp_internal.movp_events ((payload->>'workflow_dedupe'))
+  where payload ? 'workflow_dedupe';
+
+create or replace function public.workflow_emit_event(ev_type text, ws uuid, payload jsonb, trace text, dedupe_key text)
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if dedupe_key is null or length(dedupe_key) = 0 then
+    raise exception 'workflow dedupe key is required' using errcode = '23514';
+  end if;
+
+  begin
+    perform public.emit_event(
+      ev_type,
+      ws,
+      coalesce(payload, '{}'::jsonb) || jsonb_build_object('workflow_dedupe', dedupe_key),
+      trace
+    );
+  exception when unique_violation then
+    return;
+  end;
+end;
+$$;
+
+revoke all on function public.workflow_emit_event(text, uuid, jsonb, text, text) from public, anon, authenticated;
+grant execute on function public.workflow_emit_event(text, uuid, jsonb, text, text) to service_role;
 
 alter table public.task
   add column if not exists workflow_idempotency_key text;
