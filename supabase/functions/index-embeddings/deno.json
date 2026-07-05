@@ -5,6 +5,7 @@
     "@movp/search/gte-small": "../../../packages/search/src/gte-small.ts",
     "@movp/domain": "../../../packages/domain/src/index.ts",
     "@movp/notifications": "../../../packages/notifications/src/index.ts",
+    "zod": "npm:zod@^3.23.8",
     "@supabase/supabase-js": "npm:@supabase/supabase-js@2"
   }
 }

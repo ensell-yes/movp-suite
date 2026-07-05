@@ -16,6 +16,8 @@ const taskBoard = vi.fn(async () => [{ status: { id: 's1', label: 'Todo' }, task
 const contentCreate = vi.fn(async () => ({ id: 'ci1', slug: 'hello', status: 'draft' }))
 const contentPublish = vi.fn(async () => ({ id: 'ci1', status: 'published' }))
 const contentIssueAsset = vi.fn(async () => ({ uploadUrl: 'https://r2/put', assetId: 'a1', r2Key: 'w/a1' }))
+const campaignLinkTask = vi.fn(async () => undefined)
+const campaignDeliverableSchedules = vi.fn(async () => [])
 
 function crud() {
   return {
@@ -31,8 +33,14 @@ vi.mock('@movp/domain', () => ({
   createDomain: vi.fn(() => ({
     note: crud(),
     tag: crud(),
+    marketing_plan: crud(),
     task_status_option: crud(),
     task_priority_option: crud(),
+    campaign_channel: crud(),
+    campaign_deliverable: crud(),
+    campaign_calendar_event: crud(),
+    campaign_metric: crud(),
+    campaign_segment: crud(),
     search,
     graph: { link: vi.fn(async () => undefined), traverse: vi.fn() },
     collab: {
@@ -83,6 +91,15 @@ vi.mock('@movp/domain', () => ({
       linkAsset: vi.fn(),
       linkItem: vi.fn(),
       linkEditorialTask: vi.fn(),
+    },
+    campaign: {
+      ...crud(),
+      linkTask: campaignLinkTask,
+      linkContent: vi.fn(async () => undefined),
+      linkSegment: vi.fn(async () => undefined),
+      addObserver: vi.fn(async () => undefined),
+      deliverableSchedule: vi.fn(async () => null),
+      deliverableSchedules: campaignDeliverableSchedules,
     },
   })),
 }))

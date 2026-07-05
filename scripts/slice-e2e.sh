@@ -105,13 +105,25 @@ psql "$DB_URL" -v ON_ERROR_STOP=1 \
 echo "== serve edge functions =="
 FN_ENV_FILE="$(mktemp "${TMPDIR:-/tmp}/movp-functions.XXXXXX")"
 printf 'MOVP_JWT_ISSUER=%s\n' "$API_URL/auth/v1" >"$FN_ENV_FILE"
+printf 'RESEND_API_KEY=%s\n' "slice-e2e-placeholder" >>"$FN_ENV_FILE"
 supabase_local functions serve graphql mcp index-embeddings flows --env-file "$FN_ENV_FILE" >/tmp/movp-functions.log 2>&1 &
 FN_PID=$!
 trap 'kill $FN_PID 2>/dev/null || true; rm -f "$FN_ENV_FILE"' EXIT
+GRAPHQL_READY=0
 for _ in $(seq 1 60); do
-  curl -sf "$API_URL/functions/v1/graphql" -X OPTIONS >/dev/null 2>&1 && break
+  READY_BODY="$(post_graphql '{"query":"query{__typename}"}' || true)"
+  if printf '%s' "$READY_BODY" | grep -q '"__typename"'; then
+    GRAPHQL_READY=1
+    break
+  fi
+  if printf '%s' "$READY_BODY" | grep -q 'BOOT_ERROR'; then
+    echo "graphql function boot failed during readiness: $READY_BODY"
+    tail -n 80 /tmp/movp-functions.log
+    exit 1
+  fi
   sleep 1
 done
+[ "$GRAPHQL_READY" = "1" ] || { echo "graphql function did not become ready; last response=${READY_BODY:-none}"; tail -n 80 /tmp/movp-functions.log; exit 1; }
 
 echo "== [3] GraphQL: create + query back =="
 CREATE="$(post_graphql "{\"query\":\"mutation(\$i:NoteCreateInput!){createNote(input:\$i){id title}}\",\"variables\":{\"i\":{\"workspace_id\":\"$WS\",\"title\":\"E2E note\",\"body\":\"semantic lighthouse phrase for e2e verification\"}}}")"
@@ -302,6 +314,7 @@ psql "$DB_URL" -v ON_ERROR_STOP=1 -c "select public.register_webhook('$WS', 'con
 post_graphql "{\"query\":\"mutation{publishContent(itemId:\\\"$ITEM_ID\\\"){id status published_revision_id}}\"}" | grep -q 'published' || { echo "publishContent failed"; kill "$CAP_PID" 2>/dev/null || true; exit 1; }
 PUB_EVT="$(psql "$DB_URL" -tAc "select count(*) from movp_internal.movp_events where type='content.published' and payload->>'id'='$ITEM_ID';" | tr -d '[:space:]')"
 [ "$PUB_EVT" -ge 1 ] || { echo "no content.published event"; kill "$CAP_PID" 2>/dev/null || true; exit 1; }
+psql "$DB_URL" -v ON_ERROR_STOP=1 -c "update movp_internal.movp_jobs set status='dead', last_error_code='slice_skips_external_email' where kind='notify' and status in ('pending','running');" >/dev/null
 curl -sS -f -X POST "$API_URL/functions/v1/flows" \
   -H "Authorization: Bearer $SERVICE_ROLE_KEY" -H "apikey: $SERVICE_ROLE_KEY" \
   -H "content-type: application/json" >/tmp/content-flows.json
@@ -381,6 +394,66 @@ for T in content.created content.submitted_for_approval content.approved content
 done
 LEAK="$(psql "$DB_URL" -tAc "select count(*) from movp_internal.movp_events where (payload->>'id'='$ITEM_ID' or payload->>'content_item_id'='$ITEM_ID') and (payload::text ilike '%e2e-article%' or payload::text ilike '%v1%' or payload::text ilike '%v2%' or payload::text ilike '%v3-draft%');" | tr -d '[:space:]')"
 [ "$LEAK" = "0" ] || { echo "event payload leaked content title/body text (redaction broken)"; exit 1; }
+
+echo "== [campaigns] plan -> campaign (psql: FK/status/date set) -> campaign.created + FK resolves =="
+TODAY="$(date -u +%F)"
+PLAN_ID="11111111-cccc-0000-0000-000000000001"
+CAMP_ID="22222222-cccc-0000-0000-000000000001"
+DELIV_ID="33333333-cccc-0000-0000-000000000001"
+psql "$DB_URL" -v ON_ERROR_STOP=1 \
+  -c "insert into public.marketing_plan (id, workspace_id, name, owner_id) values ('$PLAN_ID','$WS','E2E Plan','$USER_ID') on conflict (id) do nothing;" \
+  -c "insert into public.campaign (id, workspace_id, name, marketing_plan_id, owner_id, status, start_date) values ('$CAMP_ID','$WS','E2E Campaign','$PLAN_ID','$USER_ID','scheduled','$TODAY') on conflict (id) do nothing;" \
+  -c "insert into public.campaign_deliverable (id, workspace_id, campaign_id, name) values ('$DELIV_ID','$WS','$CAMP_ID','E2E Deliverable') on conflict (id) do nothing;"
+CREATED="$(psql "$DB_URL" -tAc "select count(*) from movp_internal.movp_events where type='campaign.created' and payload->>'entity_id'='$CAMP_ID';" | tr -d '[:space:]')"
+[ "${CREATED:-0}" -ge 1 ] || { echo "no campaign.created event for $CAMP_ID (got $CREATED)"; exit 1; }
+FK="$(psql "$DB_URL" -tAc "select marketing_plan_id from public.campaign where id='$CAMP_ID';" | tr -d '[:space:]')"
+[ "$FK" = "$PLAN_ID" ] || { echo "campaign.marketing_plan_id did not resolve (got $FK)"; exit 1; }
+
+echo "== [campaigns] create a backing task and link it (implemented_by edge) =="
+TASK="$(post_graphql "{\"query\":\"mutation{createTask(workspaceId:\\\"$WS\\\", title:\\\"Backing task\\\"){id}}\"}")"
+TASK_ID="$(echo "$TASK" | json_get data.createTask.id)"
+[ -n "$TASK_ID" ] || { echo "createTask failed: $TASK"; exit 1; }
+psql "$DB_URL" -v ON_ERROR_STOP=1 \
+  -c "insert into public.edges (workspace_id, src_type, src_id, rel, dst_type, dst_id) values ('$WS','campaign_deliverable','$DELIV_ID','implemented_by','task','$TASK_ID') on conflict do nothing;"
+
+echo "== [campaigns] assign the backing task -> bridge emits deliverable.assigned =="
+post_graphql "{\"query\":\"mutation{assignTask(taskId:\\\"$TASK_ID\\\", userId:\\\"$USER2_ID\\\")}\"}" >/dev/null
+ASSIGNED="$(psql "$DB_URL" -tAc "select count(*) from movp_internal.movp_events where type='deliverable.assigned' and payload->>'entity_id'='$DELIV_ID';" | tr -d '[:space:]')"
+[ "${ASSIGNED:-0}" -ge 1 ] || { echo "bridge did not emit deliverable.assigned for $DELIV_ID (got $ASSIGNED)"; exit 1; }
+
+echo "== [campaigns] complete the backing task -> bridge emits deliverable.completed =="
+DONE_ID="$(psql "$DB_URL" -tAc "select id from public.task_status_option where workspace_id='$WS' and category='done' limit 1;" | tr -d '[:space:]')"
+[ -n "$DONE_ID" ] || { echo "no done-category status option for WS"; exit 1; }
+post_graphql "{\"query\":\"mutation{transitionTask(taskId:\\\"$TASK_ID\\\", statusId:\\\"$DONE_ID\\\"){id completed_at}}\"}" >/dev/null
+COMPLETED="$(psql "$DB_URL" -tAc "select count(*) from movp_internal.movp_events where type='deliverable.completed' and payload->>'entity_id'='$DELIV_ID';" | tr -d '[:space:]')"
+[ "${COMPLETED:-0}" -ge 1 ] || { echo "bridge did not emit deliverable.completed for $DELIV_ID (got $COMPLETED)"; exit 1; }
+
+echo "== [campaigns] scan flips scheduled->active (campaign.started once); re-run emits nothing =="
+psql "$DB_URL" -tAc "select public.scan_campaigns();" >/dev/null
+STATUS="$(psql "$DB_URL" -tAc "select status from public.campaign where id='$CAMP_ID';" | tr -d '[:space:]')"
+[ "$STATUS" = "active" ] || { echo "scan did not activate the campaign (got $STATUS)"; exit 1; }
+STARTED1="$(psql "$DB_URL" -tAc "select count(*) from movp_internal.movp_events where type='campaign.started' and payload->>'entity_id'='$CAMP_ID';" | tr -d '[:space:]')"
+[ "${STARTED1:-0}" -eq 1 ] || { echo "expected exactly one campaign.started (got $STARTED1)"; exit 1; }
+psql "$DB_URL" -tAc "select public.scan_campaigns();" >/dev/null
+STARTED2="$(psql "$DB_URL" -tAc "select count(*) from movp_internal.movp_events where type='campaign.started' and payload->>'entity_id'='$CAMP_ID';" | tr -d '[:space:]')"
+[ "${STARTED2:-0}" -eq 1 ] || { echo "re-running scan emitted a duplicate campaign.started (got $STARTED2)"; exit 1; }
+
+echo "== [campaigns] no-duplication gate: campaign_deliverable has no schedule/status/assignee columns =="
+DUP_COLS="$(psql "$DB_URL" -tAc "select count(*) from information_schema.columns where table_schema='public' and table_name='campaign_deliverable' and column_name in ('start_date','due_date','status','status_id','priority','priority_id','assignee_user_id','completed_at');" | tr -d '[:space:]')"
+[ "${DUP_COLS:-1}" -eq 0 ] || { echo "campaign_deliverable duplicates task fields (found $DUP_COLS)"; exit 1; }
+
+echo "== [campaigns] a non-member sees 0 campaigns (GraphQL read under RLS) =="
+OUT="$(post_graphql_as "$TOKEN3" "{\"query\":\"query{campaigns(workspaceId:\\\"$WS\\\"){items{id}}}\"}")"
+echo "$OUT" | grep -q "$CAMP_ID" && { echo "non-member could see the campaign: $OUT"; exit 1; }
+
+echo "== [campaigns] a non-owner UPDATE is denied (owner-only RLS) =="
+psql "$DB_URL" -tAc "update public.campaign set name='keep' where id='$CAMP_ID';" >/dev/null
+curl -sS -X PATCH "$API_URL/rest/v1/campaign?id=eq.$CAMP_ID" \
+  -H "Authorization: Bearer $TOKEN2" -H "apikey: $ANON_KEY" \
+  -H "content-type: application/json" -H "Prefer: return=representation" \
+  -d '{"name":"hijacked"}' >/dev/null
+NAME="$(psql "$DB_URL" -tAc "select name from public.campaign where id='$CAMP_ID';" | tr -d '[:space:]')"
+[ "$NAME" = "keep" ] || { echo "non-owner UPDATE mutated the campaign (name=$NAME)"; exit 1; }
 
 echo "== [8] internal not exposed via PostgREST API =="
 REST="$(curl -sS -o /dev/null -w '%{http_code}' "$API_URL/rest/v1/movp_jobs" -H "apikey: $ANON_KEY")"

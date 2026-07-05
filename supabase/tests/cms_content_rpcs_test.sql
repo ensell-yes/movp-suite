@@ -4,7 +4,7 @@ select plan(16);
 select has_function('public', 'create_content_with_revision',
   array['uuid','uuid','text','jsonb','text','text','text'], 'create_content_with_revision exists');
 select has_function('public', 'update_content',
-  array['uuid','jsonb','text','text','text'], 'update_content exists');
+  array['uuid','jsonb','text','text','text','uuid'], 'update_content exists');
 select is(has_function_privilege('authenticated',
   'public.create_content_with_revision(uuid,uuid,text,jsonb,text,text,text)', 'execute'),
   true, 'authenticated can execute create_content_with_revision');
@@ -12,10 +12,10 @@ select is(has_function_privilege('anon',
   'public.create_content_with_revision(uuid,uuid,text,jsonb,text,text,text)', 'execute'),
   false, 'anon cannot execute create_content_with_revision');
 select is(has_function_privilege('authenticated',
-  'public.update_content(uuid,jsonb,text,text,text)', 'execute'),
+  'public.update_content(uuid,jsonb,text,text,text,uuid)', 'execute'),
   true, 'authenticated can execute update_content');
 select is(has_function_privilege('anon',
-  'public.update_content(uuid,jsonb,text,text,text)', 'execute'),
+  'public.update_content(uuid,jsonb,text,text,text,uuid)', 'execute'),
   false, 'anon cannot execute update_content');
 
 reset role;

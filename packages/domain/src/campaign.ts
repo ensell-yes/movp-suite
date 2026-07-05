@@ -1,7 +1,9 @@
 import { makeGraphService } from './graph.ts'
 import type { DomainCtx, CampaignService } from './types.ts' // match content.ts's import style/paths
 
-export function makeCampaignService(ctx: DomainCtx): CampaignService {
+type CampaignCustomService = Omit<CampaignService, 'create' | 'get' | 'list' | 'update' | 'delete'>
+
+export function makeCampaignService(ctx: DomainCtx): CampaignCustomService {
   const graph = makeGraphService(ctx) // sibling — NOT this.graph
 
   const fail = (op: string, code: string): never => {

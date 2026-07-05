@@ -9,6 +9,27 @@ import type {
   ContentScheduleRow,
   ContentSeoRow,
   ContentTypeRow,
+  CampaignCalendarEventCreate,
+  CampaignCalendarEventRow,
+  CampaignCalendarEventUpdate,
+  CampaignChannelCreate,
+  CampaignChannelRow,
+  CampaignChannelUpdate,
+  CampaignCreate,
+  CampaignDeliverableCreate,
+  CampaignDeliverableRow,
+  CampaignDeliverableUpdate,
+  CampaignMetricCreate,
+  CampaignMetricRow,
+  CampaignMetricUpdate,
+  CampaignRow,
+  CampaignSegmentCreate,
+  CampaignSegmentRow,
+  CampaignSegmentUpdate,
+  CampaignUpdate,
+  MarketingPlanCreate,
+  MarketingPlanRow,
+  MarketingPlanUpdate,
   NoteCreate,
   NoteRow,
   NoteUpdate,
@@ -169,7 +190,7 @@ export interface ContentService {
   linkEditorialTask(i: { itemId: string; taskId: string }): Promise<void>
 }
 
-export interface CampaignService {
+export interface CampaignService extends CollectionService<CampaignRow, CampaignCreate, CampaignUpdate> {
   linkTask(i: { deliverableId: string; taskId: string }): Promise<void>                 // edge deliverable -> task (implemented_by); rejects [task_not_found] if the task is missing or cross-workspace
   linkContent(i: { deliverableId: string; contentItemId: string }): Promise<void>       // edge deliverable -> content_item (produces)
   linkSegment(i: { campaignId: string; segmentId: string }): Promise<void>              // edge campaign -> segment (targets; inert until Phase 6)
@@ -181,8 +202,14 @@ export interface CampaignService {
 export interface Domain {
   note: CollectionService<NoteRow, NoteCreate, NoteUpdate>
   tag: CollectionService<TagRow, TagCreate, TagUpdate>
+  marketing_plan: CollectionService<MarketingPlanRow, MarketingPlanCreate, MarketingPlanUpdate>
   task_status_option: CollectionService<TaskStatusOptionRow, TaskStatusOptionCreate, TaskStatusOptionUpdate>
   task_priority_option: CollectionService<TaskPriorityOptionRow, TaskPriorityOptionCreate, TaskPriorityOptionUpdate>
+  campaign_channel: CollectionService<CampaignChannelRow, CampaignChannelCreate, CampaignChannelUpdate>
+  campaign_deliverable: CollectionService<CampaignDeliverableRow, CampaignDeliverableCreate, CampaignDeliverableUpdate>
+  campaign_calendar_event: CollectionService<CampaignCalendarEventRow, CampaignCalendarEventCreate, CampaignCalendarEventUpdate>
+  campaign_metric: CollectionService<CampaignMetricRow, CampaignMetricCreate, CampaignMetricUpdate>
+  campaign_segment: CollectionService<CampaignSegmentRow, CampaignSegmentCreate, CampaignSegmentUpdate>
   task: TaskService
   content: ContentService
   search(a: SearchArgs): Promise<SearchHit[]>
