@@ -1,5 +1,6 @@
 import { defineCollection, defineEvent, defineSchema, f } from '@movp/core-schema'
 import { describe, expect, it } from 'vitest'
+import { checkEventCatalog } from '../src/event-catalog.ts'
 import { emitSqlMigration } from '../src/emit-sql.ts'
 
 describe('workflow catalog codegen contract', () => {
@@ -31,5 +32,15 @@ describe('workflow catalog codegen contract', () => {
     expect(eventTypeSql).not.toContain('public.is_workspace_member(workspace_id)')
     expect(eventTypeSql).toContain('create policy event_type_read on public.event_type for select to authenticated using (true)')
     expect(sql).toContain("('task.completed', 'task'")
+  })
+
+  it('reports emit callsites that are missing from the event catalog', () => {
+    const result = checkEventCatalog(
+      [defineEvent({ key: 'task.completed', domain: 'task', payloadSchema: { type: 'object' }, version: 1 })],
+      ['task.completed', 'missing.event'],
+    )
+
+    expect(result.missingFromCatalog).toEqual(['missing.event'])
+    expect(result.unusedCatalogKeys).toEqual([])
   })
 })

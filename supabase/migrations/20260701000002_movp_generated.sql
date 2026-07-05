@@ -3095,6 +3095,7 @@ on conflict (collection_name, name) do update set
 create unique index if not exists event_type_key_unique on public.event_type (key);
 insert into public.event_type (key, domain, label, payload_schema, schema_version, active, description)
 values
+  ('note.created', 'lifecycle', 'Note created', '{"type":"object"}', 1, true, null),
   ('comment.added', 'collaboration', 'Comment added', '{"type":"object"}', 1, true, null),
   ('comment.replied', 'collaboration', 'Comment replied', '{"type":"object"}', 1, true, null),
   ('user.mentioned', 'collaboration', 'User mentioned', '{"type":"object"}', 1, true, null),

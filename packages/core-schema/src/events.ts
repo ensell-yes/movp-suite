@@ -8,6 +8,8 @@ function event(key: string, domain: EventDef['domain'], label: string, descripti
 }
 
 export const events = [
+  event('note.created', 'lifecycle', 'Note created'),
+
   event('comment.added', 'collaboration', 'Comment added'),
   event('comment.replied', 'collaboration', 'Comment replied'),
   event('user.mentioned', 'collaboration', 'User mentioned'),
