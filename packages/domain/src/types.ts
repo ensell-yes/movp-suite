@@ -182,7 +182,7 @@ export interface TaskBoardColumn {
 }
 
 export interface TaskService {
-  create(i: { workspaceId: string; title: string; description?: string; statusId?: string; priorityId?: string; parentId?: string; startDate?: string; dueDate?: string }): Promise<TaskRow>
+  create(i: { workspaceId: string; title: string; description?: string; statusId?: string; priorityId?: string; parentId?: string; startDate?: string; dueDate?: string; idempotencyKey?: string; actorId?: string }): Promise<TaskRow>
   get(id: string): Promise<TaskRow | null>
   list(a: { workspaceId: string; statusId?: string; assigneeId?: string; parentId?: string | null; first?: number; after?: string | null }): Promise<Page<TaskRow>>
   board(a: { workspaceId: string }): Promise<TaskBoardColumn[]>

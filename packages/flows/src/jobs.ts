@@ -13,7 +13,7 @@ export interface Job {
 
 export async function enqueueJob(
   db: SupabaseClient,
-  job: { kind: 'embed' | 'webhook' | 'notify'; idempotencyKey: string; payload: Record<string, unknown>; workspaceId?: string },
+  job: { kind: 'embed' | 'webhook' | 'notify' | 'automate' | 'segment_recompute'; idempotencyKey: string; payload: Record<string, unknown>; workspaceId?: string },
 ): Promise<void> {
   const { error } = await db.rpc('enqueue_job', {
     job_kind: job.kind,

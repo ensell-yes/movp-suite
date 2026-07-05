@@ -39,7 +39,8 @@ export function makeTaskService(ctx: DomainCtx): TaskService {
     async create(i) {
       const statusId = i.statusId ?? (await defaultOption('task_status_option', i.workspaceId))
       const priorityId = i.priorityId ?? (await defaultOption('task_priority_option', i.workspaceId))
-      const { data, error } = await ctx.db.rpc('create_task_with_revision', {
+      const rpc = i.idempotencyKey ? 'create_workflow_task_with_revision' : 'create_task_with_revision'
+      const args = {
         ws: i.workspaceId,
         p_title: i.title,
         p_status_id: statusId,
@@ -48,6 +49,18 @@ export function makeTaskService(ctx: DomainCtx): TaskService {
         p_start_date: i.startDate ?? null,
         p_due_date: i.dueDate ?? null,
         p_body: i.description ?? null,
+        p_idempotency_key: i.idempotencyKey ?? null,
+        p_actor_id: i.actorId ?? null,
+      }
+      const { data, error } = await ctx.db.rpc(rpc, i.idempotencyKey ? args : {
+        ws: args.ws,
+        p_title: args.p_title,
+        p_status_id: args.p_status_id,
+        p_priority_id: args.p_priority_id,
+        p_parent_id: args.p_parent_id,
+        p_start_date: args.p_start_date,
+        p_due_date: args.p_due_date,
+        p_body: args.p_body,
       })
       if (error) fail('create', error.code)
       return data as TaskRow

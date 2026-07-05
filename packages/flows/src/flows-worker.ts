@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import type { NotificationProvider } from '@movp/notifications'
 import { escapeHtml } from '@movp/notifications'
 import { claimDueJobs, completeJob } from './jobs.ts'
+import { runAutomationWorker } from './automation.ts'
 
 function stringField(value: unknown): string | null {
   return typeof value === 'string' && value.length > 0 ? value : null
@@ -65,6 +66,10 @@ export async function runFlowsWorker(
       failed++
     }
   }
+
+  const automate = await runAutomationWorker(db, limit)
+  processed += automate.processed
+  failed += automate.failed
 
   for (const job of await claimDueJobs(db, 'webhook', limit)) {
     try {
