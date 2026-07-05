@@ -82,6 +82,8 @@ Deno.serve(async (req) => {
   let jwtPrincipal: Awaited<ReturnType<typeof resolvePrincipal>> | null = null;
   if (ingestKey) {
     admin = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } }) as unknown as AdminRpc;
+    // Preflight the API key before buffering the request body. An empty batch validates the
+    // hashed key through the authoritative RPC without inserting events or firing triggers.
     const { error } = await admin.rpc('ingest_platform_event', { api_key: ingestKey, events: [] });
     if (error) {
       if (error.code === '28000') return fail(401, 'ingest_key', 'invalid_ingest_key');
