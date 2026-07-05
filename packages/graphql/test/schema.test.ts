@@ -43,6 +43,7 @@ const recursive: MovpSchema = {
       },
     },
   ],
+  events: [],
 }
 
 describe('buildSchema', () => {

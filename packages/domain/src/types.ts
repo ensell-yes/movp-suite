@@ -1,6 +1,9 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type {
   AssetRow,
+  AutomationRuleCreate,
+  AutomationRuleRow,
+  AutomationRuleUpdate,
   CommentRow,
   ContentApprovalRow,
   ContentCollectionRow,
@@ -26,6 +29,9 @@ import type {
   CampaignSegmentCreate,
   CampaignSegmentRow,
   CampaignSegmentUpdate,
+  EventTypeCreate,
+  EventTypeRow,
+  EventTypeUpdate,
   PlatformEventCreate,
   PlatformEventRow,
   PlatformEventUpdate,
@@ -64,6 +70,12 @@ import type {
   TaskStatusOptionCreate,
   TaskStatusOptionRow,
   TaskStatusOptionUpdate,
+  WebhookSubscriptionCreate,
+  WebhookSubscriptionRow,
+  WebhookSubscriptionUpdate,
+  WorkflowRunCreate,
+  WorkflowRunRow,
+  WorkflowRunUpdate,
 } from './generated/types.ts'
 
 export interface DomainCtx {
@@ -221,6 +233,7 @@ export interface CampaignService extends CollectionService<CampaignRow, Campaign
 }
 
 export interface Domain {
+  event_type: CollectionService<EventTypeRow, EventTypeCreate, EventTypeUpdate>
   note: CollectionService<NoteRow, NoteCreate, NoteUpdate>
   tag: CollectionService<TagRow, TagCreate, TagUpdate>
   marketing_plan: CollectionService<MarketingPlanRow, MarketingPlanCreate, MarketingPlanUpdate>
@@ -238,6 +251,9 @@ export interface Domain {
   segment_snapshot: CollectionService<SegmentSnapshotRow, SegmentSnapshotCreate, SegmentSnapshotUpdate>
   segment_snapshot_member: CollectionService<SegmentSnapshotMemberRow, SegmentSnapshotMemberCreate, SegmentSnapshotMemberUpdate>
   segment_recompute_run: CollectionService<SegmentRecomputeRunRow, SegmentRecomputeRunCreate, SegmentRecomputeRunUpdate>
+  automation_rule: CollectionService<AutomationRuleRow, AutomationRuleCreate, AutomationRuleUpdate>
+  webhook_subscription: CollectionService<WebhookSubscriptionRow, WebhookSubscriptionCreate, WebhookSubscriptionUpdate>
+  workflow_run: CollectionService<WorkflowRunRow, WorkflowRunCreate, WorkflowRunUpdate>
   task: TaskService
   content: ContentService
   search(a: SearchArgs): Promise<SearchHit[]>
