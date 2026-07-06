@@ -1,8 +1,9 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { NotificationProvider } from '@movp/notifications'
 import { escapeHtml } from '@movp/notifications'
-import { claimDueJobs, completeJob } from './jobs.ts'
+import { claimDueJobs, completeJob, type Job } from './jobs.ts'
 import { runAutomationWorker } from './automation.ts'
+import { evaluateCondition } from './condition.ts'
 
 function stringField(value: unknown): string | null {
   return typeof value === 'string' && value.length > 0 ? value : null
@@ -34,6 +35,21 @@ async function emailForUser(db: SupabaseClient, userId: string): Promise<string 
   if (error) return null
   const email = data.user?.email
   return typeof email === 'string' && email.length > 0 ? email : null
+}
+
+async function subscriptionForWebhookJob(db: SupabaseClient, job: Job): Promise<{ filter: unknown } | null> {
+  const event = stringField(job.payload.event)
+  const url = stringField(job.payload.url)
+  if (!job.workspace_id || !event || !url) return null
+
+  const { data, error } = await db.rpc('webhook_subscription_for_delivery', {
+    ws: job.workspace_id,
+    event_key: event,
+    hook_url: url,
+    hook_secret: stringField(job.payload.secret),
+  })
+  if (error) throw new Error(`webhook_subscription_lookup_failed:${error.code ?? 'unknown'}`)
+  return data && typeof data === 'object' ? (data as { filter: unknown }) : null
 }
 
 export async function runFlowsWorker(
@@ -73,6 +89,16 @@ export async function runFlowsWorker(
 
   for (const job of await claimDueJobs(db, 'webhook', limit)) {
     try {
+      const subscription = await subscriptionForWebhookJob(db, job)
+      if (subscription) {
+        const filter = evaluateCondition(subscription.filter, job.payload as Record<string, unknown>)
+        if (!filter.ok) throw new Error(filter.errorCode)
+        if (!filter.matched) {
+          await completeJob(db, job.id, true)
+          processed++
+          continue
+        }
+      }
       const { url, headers, body } = await buildWebhookRequest(job.payload as Record<string, unknown>)
       const res = await fetch(url, { method: 'POST', headers, body })
       if (!res.ok) throw new Error(`webhook:${res.status}`)

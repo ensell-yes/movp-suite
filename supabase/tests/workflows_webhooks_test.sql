@@ -1,5 +1,5 @@
 begin;
-select plan(30);
+select plan(34);
 
 insert into public.workspace (id, name) values
   ('11111111-1111-1111-1111-111111111111', 'W1'),
@@ -184,6 +184,35 @@ select ok(
        and to_jsonb(s)::text like '%' || (select result->>'secret' from _registered) || '%'
   ),
   'public row still contains no old secret after management operations');
+
+select is(has_function_privilege('authenticated',
+                                 'public.webhook_subscription_for_delivery(uuid,text,text,text)',
+                                 'execute'),
+          false,
+          'authenticated cannot execute the delivery-time subscription lookup');
+select is(has_function_privilege('service_role',
+                                 'public.webhook_subscription_for_delivery(uuid,text,text,text)',
+                                 'execute'),
+          true,
+          'service_role can execute the delivery-time subscription lookup');
+select is(
+  public.webhook_subscription_for_delivery(
+    '11111111-1111-1111-1111-111111111111',
+    'task.completed',
+    'https://example.test/hook',
+    (select result->>'secret' from _rotated)
+  )->'filter',
+  '{"op": "eq", "field": "event", "value": "content.published"}'::jsonb,
+  'delivery lookup returns the managed subscription filter');
+select is(
+  public.webhook_subscription_for_delivery(
+    '11111111-1111-1111-1111-111111111111',
+    'task.completed',
+    'https://example.test/core',
+    'core-secret'
+  ),
+  null,
+  'delivery lookup returns null for unmanaged Core webhooks');
 
 create temp table _pair as
 select s.id as subscription_id, s.internal_webhook_id

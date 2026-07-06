@@ -201,6 +201,28 @@ $$;
 revoke all on function public.set_webhook_filter(uuid, uuid, jsonb) from public, anon, authenticated;
 grant execute on function public.set_webhook_filter(uuid, uuid, jsonb) to authenticated;
 
+create or replace function public.webhook_subscription_for_delivery(ws uuid, event_key text, hook_url text, hook_secret text)
+returns jsonb
+language sql
+security definer
+set search_path = ''
+as $$
+  select jsonb_build_object('filter', s.filter)
+    from movp_internal.webhooks w
+    join public.webhook_subscription s on s.internal_webhook_id = w.id
+   where w.workspace_id = ws
+     and w.event_type = event_key
+     and w.url = hook_url
+     and w.secret is not distinct from hook_secret
+     and w.active
+     and s.active
+     and w.managed_by = 'workflow_subscription'
+   limit 1;
+$$;
+
+revoke all on function public.webhook_subscription_for_delivery(uuid, text, text, text) from public, anon, authenticated;
+grant execute on function public.webhook_subscription_for_delivery(uuid, text, text, text) to service_role;
+
 create or replace function public.webhook_subscription_pairing_drift()
 returns table(drift_code text, subscription_id uuid, internal_webhook_id uuid)
 language sql
