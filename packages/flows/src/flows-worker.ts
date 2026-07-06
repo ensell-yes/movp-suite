@@ -1,12 +1,18 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { NotificationProvider } from '@movp/notifications'
 import { escapeHtml } from '@movp/notifications'
-import { claimDueJobs, completeJob } from './jobs.ts'
+import { claimDueJobs, completeJob, type Job } from './jobs.ts'
 import { runAutomationWorker } from './automation.ts'
+import { evaluateCondition } from './condition.ts'
 
 function stringField(value: unknown): string | null {
   return typeof value === 'string' && value.length > 0 ? value : null
 }
+
+type WebhookSubscriptionLookup =
+  | { status: 'deliver'; filter: unknown }
+  | { status: 'skip' }
+  | null
 
 async function hmacHex(secret: string, body: string): Promise<string> {
   const enc = new TextEncoder()
@@ -34,6 +40,26 @@ async function emailForUser(db: SupabaseClient, userId: string): Promise<string 
   if (error) return null
   const email = data.user?.email
   return typeof email === 'string' && email.length > 0 ? email : null
+}
+
+async function subscriptionForWebhookJob(db: SupabaseClient, job: Job): Promise<WebhookSubscriptionLookup> {
+  const event = stringField(job.payload.event)
+  const url = stringField(job.payload.url)
+  if (!job.workspace_id || !event || !url) return null
+
+  const { data, error } = await db.rpc('webhook_subscription_for_delivery', {
+    ws: job.workspace_id,
+    event_key: event,
+    hook_url: url,
+    hook_secret: stringField(job.payload.secret),
+    hook_id: stringField(job.payload.webhook_id),
+  })
+  if (error) throw new Error(`webhook_subscription_lookup_failed:${error.code ?? 'unknown'}`)
+  if (!data || typeof data !== 'object') return null
+  const status = stringField((data as { status?: unknown }).status)
+  if (status === 'skip') return { status }
+  if (status === 'deliver') return { status, filter: (data as { filter?: unknown }).filter ?? null }
+  throw new Error('webhook_subscription_lookup_invalid')
 }
 
 export async function runFlowsWorker(
@@ -73,6 +99,24 @@ export async function runFlowsWorker(
 
   for (const job of await claimDueJobs(db, 'webhook', limit)) {
     try {
+      const subscription = await subscriptionForWebhookJob(db, job)
+      if (subscription?.status === 'skip') {
+        await completeJob(db, job.id, true)
+        processed++
+        continue
+      }
+      if (subscription?.status === 'deliver') {
+        // Managed webhook filters evaluate over the webhook job payload:
+        // `event` plus event payload fields. This differs from automation
+        // rules, which evaluate `{ event_type, ...payload }`.
+        const filter = evaluateCondition(subscription.filter, job.payload as Record<string, unknown>)
+        if (!filter.ok) throw new Error(filter.errorCode)
+        if (!filter.matched) {
+          await completeJob(db, job.id, true)
+          processed++
+          continue
+        }
+      }
       const { url, headers, body } = await buildWebhookRequest(job.payload as Record<string, unknown>)
       const res = await fetch(url, { method: 'POST', headers, body })
       if (!res.ok) throw new Error(`webhook:${res.status}`)

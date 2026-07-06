@@ -448,6 +448,7 @@ describe('dispatchWorkflowAction', () => {
       payload: {
         event: 'task.completed',
         subscription_id: 'sub-1',
+        webhook_id: 'wh-1',
         url: 'https://example.test/hook',
         secret: 'secret',
       },

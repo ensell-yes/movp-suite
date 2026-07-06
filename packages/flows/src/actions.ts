@@ -128,6 +128,7 @@ async function enqueueSubscriptionWebhook(
       payload: {
         event: event.type,
         subscription_id: subscriptionId,
+        webhook_id: internalWebhookId,
         url: stringField((webhook as { url?: unknown }).url),
         secret: stringField((webhook as { secret?: unknown }).secret),
       },

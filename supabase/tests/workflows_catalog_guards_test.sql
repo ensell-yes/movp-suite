@@ -1,5 +1,5 @@
 begin;
-select plan(8);
+select plan(9);
 
 insert into public.workspace (id, name) values
   ('11111111-1111-1111-1111-111111111111', 'W1');
@@ -42,6 +42,8 @@ select is((select count(*)::int from movp_internal.movp_jobs where kind='notify'
           1, 'recipient-bearing event still enqueues one notify job');
 select is((select count(*)::int from movp_internal.movp_jobs where kind='webhook'),
           1, 'active registered webhook still enqueues one webhook job');
+select ok((select payload ? 'webhook_id' from movp_internal.movp_jobs where kind='webhook'),
+          'webhook jobs carry the internal webhook id for delivery-time classification');
 select is((select count(*)::int
              from movp_internal.movp_jobs j
              join movp_internal.movp_events e on j.idempotency_key = e.id::text
