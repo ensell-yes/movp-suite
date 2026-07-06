@@ -18,6 +18,12 @@ const contentPublish = vi.fn(async () => ({ id: 'ci1', status: 'published' }))
 const contentIssueAsset = vi.fn(async () => ({ uploadUrl: 'https://r2/put', assetId: 'a1', r2Key: 'w/a1' }))
 const campaignLinkTask = vi.fn(async () => undefined)
 const campaignDeliverableSchedules = vi.fn(async () => [])
+const workflowListEventTypes = vi.fn(async () => ({ items: [{ id: 'evt1', key: 'task.completed' }], nextCursor: null }))
+const workflowListRules = vi.fn(async () => ({ items: [{ id: 'rule1', action_type: 'notify' }], nextCursor: null }))
+const workflowUpsertRule = vi.fn(async () => ({ id: 'rule1', action_type: 'notify' }))
+const workflowRegisterWebhook = vi.fn(async () => ({ subscriptionId: 'sub1', secret: 's'.repeat(64) }))
+const workflowRotateWebhook = vi.fn(async () => ({ subscriptionId: 'sub1', secret: 'r'.repeat(64) }))
+const workflowSetWebhookActive = vi.fn(async () => ({ id: 'sub1', active: false, secret_set: true }))
 
 function crud() {
   return {
@@ -52,6 +58,16 @@ vi.mock('@movp/domain', () => ({
     automation_rule: crud(),
     webhook_subscription: crud(),
     workflow_run: crud(),
+    workflows: {
+      listEventTypes: workflowListEventTypes,
+      listRules: workflowListRules,
+      upsertRule: workflowUpsertRule,
+      getEvent: vi.fn(),
+      registerWebhook: workflowRegisterWebhook,
+      rotateWebhook: workflowRotateWebhook,
+      setWebhookActive: workflowSetWebhookActive,
+      setWebhookFilter: vi.fn(),
+    },
     search,
     graph: { link: vi.fn(async () => undefined), traverse: vi.fn() },
     collab: {
@@ -260,5 +276,56 @@ describe('buildMcpServer', () => {
       expect.objectContaining({ accessToken: 'test', assetsFnUrl: 'http://localhost:54321/functions/v1/content-assets' }),
       expect.anything(),
     )
+  })
+
+  it('registers workflow tools and only returns secrets from register/rotate', async () => {
+    const client = new Client({ name: 'test', version: '0.0.0' })
+    const server = buildMcpServer(schema, { db: { rpc: vi.fn(async () => ({ data: 2, error: null })) } as never, userId: 'u' })
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)])
+
+    const names = (await client.listTools()).tools.map((t) => t.name)
+    expect(names).toEqual(expect.arrayContaining([
+      'workflow.event_types',
+      'workflow.rules.list',
+      'workflow.rules.upsert',
+      'workflow.runs.list',
+      'workflow.webhook.register',
+      'workflow.webhook.rotate',
+      'workflow.webhook.active',
+      'workflow.jobs.replay_dead',
+    ]))
+
+    await client.callTool({ name: 'workflow.event_types', arguments: { first: 5 } })
+    expect(workflowListEventTypes).toHaveBeenCalledWith({ first: 5, after: null })
+
+    await client.callTool({
+      name: 'workflow.rules.upsert',
+      arguments: {
+        workspaceId: 'w',
+        triggerEventTypeId: 'evt1',
+        condition: '{"field":"event"}',
+        actionType: 'notify',
+        actionConfig: '{"recipient_user_id":"u"}',
+        enabled: true,
+        priority: 1,
+      },
+    })
+    expect(workflowUpsertRule).toHaveBeenCalledWith(expect.objectContaining({
+      condition: { field: 'event' },
+      actionConfig: { recipient_user_id: 'u' },
+    }))
+
+    const registered = await client.callTool({
+      name: 'workflow.webhook.register',
+      arguments: { workspaceId: 'w', eventKey: 'task.completed', url: 'https://hooks.example.test/workflows' },
+    })
+    expect(JSON.stringify(registered.content)).toContain('s'.repeat(64))
+
+    const active = await client.callTool({
+      name: 'workflow.webhook.active',
+      arguments: { workspaceId: 'w', subscriptionId: 'sub1', active: false },
+    })
+    expect(JSON.stringify(active.content)).not.toContain('s'.repeat(64))
   })
 })

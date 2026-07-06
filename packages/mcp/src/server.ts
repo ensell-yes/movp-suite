@@ -33,6 +33,15 @@ function text(value: unknown) {
   return { content: [{ type: 'text' as const, text: JSON.stringify(value) }] }
 }
 
+function parseJson(value: string | undefined, fallback: unknown): unknown {
+  if (value == null || value.length === 0) return fallback
+  try {
+    return JSON.parse(value)
+  } catch {
+    throw new Error('invalid_json')
+  }
+}
+
 export function buildMcpServer(schema: MovpSchema, ctx: McpCtx): McpServer {
   const server = new McpServer({ name: 'movp', version: '0.1.0' })
   const domain = createDomain({
@@ -410,6 +419,111 @@ export function buildMcpServer(schema: MovpSchema, ctx: McpCtx): McpServer {
       },
     },
     async ({ workspaceId, itemId, state }) => text(await domain.content.listApprovals({ workspaceId, itemId, state })),
+  )
+
+  server.registerTool(
+    'workflow.event_types',
+    {
+      title: 'List workflow event types',
+      description: 'List the global workflow event catalog',
+      inputSchema: { first: z.number().optional(), after: z.string().optional() },
+    },
+    async ({ first, after }) => text(await domain.workflows.listEventTypes({ first, after: after ?? null })),
+  )
+
+  server.registerTool(
+    'workflow.rules.list',
+    {
+      title: 'List workflow rules',
+      description: 'List workflow automation rules in a workspace',
+      inputSchema: { workspaceId: z.string(), first: z.number().optional(), after: z.string().optional() },
+    },
+    async ({ workspaceId, first, after }) => text(await domain.workflows.listRules({ workspaceId, first, after: after ?? null })),
+  )
+
+  server.registerTool(
+    'workflow.rules.upsert',
+    {
+      title: 'Upsert workflow rule',
+      description: 'Create or update a workflow automation rule',
+      inputSchema: {
+        workspaceId: z.string(),
+        id: z.string().optional(),
+        triggerEventTypeId: z.string(),
+        condition: z.string().optional(),
+        actionType: z.string(),
+        actionConfig: z.string(),
+        enabled: z.boolean(),
+        priority: z.number(),
+      },
+    },
+    async ({ workspaceId, id, triggerEventTypeId, condition, actionType, actionConfig, enabled, priority }) =>
+      text(await domain.workflows.upsertRule({
+        workspaceId,
+        id,
+        triggerEventTypeId,
+        condition: parseJson(condition, {}) as Record<string, unknown>,
+        actionType: actionType as any,
+        actionConfig: parseJson(actionConfig, {}) as Record<string, unknown>,
+        enabled,
+        priority,
+      })),
+  )
+
+  server.registerTool(
+    'workflow.runs.list',
+    {
+      title: 'List workflow runs',
+      description: 'List workflow run audit rows in a workspace',
+      inputSchema: { workspaceId: z.string(), first: z.number().optional(), after: z.string().optional() },
+    },
+    async ({ workspaceId, first, after }) => text(await domain.workflow_run.list({ workspaceId, first, after: after ?? null })),
+  )
+
+  server.registerTool(
+    'workflow.webhook.register',
+    {
+      title: 'Register workflow webhook',
+      description: 'Register a workflow webhook subscription and return its one-time secret',
+      inputSchema: { workspaceId: z.string(), eventKey: z.string(), url: z.string(), filter: z.string().optional() },
+    },
+    async ({ workspaceId, eventKey, url, filter }) =>
+      text(await domain.workflows.registerWebhook({ workspaceId, eventKey, url, filter: parseJson(filter, undefined) })),
+  )
+
+  server.registerTool(
+    'workflow.webhook.rotate',
+    {
+      title: 'Rotate workflow webhook secret',
+      description: 'Rotate a workflow webhook secret and return it once',
+      inputSchema: { workspaceId: z.string(), subscriptionId: z.string() },
+    },
+    async ({ workspaceId, subscriptionId }) => text(await domain.workflows.rotateWebhook({ workspaceId, subscriptionId })),
+  )
+
+  server.registerTool(
+    'workflow.webhook.active',
+    {
+      title: 'Set workflow webhook active',
+      description: 'Activate or deactivate a workflow webhook subscription',
+      inputSchema: { workspaceId: z.string(), subscriptionId: z.string(), active: z.boolean() },
+    },
+    async ({ workspaceId, subscriptionId, active }) =>
+      text(await domain.workflows.setWebhookActive({ workspaceId, subscriptionId, active })),
+  )
+
+  server.registerTool(
+    'workflow.jobs.replay_dead',
+    {
+      title: 'Replay dead workflow jobs',
+      description: 'Replay dead-lettered automate jobs',
+      inputSchema: {},
+    },
+    async () => {
+      const { data, error } = await ctx.db.rpc('replay_jobs', { job_kind: 'automate', only_dead: true })
+      if (error) throw new Error(`replay_dead_workflow_jobs_failed:${error.code ?? 'unknown'}`)
+      return text({ replayed: Number(data ?? 0) })
+    },
   )
 
   return server

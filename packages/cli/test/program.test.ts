@@ -17,6 +17,13 @@ const contentCreate = vi.fn(async () => ({ id: 'ci1', slug: 'hello' }))
 const contentList = vi.fn(async () => ({ items: [{ id: 'ci1' }], nextCursor: null }))
 const contentPublish = vi.fn(async () => ({ id: 'ci1', status: 'published' }))
 const contentIssueAsset = vi.fn(async () => ({ uploadUrl: 'https://r2/put', assetId: 'a1', r2Key: 'w/a1' }))
+const workflowListEventTypes = vi.fn(async () => ({ items: [{ id: 'evt1', key: 'task.completed' }], nextCursor: null }))
+const workflowListRules = vi.fn(async () => ({ items: [{ id: 'rule1', action_type: 'notify' }], nextCursor: null }))
+const workflowUpsertRule = vi.fn(async () => ({ id: 'rule1', action_type: 'notify' }))
+const workflowRegisterWebhook = vi.fn(async () => ({ subscriptionId: 'sub1', secret: 's'.repeat(64) }))
+const workflowRotateWebhook = vi.fn(async () => ({ subscriptionId: 'sub1', secret: 'r'.repeat(64) }))
+const workflowSetWebhookActive = vi.fn(async () => ({ id: 'sub1', active: false, secret_set: true }))
+const workflowRunList = vi.fn(async () => ({ items: [{ id: 'run1', outcome: 'failed' }], nextCursor: null }))
 
 function crud() {
   return {
@@ -49,7 +56,17 @@ vi.mock('@movp/domain', () => ({
     task_priority_option: crud(),
     automation_rule: crud(),
     webhook_subscription: crud(),
-    workflow_run: crud(),
+    workflows: {
+      listEventTypes: workflowListEventTypes,
+      listRules: workflowListRules,
+      upsertRule: workflowUpsertRule,
+      getEvent: vi.fn(),
+      registerWebhook: workflowRegisterWebhook,
+      rotateWebhook: workflowRotateWebhook,
+      setWebhookActive: workflowSetWebhookActive,
+      setWebhookFilter: vi.fn(),
+    },
+    workflow_run: { ...crud(), list: workflowRunList },
     search,
     graph: { link: vi.fn(), traverse: vi.fn() },
     collab: {
@@ -309,5 +326,72 @@ describe('movp CLI', () => {
       'seo-audit',
       'asset-upload',
     ])
+  })
+
+  it('workflows commands route through workflow services and keep secrets scoped', async () => {
+    const replay = vi.fn(async () => undefined)
+    const { cmd, out } = program({ jobs: { replay, reindex: vi.fn(async () => undefined) } })
+
+    await cmd.parseAsync(['node', 'movp', 'workflows', 'events', '--first', '5'])
+    expect(workflowListEventTypes).toHaveBeenCalledWith({ first: 5, after: null })
+    expect(out.at(-1)).toContain('task.completed')
+
+    await cmd.parseAsync(['node', 'movp', 'workflows', 'rules', 'list', '--workspace', 'w'])
+    expect(workflowListRules).toHaveBeenCalledWith({ workspaceId: 'w', first: undefined, after: null })
+
+    await cmd.parseAsync([
+      'node',
+      'movp',
+      'workflows',
+      'rules',
+      'upsert',
+      '--workspace',
+      'w',
+      '--trigger-event-type',
+      'evt1',
+      '--condition',
+      '{"field":"event"}',
+      '--action-type',
+      'notify',
+      '--action-config',
+      '{"recipient_user_id":"u"}',
+      '--enabled',
+      '--priority',
+      '7',
+    ])
+    expect(workflowUpsertRule).toHaveBeenCalledWith(expect.objectContaining({
+      condition: { field: 'event' },
+      actionConfig: { recipient_user_id: 'u' },
+      enabled: true,
+      priority: 7,
+    }))
+
+    await cmd.parseAsync(['node', 'movp', 'workflows', 'runs', '--workspace', 'w'])
+    expect(workflowRunList).toHaveBeenCalledWith({ workspaceId: 'w', first: undefined, after: null })
+
+    await cmd.parseAsync([
+      'node',
+      'movp',
+      'workflows',
+      'webhooks',
+      'register',
+      '--workspace',
+      'w',
+      '--event',
+      'task.completed',
+      '--url',
+      'https://hooks.example.test/workflows',
+    ])
+    expect(out.at(-1)).toContain('s'.repeat(64))
+
+    await cmd.parseAsync(['node', 'movp', 'workflows', 'webhooks', 'rotate', '--workspace', 'w', '--subscription', 'sub1'])
+    expect(out.at(-1)).toContain('r'.repeat(64))
+
+    await cmd.parseAsync(['node', 'movp', 'workflows', 'webhooks', 'deactivate', '--workspace', 'w', '--subscription', 'sub1'])
+    expect(workflowSetWebhookActive).toHaveBeenCalledWith({ workspaceId: 'w', subscriptionId: 'sub1', active: false })
+    expect(out.at(-1)).not.toContain('s'.repeat(64))
+
+    await cmd.parseAsync(['node', 'movp', 'workflows', 'replay', '--dead'])
+    expect(replay).toHaveBeenCalledWith({ kind: 'automate', dead: true })
   })
 })
