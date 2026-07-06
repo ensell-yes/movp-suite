@@ -349,7 +349,8 @@ export function buildSchema(schema: MovpSchema): GraphQLSchema {
         complexity: 5,
         args: {},
         resolve: async (_r: unknown, _args: unknown, ctx: GraphQLContext) => {
-          const { data, error } = await ctx.db.rpc('replay_jobs', { job_kind: 'automate', only_dead: true })
+          if (!ctx.adminDb) throw new Error('replay_dead_workflow_jobs_failed:service_role_unavailable')
+          const { data, error } = await ctx.adminDb.rpc('replay_jobs', { job_kind: 'automate', only_dead: true })
           if (error) throw new Error(`replay_dead_workflow_jobs_failed:${error.code ?? 'unknown'}`)
           return { replayed: Number(data ?? 0) }
         },

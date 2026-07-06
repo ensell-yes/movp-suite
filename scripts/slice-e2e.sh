@@ -577,6 +577,131 @@ echo "== [segmentation] (f) redaction: segmentation events carry field names not
 LEAK="$(psql "$DB_URL" -tAc "select count(*) from movp_internal.movp_events where type like 'segment.%' and payload::text like '%pii@example.com%';" | tr -d '[:space:]')"
 [ "${LEAK:-1}" -eq 0 ] || { echo "a segment.* event leaked a PII property value (found $LEAK)"; exit 1; }
 
+echo "== [workflows] (a) event catalog includes cross-domain triggers =="
+EVENTS="$(post_graphql '{"query":"query{eventTypes(first:100){items{key domain active}}}"}')"
+echo "$EVENTS" | grep -q 'task.completed' || { echo "eventTypes missing task.completed: $EVENTS"; exit 1; }
+echo "$EVENTS" | grep -q 'content.approved' || { echo "eventTypes missing content.approved: $EVENTS"; exit 1; }
+echo "$EVENTS" | grep -q 'segment.membership_changed' || { echo "eventTypes missing segment.membership_changed: $EVENTS"; exit 1; }
+
+echo "== [workflows] (b) create_task automation runs exactly once under replay =="
+WF_RULE_ID="66666666-eeee-0000-0000-000000000001"
+TASK_COMPLETED_EVENT_TYPE_ID="$(psql "$DB_URL" -tAc "select id from public.event_type where key='task.completed';" | tr -d '[:space:]')"
+[ -n "$TASK_COMPLETED_EVENT_TYPE_ID" ] || { echo "no task.completed event_type row"; exit 1; }
+psql "$DB_URL" -v ON_ERROR_STOP=1 \
+  -c "insert into public.automation_rule (id, workspace_id, trigger_event_type_id, condition, action_type, action_config, enabled, priority) values ('$WF_RULE_ID','$WS','$TASK_COMPLETED_EVENT_TYPE_ID','{}'::jsonb,'create_task','{\"title\":\"Workflow follow-up task\",\"actorId\":\"$USER_ID\"}'::jsonb,true,1) on conflict (id) do update set enabled=true;"
+RULES="$(post_graphql "{\"query\":\"query{automationRules(workspaceId:\\\"$WS\\\", first:100){items{id action_type enabled priority}}}\"}")"
+echo "$RULES" | grep -q "$WF_RULE_ID" || { echo "automationRules did not expose the workflow rule: $RULES"; exit 1; }
+psql "$DB_URL" -v ON_ERROR_STOP=1 -c "update movp_internal.movp_jobs set status='dead', last_error_code='slice_skips_external_email' where kind='notify' and status in ('pending','running');" >/dev/null
+psql "$DB_URL" -v ON_ERROR_STOP=1 -c "update movp_internal.movp_jobs set status='dead', last_error_code='slice_isolates_workflow_block' where kind='automate' and status in ('pending','running');" >/dev/null
+psql "$DB_URL" -v ON_ERROR_STOP=1 -c "select public.emit_event('task.completed','$WS', jsonb_build_object('entity_id','$TASK_ID','actor_id','$USER_ID'), 'workflow-slice-create-task');" >/dev/null
+WF_EVENT_ID="$(psql "$DB_URL" -tAc "select id from movp_internal.movp_events where type='task.completed' and trace_id='workflow-slice-create-task' order by created_at desc limit 1;" | tr -d '[:space:]')"
+[ -n "$WF_EVENT_ID" ] || { echo "workflow task.completed event was not recorded"; exit 1; }
+WF_AUTOMATE_JOB_ID="$(psql "$DB_URL" -tAc "select id from movp_internal.movp_jobs where kind='automate' and payload->>'event_id'='$WF_EVENT_ID' order by created_at desc limit 1;" | tr -d '[:space:]')"
+[ -n "$WF_AUTOMATE_JOB_ID" ] || { echo "workflow automate job was not enqueued"; exit 1; }
+curl -sS -f -X POST "$API_URL/functions/v1/flows" \
+  -H "Authorization: Bearer $SERVICE_ROLE_KEY" -H "apikey: $SERVICE_ROLE_KEY" \
+  -H "content-type: application/json" >/tmp/workflow-flows.json
+node -e 'const fs=require("fs"); const j=JSON.parse(fs.readFileSync("/tmp/workflow-flows.json","utf8")); if ((j.processed||0) < 1 || (j.failed||0) > 0) { console.error("workflow flows did not process cleanly:", j); process.exit(1) }'
+WF_RUNS1="$(psql "$DB_URL" -tAc "select count(*) from public.workflow_run where source_event_id='$WF_EVENT_ID' and automation_rule_id='$WF_RULE_ID' and outcome='succeeded';" | tr -d '[:space:]')"
+[ "${WF_RUNS1:-0}" -eq 1 ] || { echo "expected one succeeded workflow_run for create_task, got $WF_RUNS1"; exit 1; }
+WF_TASKS1="$(psql "$DB_URL" -tAc "select count(*) from public.task where workspace_id='$WS' and title='Workflow follow-up task';" | tr -d '[:space:]')"
+[ "${WF_TASKS1:-0}" -eq 1 ] || { echo "expected one workflow follow-up task, got $WF_TASKS1"; exit 1; }
+psql "$DB_URL" -v ON_ERROR_STOP=1 -c "update movp_internal.movp_jobs set status='pending', attempts=0, next_run_at=now(), locked_by=null, locked_at=null, lease_expires_at=null where id='$WF_AUTOMATE_JOB_ID';" >/dev/null
+curl -sS -f -X POST "$API_URL/functions/v1/flows" \
+  -H "Authorization: Bearer $SERVICE_ROLE_KEY" -H "apikey: $SERVICE_ROLE_KEY" \
+  -H "content-type: application/json" >/tmp/workflow-flows-replay.json
+WF_TASKS2="$(psql "$DB_URL" -tAc "select count(*) from public.task where workspace_id='$WS' and title='Workflow follow-up task';" | tr -d '[:space:]')"
+[ "${WF_TASKS2:-0}" -eq 1 ] || { echo "replayed automate job created a duplicate workflow task ($WF_TASKS1 -> $WF_TASKS2)"; exit 1; }
+
+echo "== [workflows] (c) managed webhook registration, filter skip, rotation, and deactivate =="
+WF_HOOK_URL="https://hooks.example.test/workflow-slice"
+REG_BODY="$(node -e 'process.stdout.write(JSON.stringify({
+  query: "mutation($workspaceId: ID!, $eventKey: String!, $url: String!, $filter: String) { registerWebhookSubscription(workspaceId: $workspaceId, eventKey: $eventKey, url: $url, filter: $filter) { subscriptionId secret } }",
+  variables: {
+    workspaceId: process.argv[1],
+    eventKey: "task.completed",
+    url: process.argv[2],
+    filter: JSON.stringify({ field: "event", op: "eq", value: "never.matches" }),
+  },
+}))' "$WS" "$WF_HOOK_URL")"
+REG="$(post_graphql "$REG_BODY")"
+WF_SUB_ID="$(echo "$REG" | json_get data.registerWebhookSubscription.subscriptionId)"
+WF_OLD_SECRET="$(echo "$REG" | json_get data.registerWebhookSubscription.secret)"
+[ -n "$WF_SUB_ID" ] && [ -n "$WF_OLD_SECRET" ] || { echo "registerWebhookSubscription failed: $REG"; exit 1; }
+SUBS="$(post_graphql "{\"query\":\"query{webhook_subscriptions(workspaceId:\\\"$WS\\\", first:100){items{id url active secret_set internal_webhook_id}}}\"}")"
+echo "$SUBS" | grep -q "$WF_HOOK_URL" || { echo "webhook_subscriptions did not expose the managed subscription: $SUBS"; exit 1; }
+echo "$SUBS" | grep -q 'secret_set' || { echo "webhook_subscriptions missing secret_set: $SUBS"; exit 1; }
+echo "$SUBS" | grep -q "$WF_OLD_SECRET" && { echo "webhook secret leaked through generic subscription read: $SUBS"; exit 1; }
+WF_INTERNAL_ID="$(psql "$DB_URL" -tAc "select internal_webhook_id from public.webhook_subscription where id='$WF_SUB_ID';" | tr -d '[:space:]')"
+[ -n "$WF_INTERNAL_ID" ] || { echo "managed webhook subscription has no internal pair"; exit 1; }
+DRIFT="$(psql "$DB_URL" -tAc "select count(*) from public.webhook_subscription_pairing_drift();" | tr -d '[:space:]')"
+[ "${DRIFT:-1}" -eq 0 ] || { echo "webhook subscription pairing drift detected (count=$DRIFT)"; exit 1; }
+psql "$DB_URL" -v ON_ERROR_STOP=1 -c "update public.automation_rule set enabled=false where id='$WF_RULE_ID';" >/dev/null
+psql "$DB_URL" -v ON_ERROR_STOP=1 -c "update movp_internal.movp_jobs set status='dead', last_error_code='slice_isolates_webhook_filter' where kind='automate' and status in ('pending','running');" >/dev/null
+psql "$DB_URL" -v ON_ERROR_STOP=1 -c "select public.emit_event('task.completed','$WS', jsonb_build_object('entity_id','$TASK_ID'), 'workflow-slice-webhook-filter');" >/dev/null
+WF_WEBHOOK_EVENT_ID="$(psql "$DB_URL" -tAc "select id from movp_internal.movp_events where type='task.completed' and trace_id='workflow-slice-webhook-filter' order by created_at desc limit 1;" | tr -d '[:space:]')"
+WF_WEBHOOK_JOB_ID="$(psql "$DB_URL" -tAc "select id from movp_internal.movp_jobs where kind='webhook' and payload->>'webhook_id'='$WF_INTERNAL_ID' and payload->>'entity_id'='$TASK_ID' order by created_at desc limit 1;" | tr -d '[:space:]')"
+[ -n "$WF_WEBHOOK_JOB_ID" ] || { echo "managed webhook job was not enqueued for filter test"; exit 1; }
+curl -sS -f -X POST "$API_URL/functions/v1/flows" \
+  -H "Authorization: Bearer $SERVICE_ROLE_KEY" -H "apikey: $SERVICE_ROLE_KEY" \
+  -H "content-type: application/json" >/tmp/workflow-flows-filter.json
+WF_WEBHOOK_STATUS="$(psql "$DB_URL" -tAc "select status from movp_internal.movp_jobs where id='$WF_WEBHOOK_JOB_ID';" | tr -d '[:space:]')"
+[ "$WF_WEBHOOK_STATUS" = "done" ] || { echo "non-matching managed webhook filter did not complete as skipped/done (status=$WF_WEBHOOK_STATUS)"; exit 1; }
+ROT="$(post_graphql "{\"query\":\"mutation{rotateWebhookSecret(workspaceId:\\\"$WS\\\", subscriptionId:\\\"$WF_SUB_ID\\\"){subscriptionId secret}}\"}")"
+WF_NEW_SECRET="$(echo "$ROT" | json_get data.rotateWebhookSecret.secret)"
+[ -n "$WF_NEW_SECRET" ] && [ "$WF_NEW_SECRET" != "$WF_OLD_SECRET" ] || { echo "rotateWebhookSecret failed or reused the old secret: $ROT"; exit 1; }
+OLD_LOOKUP="$(psql "$DB_URL" -tAc "select public.webhook_subscription_for_delivery('$WS','task.completed','$WF_HOOK_URL','$WF_OLD_SECRET','$WF_INTERNAL_ID')::text;" | tr -d '[:space:]')"
+echo "$OLD_LOOKUP" | grep -q '"status":"skip"' || { echo "old webhook secret did not classify as skip after rotate: $OLD_LOOKUP"; exit 1; }
+NEW_LOOKUP="$(psql "$DB_URL" -tAc "select public.webhook_subscription_for_delivery('$WS','task.completed','$WF_HOOK_URL','$WF_NEW_SECRET','$WF_INTERNAL_ID')::text;" | tr -d '[:space:]')"
+echo "$NEW_LOOKUP" | grep -q '"status":"deliver"' || { echo "new webhook secret did not classify as deliver after rotate: $NEW_LOOKUP"; exit 1; }
+post_graphql "{\"query\":\"mutation{setWebhookActive(workspaceId:\\\"$WS\\\", subscriptionId:\\\"$WF_SUB_ID\\\", active:false){id active}}\"}" | grep -q 'false' || { echo "setWebhookActive(false) failed"; exit 1; }
+BEFORE_DEACT_JOBS="$(psql "$DB_URL" -tAc "select count(*) from movp_internal.movp_jobs where kind='webhook' and payload->>'webhook_id'='$WF_INTERNAL_ID';" | tr -d '[:space:]')"
+psql "$DB_URL" -v ON_ERROR_STOP=1 -c "select public.emit_event('task.completed','$WS', jsonb_build_object('entity_id','$TASK_ID'), 'workflow-slice-webhook-deactivated');" >/dev/null
+AFTER_DEACT_JOBS="$(psql "$DB_URL" -tAc "select count(*) from movp_internal.movp_jobs where kind='webhook' and payload->>'webhook_id'='$WF_INTERNAL_ID';" | tr -d '[:space:]')"
+[ "${BEFORE_DEACT_JOBS:-0}" = "${AFTER_DEACT_JOBS:-1}" ] || { echo "deactivated workflow webhook still enqueued a delivery job ($BEFORE_DEACT_JOBS -> $AFTER_DEACT_JOBS)"; exit 1; }
+
+echo "== [workflows] (d) non-member isolation + replay-dead surface =="
+OUT_RULES="$(post_graphql_as "$TOKEN3" "{\"query\":\"query{automationRules(workspaceId:\\\"$WS\\\", first:100){items{id}}}\"}")"
+echo "$OUT_RULES" | grep -q "$WF_RULE_ID" && { echo "non-member saw workflow rules: $OUT_RULES"; exit 1; }
+OUT_SUBS="$(post_graphql_as "$TOKEN3" "{\"query\":\"query{webhook_subscriptions(workspaceId:\\\"$WS\\\", first:100){items{id}}}\"}")"
+echo "$OUT_SUBS" | grep -q "$WF_SUB_ID" && { echo "non-member saw workflow subscriptions: $OUT_SUBS"; exit 1; }
+OUT_RUNS="$(post_graphql_as "$TOKEN3" "{\"query\":\"query{workflow_runs(workspaceId:\\\"$WS\\\", first:100){items{source_event_id}}}\"}")"
+echo "$OUT_RUNS" | grep -q "$WF_EVENT_ID" && { echo "non-member saw workflow runs: $OUT_RUNS"; exit 1; }
+DENY_ROTATE="$(post_graphql_as "$TOKEN3" "{\"query\":\"mutation{rotateWebhookSecret(workspaceId:\\\"$WS\\\", subscriptionId:\\\"$WF_SUB_ID\\\"){subscriptionId secret}}\"}")"
+echo "$DENY_ROTATE" | grep -q '"errors"' || { echo "non-member rotated workflow webhook: $DENY_ROTATE"; exit 1; }
+psql "$DB_URL" -v ON_ERROR_STOP=1 -c "update movp_internal.movp_jobs set status='dead', last_error_code='slice_replay_probe' where id='$WF_AUTOMATE_JOB_ID';" >/dev/null
+REPLAY="$(post_graphql '{"query":"mutation{replayDeadWorkflowJobs{replayed}}"}')"
+echo "$REPLAY" | grep -q '"replayed"' || { echo "replayDeadWorkflowJobs did not return a replay count: $REPLAY"; exit 1; }
+curl -sS -f -X POST "$API_URL/functions/v1/flows" \
+  -H "Authorization: Bearer $SERVICE_ROLE_KEY" -H "apikey: $SERVICE_ROLE_KEY" \
+  -H "content-type: application/json" >/tmp/workflow-flows-replayed-dead.json
+WF_TASKS3="$(psql "$DB_URL" -tAc "select count(*) from public.task where workspace_id='$WS' and title='Workflow follow-up task';" | tr -d '[:space:]')"
+[ "${WF_TASKS3:-0}" -eq 1 ] || { echo "dead-job replay duplicated workflow task ($WF_TASKS2 -> $WF_TASKS3)"; exit 1; }
+
+echo "== [workflows] (e) loop guard skips chained emit_event at max depth =="
+LOOP_EVENT_TYPE_ID="77777777-eeee-0000-0000-000000000001"
+LOOP_RULE_ID="88888888-eeee-0000-0000-000000000001"
+psql "$DB_URL" -v ON_ERROR_STOP=1 \
+  -c "insert into public.event_type (id, key, domain, label, payload_schema, schema_version, active, description) values ('$LOOP_EVENT_TYPE_ID','e2e.loop','workflow','E2E loop','{}'::jsonb,1,true,'slice loop guard') on conflict (key) do update set active=true;" \
+  -c "insert into public.automation_rule (id, workspace_id, trigger_event_type_id, condition, action_type, action_config, enabled, priority) values ('$LOOP_RULE_ID','$WS','$LOOP_EVENT_TYPE_ID','{}'::jsonb,'emit_event','{\"eventType\":\"e2e.loop\",\"payload\":{}}'::jsonb,true,1) on conflict (id) do update set enabled=true;"
+psql "$DB_URL" -v ON_ERROR_STOP=1 -c "update movp_internal.movp_jobs set status='dead', last_error_code='slice_isolates_loop_guard' where kind='automate' and status in ('pending','running');" >/dev/null
+psql "$DB_URL" -v ON_ERROR_STOP=1 -c "select public.emit_event('e2e.loop','$WS', jsonb_build_object('depth',5), 'workflow-slice-loop');" >/dev/null
+LOOP_EVENT_ID="$(psql "$DB_URL" -tAc "select id from movp_internal.movp_events where type='e2e.loop' and trace_id='workflow-slice-loop' order by created_at desc limit 1;" | tr -d '[:space:]')"
+curl -sS -f -X POST "$API_URL/functions/v1/flows" \
+  -H "Authorization: Bearer $SERVICE_ROLE_KEY" -H "apikey: $SERVICE_ROLE_KEY" \
+  -H "content-type: application/json" >/tmp/workflow-flows-loop.json
+LOOP_ERR="$(psql "$DB_URL" -tAc "select error_code from public.workflow_run where source_event_id='$LOOP_EVENT_ID' and automation_rule_id='$LOOP_RULE_ID' order by updated_at desc limit 1;" | tr -d '[:space:]')"
+[ "$LOOP_ERR" = "loop_depth_exceeded" ] || { echo "loop guard did not record loop_depth_exceeded (got $LOOP_ERR)"; exit 1; }
+
+echo "== [workflows] (f) audit drilldown + redaction =="
+EVENT_DETAIL="$(post_graphql "{\"query\":\"query{workflowEvent(workspaceId:\\\"$WS\\\", eventId:\\\"$WF_EVENT_ID\\\")}\"}")"
+echo "$EVENT_DETAIL" | grep -q 'task.completed' || { echo "workflowEvent did not return the source event: $EVENT_DETAIL"; exit 1; }
+echo "$EVENT_DETAIL" | grep -q 'e2e@example.com' && { echo "workflowEvent leaked email payload values: $EVENT_DETAIL"; exit 1; }
+WF_LEAK="$(psql "$DB_URL" -tAc "select count(*) from public.workflow_run where to_jsonb(workflow_run)::text like '%$WF_OLD_SECRET%' or to_jsonb(workflow_run)::text like '%$WF_NEW_SECRET%' or to_jsonb(workflow_run)::text like '%e2e@example.com%' or to_jsonb(workflow_run)::text like '%semantic lighthouse%';" | tr -d '[:space:]')"
+[ "${WF_LEAK:-1}" -eq 0 ] || { echo "workflow_run leaked secret/email/content values (count=$WF_LEAK)"; exit 1; }
+grep -q "$WF_OLD_SECRET" /tmp/movp-functions.log && { echo "function log leaked old webhook secret"; exit 1; } || true
+grep -q "$WF_NEW_SECRET" /tmp/movp-functions.log && { echo "function log leaked new webhook secret"; exit 1; } || true
+
 echo "== [8] internal not exposed via PostgREST API =="
 REST="$(curl -sS -o /dev/null -w '%{http_code}' "$API_URL/rest/v1/movp_jobs" -H "apikey: $ANON_KEY")"
 [ "$REST" = "404" ] || [ "$REST" = "401" ] || { echo "movp_jobs reachable via REST ($REST)"; exit 1; }

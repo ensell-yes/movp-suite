@@ -74,8 +74,9 @@ vi.mock('@movp/domain', () => ({
   }),
 }))
 
-const rpc = vi.fn(async () => ({ data: 3, error: null }))
-const ctx = { db: { rpc } as never, userId: 'u' }
+const userRpc = vi.fn(async () => ({ data: null, error: { code: '42501' } }))
+const adminRpc = vi.fn(async () => ({ data: 3, error: null }))
+const ctx = { db: { rpc: userRpc } as never, adminDb: { rpc: adminRpc } as never, userId: 'u' }
 const run = (source: string) => graphql({ schema: buildSchema(movpSchema), source, contextValue: ctx })
 
 describe('workflow GraphQL surface', () => {
@@ -136,7 +137,8 @@ describe('workflow GraphQL surface', () => {
 
     const replay = await run('mutation { replayDeadWorkflowJobs { replayed } }')
     expect(replay.errors).toBeUndefined()
-    expect(rpc).toHaveBeenCalledWith('replay_jobs', { job_kind: 'automate', only_dead: true })
+    expect(adminRpc).toHaveBeenCalledWith('replay_jobs', { job_kind: 'automate', only_dead: true })
+    expect(userRpc).not.toHaveBeenCalledWith('replay_jobs', { job_kind: 'automate', only_dead: true })
     expect((replay.data as { replayDeadWorkflowJobs: { replayed: number } }).replayDeadWorkflowJobs.replayed).toBe(3)
   })
 })
