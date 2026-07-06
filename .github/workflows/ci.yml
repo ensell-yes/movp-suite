@@ -32,6 +32,19 @@ jobs:
       - uses: actions/checkout@v4
       - run: node scripts/check-definer-audit.mjs
 
+  event-catalog:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: node scripts/check-event-catalog.mjs
+
+  forward-only-migrations:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - run: node scripts/check-forward-only-migrations.mjs
+
   migration-drift:
     runs-on: ubuntu-latest
     steps:
@@ -110,6 +123,7 @@ jobs:
 
   slice-e2e:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -120,4 +134,14 @@ jobs:
         with: { version: latest }
       - run: pnpm install --frozen-lockfile
       - run: supabase start
-      - run: bash scripts/slice-e2e.sh
+      - name: Run full slice e2e
+        run: |
+          pkill -f 'supabase.*functions serve|edge-runtime' || true
+          bash scripts/slice-e2e.sh
+      - name: Upload edge function logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: slice-e2e-function-logs
+          path: /tmp/movp-functions.log
+          if-no-files-found: ignore

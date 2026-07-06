@@ -43,7 +43,7 @@ Campaigns (`app-03`) → Segmentation (`app-04`) → Domain Workflows (`app-06`)
 > | CMS (`app-02`) | 02a–02d | ✅ EXECUTED (reviewed 9.2; `ca10b09`) |
 > | Campaigns (`app-03`) | 03a–03c | ✅ EXECUTED (reviewed 9.2; merged `7d4883f`, PR #1) |
 > | Segmentation (`app-04`) | 04a–04d | ✅ EXECUTED (04a hardened; 04b ingestion; 04c recompute+injection-safe compiler 28/28; 04d surfaces/frontend/BI/e2e — all gates green, `slice-e2e: PASS`; merged PR #2, `f5f3a36`) |
-> | Domain Workflows (`app-06`) | 06a–06d | 🟡 EXECUTED ON BRANCH (06a catalog/event spine merged PR #3 `c96282a`; 06b automation engine merged PR #4 `0316279`; 06c webhook management merged PR #5 `ab34575`; 06d admin surfaces + `[workflows]` slice green on `codex/workflows-06d`, awaiting review/merge) |
+> | Domain Workflows (`app-06`) | 06a–06d | ✅ EXECUTED (06a catalog/event spine merged PR #3 `c96282a`; 06b automation engine merged PR #4 `0316279`; 06c webhook management merged PR #5 `ab34575`; 06d admin surfaces + `[workflows]` slice merged PR #6 `72ae592`) |
 
 **Phase 2 — Collaboration is EXPANDED and EXECUTABLE** (bite-sized TDD, committed
 `31cceed`/`09a75a5`; passed adversarial review at 9.31). Execute **in order**:
@@ -203,6 +203,14 @@ For every `### Task N` (Stage A **and** every expanded application-series plan):
   `f.date`→`date`; new job kinds → a row in `movp_internal.movp_job_kind` (no CHECK edits).
 - **Durable jobs:** idempotent (`content_hash` / unique keys), crash-safe lease + reclaim, DLQ,
   replay. **Observability:** field names/codes, never values or PII.
+- **Forward-only migrations:** every migration listed in `supabase/.forward-only-migration-baseline`
+  is frozen. Add new timestamped migrations for production changes; do not edit merged migrations or
+  regenerate `20260701000002_movp_generated.sql`.
+- **Internal retention:** prune terminal `movp_jobs` and old `movp_events` through
+  `public.prune_internal_retention(...)` on a deploy-time schedule. Failed/pending/running jobs are
+  not pruned.
+- **Full slice gate:** `bash scripts/slice-e2e.sh` is a CI gate and must stay green before a phase is
+  called complete.
 
 ## Source-of-truth context (read for "why", not required to execute)
 

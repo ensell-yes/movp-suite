@@ -7,6 +7,7 @@
     "codegen": "tsx scripts/codegen.ts",
     "test": "turbo run test",
     "test:event-catalog": "node scripts/check-event-catalog.mjs",
+    "test:forward-only-migrations": "node scripts/check-forward-only-migrations.mjs",
     "test:graphql-shape": "pnpm --filter @movp/graphql exec vitest run schema",
     "test:jobs": "pnpm --filter @movp/flows exec vitest run jobs",
     "test:redaction": "pnpm --filter @movp/obs exec vitest run emit",
