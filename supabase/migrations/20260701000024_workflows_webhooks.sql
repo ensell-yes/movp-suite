@@ -31,6 +31,7 @@ declare
   v_secret text := encode(extensions.gen_random_bytes(32), 'hex');
   v_internal_id uuid;
   v_subscription_id uuid;
+  v_host text;
 begin
   if not public.is_workspace_member(ws) then
     raise exception 'not_workspace_member' using errcode = '42501';
@@ -38,6 +39,25 @@ begin
 
   if filter is not null and jsonb_typeof(filter) <> 'object' then
     raise exception 'filter_invalid' using errcode = '22023';
+  end if;
+
+  -- Member-managed webhooks are server-side fetch targets. Keep the database
+  -- boundary conservative; DNS/private egress filtering remains a deployment
+  -- network control because SQL cannot resolve final DNS answers.
+  v_host := lower(substring(hook_url from '^https://([^/:?#]+)'));
+  if hook_url is null
+     or length(hook_url) = 0
+     or length(hook_url) > 2048
+     or hook_url !~* '^https://[a-z0-9.-]+(:[0-9]{1,5})?([/?#].*)?$'
+     or v_host is null
+     or v_host in ('localhost')
+     or v_host like '%.localhost'
+     or v_host ~ '^(0|10|127)\.'
+     or v_host ~ '^169\.254\.'
+     or v_host ~ '^192\.168\.'
+     or v_host ~ '^172\.(1[6-9]|2[0-9]|3[0-1])\.'
+  then
+    raise exception 'url_invalid' using errcode = '22023';
   end if;
 
   if not exists (select 1 from public.event_type et where et.key = event_key and et.active) then
@@ -207,17 +227,34 @@ language sql
 security definer
 set search_path = ''
 as $$
-  select jsonb_build_object('filter', s.filter)
-    from movp_internal.webhooks w
-    join public.webhook_subscription s on s.internal_webhook_id = w.id
-   where w.workspace_id = ws
-     and w.event_type = event_key
-     and w.url = hook_url
-     and w.secret is not distinct from hook_secret
-     and w.active
-     and s.active
-     and w.managed_by = 'workflow_subscription'
-   limit 1;
+  with managed as (
+    select s.filter,
+           w.active as internal_active,
+           s.active as subscription_active,
+           w.secret is not distinct from hook_secret as secret_matches
+      from movp_internal.webhooks w
+      join public.webhook_subscription s on s.internal_webhook_id = w.id
+     where w.workspace_id = ws
+       and w.event_type = event_key
+       and w.url = hook_url
+       and w.managed_by = 'workflow_subscription'
+     order by w.created_at desc
+     limit 1
+  )
+  select case
+           when not exists (select 1 from managed) then null
+           when exists (
+             select 1
+               from managed
+              where not internal_active
+                 or not subscription_active
+                 or not secret_matches
+           ) then jsonb_build_object('status', 'skip')
+           else (
+             select jsonb_build_object('status', 'deliver', 'filter', filter)
+               from managed
+           )
+         end;
 $$;
 
 revoke all on function public.webhook_subscription_for_delivery(uuid, text, text, text) from public, anon, authenticated;

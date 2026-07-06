@@ -69,7 +69,7 @@ describe('runFlowsWorker webhook subscription filters', () => {
     const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('ok', { status: 200 }))
     const { db, completed } = fakeDb({
       webhookJobs: [baseWebhookJob],
-      subscription: { filter: { field: 'event', op: 'eq', value: 'task.completed' } },
+      subscription: { status: 'deliver', filter: { field: 'event', op: 'eq', value: 'task.completed' } },
     })
 
     const result = await runFlowsWorker(db, fakeNotifier(), 10)
@@ -82,11 +82,39 @@ describe('runFlowsWorker webhook subscription filters', () => {
     expect(result).toEqual({ processed: 1, failed: 0 })
   })
 
+  it('delivers managed webhooks with no filter', async () => {
+    const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('ok', { status: 200 }))
+    const { db, completed } = fakeDb({
+      webhookJobs: [baseWebhookJob],
+      subscription: { status: 'deliver', filter: null },
+    })
+
+    const result = await runFlowsWorker(db, fakeNotifier(), 10)
+
+    expect(fetch).toHaveBeenCalledTimes(1)
+    expect(completed).toContainEqual(expect.objectContaining({ job_id: 'job-webhook-1', ok: true }))
+    expect(result).toEqual({ processed: 1, failed: 0 })
+  })
+
   it('completes unmatched subscription filters without fetching or retrying', async () => {
     const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('ok', { status: 200 }))
     const { db, completed } = fakeDb({
       webhookJobs: [baseWebhookJob],
-      subscription: { filter: { field: 'event', op: 'eq', value: 'content.published' } },
+      subscription: { status: 'deliver', filter: { field: 'event', op: 'eq', value: 'content.published' } },
+    })
+
+    const result = await runFlowsWorker(db, fakeNotifier(), 10)
+
+    expect(fetch).not.toHaveBeenCalled()
+    expect(completed).toContainEqual(expect.objectContaining({ job_id: 'job-webhook-1', ok: true }))
+    expect(result).toEqual({ processed: 1, failed: 0 })
+  })
+
+  it('completes stale or deactivated managed webhook jobs without fetching', async () => {
+    const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('ok', { status: 200 }))
+    const { db, completed } = fakeDb({
+      webhookJobs: [baseWebhookJob],
+      subscription: { status: 'skip' },
     })
 
     const result = await runFlowsWorker(db, fakeNotifier(), 10)
@@ -100,7 +128,7 @@ describe('runFlowsWorker webhook subscription filters', () => {
     const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('ok', { status: 200 }))
     const { db, completed } = fakeDb({
       webhookJobs: [baseWebhookJob],
-      subscription: { filter: 'not-a-filter-object' },
+      subscription: { status: 'deliver', filter: 'not-a-filter-object' },
     })
 
     const result = await runFlowsWorker(db, fakeNotifier(), 10)

@@ -1,5 +1,5 @@
 begin;
-select plan(34);
+select plan(42);
 
 insert into public.workspace (id, name) values
   ('11111111-1111-1111-1111-111111111111', 'W1'),
@@ -92,6 +92,30 @@ select throws_ok(
   $$select public.register_webhook_subscription('11111111-1111-1111-1111-111111111111', 'task.completed', 'https://example.test/nope', '[]'::jsonb)$$,
   '22023', NULL,
   'subscription filter must be a JSON object when present');
+select throws_ok(
+  $$select public.register_webhook_subscription('11111111-1111-1111-1111-111111111111', 'task.completed', 'ftp://example.test/hook', null)$$,
+  '22023', NULL,
+  'subscription URL must be HTTPS');
+select throws_ok(
+  $$select public.register_webhook_subscription('11111111-1111-1111-1111-111111111111', 'task.completed', 'javascript:alert(1)', null)$$,
+  '22023', NULL,
+  'subscription URL rejects non-URL script schemes');
+select throws_ok(
+  $$select public.register_webhook_subscription('11111111-1111-1111-1111-111111111111', 'task.completed', '', null)$$,
+  '22023', NULL,
+  'subscription URL cannot be empty');
+select throws_ok(
+  $$select public.register_webhook_subscription('11111111-1111-1111-1111-111111111111', 'task.completed', 'https://localhost/hook', null)$$,
+  '22023', NULL,
+  'subscription URL rejects obvious local hosts');
+select throws_ok(
+  $$select public.register_webhook_subscription('11111111-1111-1111-1111-111111111111', 'task.completed', 'https://192.168.1.10/hook', null)$$,
+  '22023', NULL,
+  'subscription URL rejects obvious private IPv4 literals');
+select throws_ok(
+  $$select public.register_webhook_subscription('11111111-1111-1111-1111-111111111111', 'task.completed', 'https://example.test/' || repeat('x', 2050), null)$$,
+  '22023', NULL,
+  'subscription URL is length capped');
 
 create temp table _rotated as
 select public.rotate_webhook_secret(
@@ -112,6 +136,15 @@ select is(
     where s.id = ((select result->>'subscription_id' from _registered)::uuid)),
   (select result->>'secret' from _rotated),
   'rotate updates the paired internal secret');
+select is(
+  public.webhook_subscription_for_delivery(
+    '11111111-1111-1111-1111-111111111111',
+    'task.completed',
+    'https://example.test/hook',
+    (select result->>'secret' from _registered)
+  )->>'status',
+  'skip',
+  'delivery lookup skips in-flight jobs carrying a superseded rotated secret');
 select ok(
   not exists (
     select 1
@@ -153,6 +186,15 @@ select is(
     where s.id = ((select result->>'subscription_id' from _registered)::uuid)),
   false,
   'deactivate updates the paired internal webhook');
+select is(
+  public.webhook_subscription_for_delivery(
+    '11111111-1111-1111-1111-111111111111',
+    'task.completed',
+    'https://example.test/hook',
+    (select result->>'secret' from _rotated)
+  )->>'status',
+  'skip',
+  'delivery lookup skips in-flight jobs for a deactivated subscription');
 
 set local role authenticated;
 set local request.jwt.claims = '{"sub":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"}';
@@ -203,7 +245,7 @@ select is(
     (select result->>'secret' from _rotated)
   )->'filter',
   '{"op": "eq", "field": "event", "value": "content.published"}'::jsonb,
-  'delivery lookup returns the managed subscription filter');
+  'delivery lookup returns the managed subscription filter for active matching secrets');
 select is(
   public.webhook_subscription_for_delivery(
     '11111111-1111-1111-1111-111111111111',
