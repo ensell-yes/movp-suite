@@ -58,7 +58,12 @@ if (!mergeBase) {
   process.exit(0)
 }
 
-const diff = maybeGit(['diff', '--name-status', '--find-renames', `${mergeBase}...HEAD`, '--', 'supabase/migrations'])
+const mergedMigrations = maybeGit(['ls-tree', '-r', '--name-only', mergeBase, '--', 'supabase/migrations'])
+for (const path of mergedMigrations.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)) {
+  frozen.add(path)
+}
+
+const diff = maybeGit(['diff', '--name-status', '--find-renames', mergeBase, '--', 'supabase/migrations'])
 const violations = []
 
 for (const line of diff.split(/\r?\n/).filter(Boolean)) {

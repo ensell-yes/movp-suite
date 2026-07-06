@@ -4,7 +4,7 @@ import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
-const db = process.env.VS_DB_URL ?? 'postgresql://postgres:postgres@127.0.0.1:54322/postgres'
+const db = process.env.VS_DB_URL ?? 'postgresql://postgres:postgres@127.0.0.1:64322/postgres'
 const sqlFile = join(root, 'scripts', 'vector-scale.sql')
 const pre = process.env.VS_FORCE_SEQSCAN ? '-c "set enable_indexscan=off;" -c "set enable_bitmapscan=off;"' : ''
 
