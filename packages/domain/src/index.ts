@@ -6,6 +6,7 @@ export { createDomain } from './domain.ts'
 export { makeGraphService } from './graph.ts'
 export { runSearch } from './search.ts'
 export { makeTaskService } from './task.ts'
+export { makeWorkflowService } from './workflows.ts'
 export type {
   CampaignService,
   CollabService,
@@ -22,6 +23,7 @@ export type {
   SearchHit,
   TaskBoardColumn,
   TaskService,
+  WorkflowService,
 } from './types.ts'
 export type {
   AssetRow,
@@ -49,4 +51,8 @@ export type {
   TaskPriorityOptionRow,
   TaskRow,
   TaskStatusOptionRow,
+  AutomationRuleRow,
+  EventTypeRow,
+  WebhookSubscriptionRow,
+  WorkflowRunRow,
 } from './generated/types.ts'

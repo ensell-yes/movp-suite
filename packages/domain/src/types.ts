@@ -232,6 +232,26 @@ export interface CampaignService extends CollectionService<CampaignRow, Campaign
   deliverableSchedules(deliverableIds: string[]): Promise<Array<{ deliverableId: string; taskId: string; startDate: string | null; dueDate: string | null }>> // BATCHED: all backing-task dates in TWO queries (edges .in + task .in) — avoids Part C timeline N+1
 }
 
+export interface WorkflowService {
+  listEventTypes(a: { first?: number; after?: string | null }): Promise<Page<EventTypeRow>>
+  listRules(a: { workspaceId: string; first?: number; after?: string | null }): Promise<Page<AutomationRuleRow>>
+  upsertRule(i: {
+    workspaceId: string
+    id?: string
+    triggerEventTypeId: string
+    condition?: Record<string, unknown>
+    actionType: AutomationRuleRow['action_type']
+    actionConfig: Record<string, unknown>
+    enabled: boolean
+    priority: number
+  }): Promise<AutomationRuleRow>
+  getEvent(a: { workspaceId: string; eventId: string }): Promise<Record<string, unknown> | null>
+  registerWebhook(i: { workspaceId: string; eventKey: string; url: string; filter?: unknown }): Promise<{ subscriptionId: string; secret: string }>
+  rotateWebhook(i: { workspaceId: string; subscriptionId: string }): Promise<{ subscriptionId: string; secret: string }>
+  setWebhookActive(i: { workspaceId: string; subscriptionId: string; active: boolean }): Promise<WebhookSubscriptionRow>
+  setWebhookFilter(i: { workspaceId: string; subscriptionId: string; filter: unknown }): Promise<WebhookSubscriptionRow>
+}
+
 export interface Domain {
   event_type: CollectionService<EventTypeRow, EventTypeCreate, EventTypeUpdate>
   note: CollectionService<NoteRow, NoteCreate, NoteUpdate>
@@ -260,4 +280,5 @@ export interface Domain {
   graph: GraphService
   collab: CollabService
   campaign: CampaignService
+  workflows: WorkflowService
 }
