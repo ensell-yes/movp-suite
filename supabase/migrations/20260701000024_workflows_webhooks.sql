@@ -200,3 +200,57 @@ $$;
 
 revoke all on function public.set_webhook_filter(uuid, uuid, jsonb) from public, anon, authenticated;
 grant execute on function public.set_webhook_filter(uuid, uuid, jsonb) to authenticated;
+
+create or replace function public.webhook_subscription_pairing_drift()
+returns table(drift_code text, subscription_id uuid, internal_webhook_id uuid)
+language sql
+security definer
+set search_path = ''
+as $$
+  with managed as (
+    select w.id, w.workspace_id, w.event_type, w.url, w.active
+      from movp_internal.webhooks w
+     where w.managed_by = 'workflow_subscription'
+  ),
+  public_pairs as (
+    select s.id,
+           s.workspace_id,
+           et.key as event_type,
+           s.url,
+           s.active,
+           s.internal_webhook_id
+      from public.webhook_subscription s
+      join public.event_type et on et.id = s.event_type_id
+  ),
+  duplicate_groups as (
+    select workspace_id, event_type, url
+      from managed
+     group by workspace_id, event_type, url
+    having count(*) > 1
+  )
+  select 'missing_internal'::text, p.id, p.internal_webhook_id
+    from public_pairs p
+    left join managed m on m.id = p.internal_webhook_id
+   where m.id is null
+  union all
+  select 'orphan_internal'::text, null::uuid, m.id
+    from managed m
+    left join public_pairs p on p.internal_webhook_id = m.id
+   where p.id is null
+  union all
+  select 'active_mismatch'::text, p.id, m.id
+    from public_pairs p
+    join managed m on m.id = p.internal_webhook_id
+   where p.active is distinct from m.active
+  union all
+  select 'duplicate_internal'::text, p.id, m.id
+    from managed m
+    join duplicate_groups d
+      on d.workspace_id = m.workspace_id
+     and d.event_type = m.event_type
+     and d.url = m.url
+    left join public_pairs p on p.internal_webhook_id = m.id;
+$$;
+
+revoke all on function public.webhook_subscription_pairing_drift() from public, anon, authenticated;
+grant execute on function public.webhook_subscription_pairing_drift() to service_role;

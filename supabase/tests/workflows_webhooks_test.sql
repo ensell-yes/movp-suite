@@ -1,5 +1,5 @@
 begin;
-select plan(24);
+select plan(30);
 
 insert into public.workspace (id, name) values
   ('11111111-1111-1111-1111-111111111111', 'W1'),
@@ -184,5 +184,76 @@ select ok(
        and to_jsonb(s)::text like '%' || (select result->>'secret' from _registered) || '%'
   ),
   'public row still contains no old secret after management operations');
+
+create temp table _pair as
+select s.id as subscription_id, s.internal_webhook_id
+  from public.webhook_subscription s
+ where s.id = ((select result->>'subscription_id' from _registered)::uuid);
+
+select is((select count(*)::int from public.webhook_subscription_pairing_drift()),
+          0,
+          'clean managed pair has no pairing drift');
+
+update public.webhook_subscription
+   set internal_webhook_id = 'cccccccc-0000-0000-0000-000000000001'
+ where id = (select subscription_id from _pair);
+select ok(
+  exists (select 1 from public.webhook_subscription_pairing_drift() where drift_code='missing_internal'),
+  'pairing drift reports missing internal webhook');
+update public.webhook_subscription
+   set internal_webhook_id = (select internal_webhook_id from _pair)
+ where id = (select subscription_id from _pair);
+
+update movp_internal.webhooks
+   set active = false
+ where id = (select internal_webhook_id from _pair);
+select ok(
+  exists (select 1 from public.webhook_subscription_pairing_drift() where drift_code='active_mismatch'),
+  'pairing drift reports active mismatch');
+update movp_internal.webhooks
+   set active = true
+ where id = (select internal_webhook_id from _pair);
+
+insert into movp_internal.webhooks (id, workspace_id, event_type, url, secret, active, managed_by)
+values (
+  'dddddddd-0000-0000-0000-000000000001',
+  '11111111-1111-1111-1111-111111111111',
+  'task.completed',
+  'https://example.test/orphan',
+  'orphan-secret',
+  true,
+  'workflow_subscription'
+);
+select ok(
+  exists (select 1 from public.webhook_subscription_pairing_drift() where drift_code='orphan_internal'),
+  'pairing drift reports managed orphan internal webhook');
+delete from movp_internal.webhooks where id = 'dddddddd-0000-0000-0000-000000000001';
+
+insert into movp_internal.webhooks (id, workspace_id, event_type, url, secret, active, managed_by)
+select
+  'eeeeeeee-0000-0000-0000-000000000001',
+  '11111111-1111-1111-1111-111111111111',
+  'task.completed',
+  'https://example.test/hook',
+  'duplicate-secret',
+  true,
+  'workflow_subscription';
+select ok(
+  exists (select 1 from public.webhook_subscription_pairing_drift() where drift_code='duplicate_internal'),
+  'pairing drift reports duplicate managed internal webhook for one target');
+delete from movp_internal.webhooks where id = 'eeeeeeee-0000-0000-0000-000000000001';
+
+insert into movp_internal.webhooks (id, workspace_id, event_type, url, secret, active)
+values (
+  'ffffffff-0000-0000-0000-000000000001',
+  '11111111-1111-1111-1111-111111111111',
+  'task.completed',
+  'https://example.test/core',
+  'core-secret',
+  true
+);
+select is((select count(*)::int from public.webhook_subscription_pairing_drift()),
+          0,
+          'unmanaged Core webhooks are ignored by pairing drift');
 
 rollback;
