@@ -11,6 +11,7 @@ const baseWebhookJob: Job = {
   payload: {
     id: 'task-1',
     event: 'task.completed',
+    webhook_id: '99999999-9999-9999-9999-999999999999',
     url: 'https://hooks.example.test/workflows',
     secret: 'super-secret',
   },
@@ -61,6 +62,9 @@ describe('runFlowsWorker webhook subscription filters', () => {
     const result = await runFlowsWorker(db, fakeNotifier(), 10)
 
     expect(fetch).toHaveBeenCalledTimes(1)
+    expect(db.rpc).toHaveBeenCalledWith('webhook_subscription_for_delivery', expect.objectContaining({
+      hook_id: '99999999-9999-9999-9999-999999999999',
+    }))
     expect(completed).toContainEqual(expect.objectContaining({ job_id: 'job-webhook-1', ok: true }))
     expect(result).toEqual({ processed: 1, failed: 0 })
   })

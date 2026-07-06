@@ -42,7 +42,7 @@ begin
 
   insert into movp_internal.movp_jobs (kind, idempotency_key, payload, workspace_id)
   select 'webhook', ev_type || ':' || coalesce(payload->>'id','') || ':' || w.id::text,
-         payload || jsonb_build_object('event', ev_type, 'url', w.url, 'secret', w.secret), ws
+         payload || jsonb_build_object('event', ev_type, 'webhook_id', w.id, 'url', w.url, 'secret', w.secret), ws
     from movp_internal.webhooks w
    where w.workspace_id = ws and w.event_type = ev_type and w.active
   on conflict (kind, idempotency_key) do nothing;

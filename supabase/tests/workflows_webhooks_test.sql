@@ -1,5 +1,5 @@
 begin;
-select plan(42);
+select plan(46);
 
 insert into public.workspace (id, name) values
   ('11111111-1111-1111-1111-111111111111', 'W1'),
@@ -113,6 +113,18 @@ select throws_ok(
   '22023', NULL,
   'subscription URL rejects obvious private IPv4 literals');
 select throws_ok(
+  $$select public.register_webhook_subscription('11111111-1111-1111-1111-111111111111', 'task.completed', 'https://2130706433/hook', null)$$,
+  '22023', NULL,
+  'subscription URL rejects decimal loopback host obfuscation');
+select throws_ok(
+  $$select public.register_webhook_subscription('11111111-1111-1111-1111-111111111111', 'task.completed', 'https://017700000001/hook', null)$$,
+  '22023', NULL,
+  'subscription URL rejects octal loopback host obfuscation');
+select throws_ok(
+  $$select public.register_webhook_subscription('11111111-1111-1111-1111-111111111111', 'task.completed', 'https://0x7f000001/hook', null)$$,
+  '22023', NULL,
+  'subscription URL rejects hex loopback host obfuscation');
+select throws_ok(
   $$select public.register_webhook_subscription('11111111-1111-1111-1111-111111111111', 'task.completed', 'https://example.test/' || repeat('x', 2050), null)$$,
   '22023', NULL,
   'subscription URL is length capped');
@@ -141,7 +153,8 @@ select is(
     '11111111-1111-1111-1111-111111111111',
     'task.completed',
     'https://example.test/hook',
-    (select result->>'secret' from _registered)
+    (select result->>'secret' from _registered),
+    (select internal_webhook_id from public.webhook_subscription where id = ((select result->>'subscription_id' from _registered)::uuid))
   )->>'status',
   'skip',
   'delivery lookup skips in-flight jobs carrying a superseded rotated secret');
@@ -191,7 +204,8 @@ select is(
     '11111111-1111-1111-1111-111111111111',
     'task.completed',
     'https://example.test/hook',
-    (select result->>'secret' from _rotated)
+    (select result->>'secret' from _rotated),
+    (select internal_webhook_id from public.webhook_subscription where id = ((select result->>'subscription_id' from _registered)::uuid))
   )->>'status',
   'skip',
   'delivery lookup skips in-flight jobs for a deactivated subscription');
@@ -227,13 +241,23 @@ select ok(
   ),
   'public row still contains no old secret after management operations');
 
+insert into movp_internal.webhooks (id, workspace_id, event_type, url, secret, active)
+values (
+  'ffffffff-0000-0000-0000-000000000001',
+  '11111111-1111-1111-1111-111111111111',
+  'task.completed',
+  'https://example.test/hook',
+  'core-secret',
+  true
+);
+
 select is(has_function_privilege('authenticated',
-                                 'public.webhook_subscription_for_delivery(uuid,text,text,text)',
+                                 'public.webhook_subscription_for_delivery(uuid,text,text,text,uuid)',
                                  'execute'),
           false,
           'authenticated cannot execute the delivery-time subscription lookup');
 select is(has_function_privilege('service_role',
-                                 'public.webhook_subscription_for_delivery(uuid,text,text,text)',
+                                 'public.webhook_subscription_for_delivery(uuid,text,text,text,uuid)',
                                  'execute'),
           true,
           'service_role can execute the delivery-time subscription lookup');
@@ -242,7 +266,8 @@ select is(
     '11111111-1111-1111-1111-111111111111',
     'task.completed',
     'https://example.test/hook',
-    (select result->>'secret' from _rotated)
+    (select result->>'secret' from _rotated),
+    (select internal_webhook_id from public.webhook_subscription where id = ((select result->>'subscription_id' from _registered)::uuid))
   )->'filter',
   '{"op": "eq", "field": "event", "value": "content.published"}'::jsonb,
   'delivery lookup returns the managed subscription filter for active matching secrets');
@@ -250,11 +275,12 @@ select is(
   public.webhook_subscription_for_delivery(
     '11111111-1111-1111-1111-111111111111',
     'task.completed',
-    'https://example.test/core',
-    'core-secret'
+    'https://example.test/hook',
+    'core-secret',
+    'ffffffff-0000-0000-0000-000000000001'
   ),
   null,
-  'delivery lookup returns null for unmanaged Core webhooks');
+  'delivery lookup returns null for unmanaged Core webhooks even when URL matches a managed subscription');
 
 create temp table _pair as
 select s.id as subscription_id, s.internal_webhook_id
@@ -298,6 +324,16 @@ values (
 select ok(
   exists (select 1 from public.webhook_subscription_pairing_drift() where drift_code='orphan_internal'),
   'pairing drift reports managed orphan internal webhook');
+select is(
+  public.webhook_subscription_for_delivery(
+    '11111111-1111-1111-1111-111111111111',
+    'task.completed',
+    'https://example.test/orphan',
+    'orphan-secret',
+    'dddddddd-0000-0000-0000-000000000001'
+  )->>'status',
+  'skip',
+  'delivery lookup skips managed internal webhooks missing their public pair');
 delete from movp_internal.webhooks where id = 'dddddddd-0000-0000-0000-000000000001';
 
 insert into movp_internal.webhooks (id, workspace_id, event_type, url, secret, active, managed_by)
@@ -314,15 +350,6 @@ select ok(
   'pairing drift reports duplicate managed internal webhook for one target');
 delete from movp_internal.webhooks where id = 'eeeeeeee-0000-0000-0000-000000000001';
 
-insert into movp_internal.webhooks (id, workspace_id, event_type, url, secret, active)
-values (
-  'ffffffff-0000-0000-0000-000000000001',
-  '11111111-1111-1111-1111-111111111111',
-  'task.completed',
-  'https://example.test/core',
-  'core-secret',
-  true
-);
 select is((select count(*)::int from public.webhook_subscription_pairing_drift()),
           0,
           'unmanaged Core webhooks are ignored by pairing drift');

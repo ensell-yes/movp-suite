@@ -48,8 +48,9 @@ begin
   if hook_url is null
      or length(hook_url) = 0
      or length(hook_url) > 2048
-     or hook_url !~* '^https://[a-z0-9.-]+(:[0-9]{1,5})?([/?#].*)?$'
+     or hook_url !~* '^https://[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+(:[0-9]{1,5})?([/?#].*)?$'
      or v_host is null
+     or v_host !~* '[a-z]'
      or v_host in ('localhost')
      or v_host like '%.localhost'
      or v_host ~ '^(0|10|127)\.'
@@ -221,44 +222,49 @@ $$;
 revoke all on function public.set_webhook_filter(uuid, uuid, jsonb) from public, anon, authenticated;
 grant execute on function public.set_webhook_filter(uuid, uuid, jsonb) to authenticated;
 
-create or replace function public.webhook_subscription_for_delivery(ws uuid, event_key text, hook_url text, hook_secret text)
+create or replace function public.webhook_subscription_for_delivery(ws uuid, event_key text, hook_url text, hook_secret text, hook_id uuid)
 returns jsonb
 language sql
 security definer
 set search_path = ''
 as $$
-  with managed as (
+  with target as (
     select s.filter,
            w.active as internal_active,
            s.active as subscription_active,
-           w.secret is not distinct from hook_secret as secret_matches
+           w.secret is not distinct from hook_secret as secret_matches,
+           w.managed_by
       from movp_internal.webhooks w
-      join public.webhook_subscription s on s.internal_webhook_id = w.id
-     where w.workspace_id = ws
+      left join public.webhook_subscription s on s.internal_webhook_id = w.id
+     where w.id = hook_id
+       and w.workspace_id = ws
        and w.event_type = event_key
        and w.url = hook_url
-       and w.managed_by = 'workflow_subscription'
-     order by w.created_at desc
      limit 1
   )
   select case
-           when not exists (select 1 from managed) then null
+           when not exists (select 1 from target) then jsonb_build_object('status', 'skip')
            when exists (
              select 1
-               from managed
-              where not internal_active
-                 or not subscription_active
-                 or not secret_matches
-           ) then jsonb_build_object('status', 'skip')
+               from target
+              where managed_by is distinct from 'workflow_subscription'
+           ) then null
+           when exists (
+             select 1
+               from target
+              where internal_active is not true
+                 or subscription_active is not true
+                 or secret_matches is not true
+            ) then jsonb_build_object('status', 'skip')
            else (
              select jsonb_build_object('status', 'deliver', 'filter', filter)
-               from managed
+               from target
            )
          end;
 $$;
 
-revoke all on function public.webhook_subscription_for_delivery(uuid, text, text, text) from public, anon, authenticated;
-grant execute on function public.webhook_subscription_for_delivery(uuid, text, text, text) to service_role;
+revoke all on function public.webhook_subscription_for_delivery(uuid, text, text, text, uuid) from public, anon, authenticated;
+grant execute on function public.webhook_subscription_for_delivery(uuid, text, text, text, uuid) to service_role;
 
 create or replace function public.webhook_subscription_pairing_drift()
 returns table(drift_code text, subscription_id uuid, internal_webhook_id uuid)

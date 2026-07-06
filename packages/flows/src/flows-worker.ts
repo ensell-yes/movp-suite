@@ -52,6 +52,7 @@ async function subscriptionForWebhookJob(db: SupabaseClient, job: Job): Promise<
     event_key: event,
     hook_url: url,
     hook_secret: stringField(job.payload.secret),
+    hook_id: stringField(job.payload.webhook_id),
   })
   if (error) throw new Error(`webhook_subscription_lookup_failed:${error.code ?? 'unknown'}`)
   if (!data || typeof data !== 'object') return null
