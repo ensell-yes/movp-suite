@@ -74,6 +74,7 @@ import { makeGraphService } from './graph.ts'
 import { runSearch } from './search.ts'
 import { makeTaskService } from './task.ts'
 import type { Domain, DomainCtx, EmbeddingProvider } from './types.ts'
+import { makeWorkflowService } from './workflows.ts'
 
 export function createDomain(ctx: DomainCtx, opts: { embedder?: EmbeddingProvider } = {}): Domain {
   return {
@@ -104,5 +105,6 @@ export function createDomain(ctx: DomainCtx, opts: { embedder?: EmbeddingProvide
     graph: makeGraphService(ctx),
     collab: makeCollabService(ctx),
     campaign: Object.assign(makeCollectionService<CampaignRow, CampaignCreate, CampaignUpdate>(ctx, { table: 'campaign' }), makeCampaignService(ctx)),
+    workflows: makeWorkflowService(ctx),
   }
 }

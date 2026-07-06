@@ -1,0 +1,156 @@
+---
+import Base from '../../layouts/Base.astro'
+import AuthFailure from '../../components/states/AuthFailure.astro'
+import ErrorRetry from '../../components/states/ErrorRetry.astro'
+import EmptyState from '../../components/states/EmptyState.astro'
+import { readServerEnv } from '../../lib/env.ts'
+import { gqlRequest } from '../../lib/graphql.ts'
+import { getSessionToken } from '../../lib/session.ts'
+import {
+  WORKFLOW_RULES_QUERY,
+  UPSERT_AUTOMATION_RULE_MUTATION,
+  type AutomationRulePage,
+  type AutomationRuleRow,
+  type EventTypeRow,
+} from '../../lib/workflow-queries.ts'
+
+const ACTION_TYPES = ['notify', 'deliver_webhook', 'create_task', 'advance_deliverable', 'recompute_segment', 'emit_event']
+
+type PageData = { eventTypes: { items: EventTypeRow[] }; automationRules: AutomationRulePage }
+
+function prettyJson(value: string | null | undefined, fallback = '{}'): string {
+  if (!value) return fallback
+  try { return JSON.stringify(JSON.parse(value), null, 2) } catch { return value }
+}
+
+function parseJsonField(form: FormData, key: string, label: string, fallback: unknown): { ok: true; value: string } | { ok: false; message: string } {
+  const raw = String(form.get(key) ?? '').trim()
+  if (!raw) return { ok: true, value: JSON.stringify(fallback) }
+  try {
+    JSON.parse(raw)
+    return { ok: true, value: raw }
+  } catch {
+    return { ok: false, message: `${label} must be valid JSON.` }
+  }
+}
+
+const token = getSessionToken(Astro.cookies)
+let state: 'auth' | 'error' | 'empty' | 'ok' = 'auth'
+let eventTypes: EventTypeRow[] = []
+let rules: AutomationRuleRow[] = []
+let notice = ''
+let formError = ''
+
+if (token) {
+  state = 'ok'
+  const { graphqlEndpoint, workspaceId } = readServerEnv()
+  if (Astro.request.method === 'POST') {
+    const form = await Astro.request.formData()
+    const condition = parseJsonField(form, 'condition', 'Condition JSON', {})
+    const actionConfig = parseJsonField(form, 'actionConfig', 'Action config JSON', {})
+    const triggerEventTypeId = String(form.get('triggerEventTypeId') ?? '')
+    const actionType = String(form.get('actionType') ?? '')
+    const priority = Number.parseInt(String(form.get('priority') ?? '100'), 10)
+    if (!condition.ok) formError = condition.message
+    else if (!actionConfig.ok) formError = actionConfig.message
+    else if (!triggerEventTypeId) formError = 'Choose a trigger event.'
+    else if (!ACTION_TYPES.includes(actionType)) formError = 'Choose a supported action.'
+    else if (!Number.isInteger(priority)) formError = 'Priority must be a whole number.'
+    else {
+      const save = await gqlRequest(
+        { endpoint: graphqlEndpoint, token },
+        UPSERT_AUTOMATION_RULE_MUTATION,
+        {
+          workspaceId,
+          id: String(form.get('ruleId') ?? '') || undefined,
+          triggerEventTypeId,
+          condition: condition.value,
+          actionType,
+          actionConfig: actionConfig.value,
+          enabled: form.get('enabled') === 'on',
+          priority,
+        },
+      )
+      if (!save.ok && save.code === 'auth_error') state = 'auth'
+      else if (!save.ok) formError = save.message ?? 'Could not save workflow rule.'
+      else notice = 'Rule saved.'
+    }
+  }
+
+  if (state !== 'auth') {
+    const result = await gqlRequest<PageData>({ endpoint: graphqlEndpoint, token }, WORKFLOW_RULES_QUERY, { workspaceId, first: 100 })
+    if (!result.ok && result.code === 'auth_error') state = 'auth'
+    else if (!result.ok) state = 'error'
+    else {
+      eventTypes = result.data.eventTypes.items
+      rules = result.data.automationRules.items
+      state = rules.length === 0 ? 'empty' : 'ok'
+    }
+  }
+}
+---
+<Base title="Workflow Rules">
+  <h1 tabindex="-1" id="workflow-rules-heading">Workflow Rules</h1>
+  <p><a href="/workflows/webhooks">Webhooks</a> <a href="/workflows/runs">Audit runs</a></p>
+  {state === 'auth' && <AuthFailure resource="workflow rules" />}
+  {state === 'error' && <ErrorRetry message="Could not load workflow rules." retryHref={Astro.url.pathname} />}
+  {notice && <p role="status" data-testid="workflow-notice">{notice}</p>}
+  {formError && <p role="alert" data-testid="workflow-form-error">{formError}</p>}
+
+  {(state === 'ok' || state === 'empty') && (
+    <section aria-labelledby="rule-form-heading">
+      <h2 id="rule-form-heading">Rule</h2>
+      <form method="post" data-testid="workflow-rule-form">
+        <label>
+          Trigger
+          <select name="triggerEventTypeId" required>
+            <option value="">Choose event</option>
+            {eventTypes.map((eventType) => <option value={eventType.id}>{eventType.key}</option>)}
+          </select>
+        </label>
+        <label>
+          Action
+          <select name="actionType" required>
+            {ACTION_TYPES.map((actionType) => <option value={actionType}>{actionType}</option>)}
+          </select>
+        </label>
+        <label>
+          Priority
+          <input name="priority" type="number" value="100" min="0" step="1" />
+        </label>
+        <label>
+          <input name="enabled" type="checkbox" checked /> Enabled
+        </label>
+        <label>
+          Condition JSON
+          <textarea name="condition" rows="6"></textarea>
+        </label>
+        <label>
+          Action config JSON
+          <textarea name="actionConfig" rows="6"></textarea>
+        </label>
+        <button type="submit">Save rule</button>
+      </form>
+    </section>
+  )}
+  {state === 'empty' && <EmptyState message="No workflow rules yet." />}
+  {state === 'ok' && (
+    <table data-testid="workflow-rules">
+      <thead>
+        <tr><th>Trigger</th><th>Action</th><th>Priority</th><th>Enabled</th><th>Condition</th><th>Config</th></tr>
+      </thead>
+      <tbody>
+        {rules.map((rule) => (
+          <tr>
+            <td>{eventTypes.find((eventType) => eventType.id === rule.trigger_event_type_id)?.key ?? rule.trigger_event_type_id}</td>
+            <td>{rule.action_type}</td>
+            <td>{rule.priority}</td>
+            <td>{rule.enabled ? 'enabled' : 'disabled'}</td>
+            <td><code>{prettyJson(rule.condition, '{}')}</code></td>
+            <td><code>{prettyJson(rule.action_config, '{}')}</code></td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  )}
+</Base>

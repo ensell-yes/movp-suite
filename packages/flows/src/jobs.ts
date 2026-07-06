@@ -40,7 +40,12 @@ export async function deadJob(db: SupabaseClient, id: string, errCode: string): 
   if (error) throw new Error(`dead_job_failed:${error.code ?? 'unknown'}`)
 }
 
-export async function replayJobs(db: SupabaseClient, opts: { kind?: string; dead?: boolean }): Promise<number> {
+export async function replayJobs(db: SupabaseClient, opts: { kind?: string; dead?: boolean; workspaceId?: string }): Promise<number> {
+  if (opts.kind === 'automate' && opts.workspaceId) {
+    const { data, error } = await db.rpc('replay_workflow_jobs', { ws: opts.workspaceId, only_dead: !!opts.dead })
+    if (error) throw new Error(`replay_workflow_jobs_failed:${error.code ?? 'unknown'}`)
+    return (data ?? 0) as number
+  }
   const { data, error } = await db.rpc('replay_jobs', { job_kind: opts.kind ?? null, only_dead: !!opts.dead })
   if (error) throw new Error(`replay_jobs_failed:${error.code ?? 'unknown'}`)
   return (data ?? 0) as number

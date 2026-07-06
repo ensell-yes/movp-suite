@@ -1,5 +1,5 @@
 begin;
-select plan(24);
+select plan(28);
 
 insert into public.workspace (id, name) values
   ('11111111-1111-1111-1111-111111111111', 'W1'),
@@ -211,5 +211,36 @@ select ok(
        and indexname='task_workflow_idempotency_key_unique'
   ),
   'workflow-created tasks have a unique idempotency index');
+
+delete from movp_internal.movp_jobs;
+insert into movp_internal.movp_jobs (kind, idempotency_key, payload, workspace_id, status, last_error_code)
+values
+  ('automate', 'replay:w1', '{}'::jsonb, '11111111-1111-1111-1111-111111111111', 'dead', 'test_dead'),
+  ('automate', 'replay:w2', '{}'::jsonb, '22222222-2222-2222-2222-222222222222', 'dead', 'test_dead');
+
+set local role authenticated;
+set local request.jwt.claims = '{"sub":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"}';
+select is(
+  public.replay_workflow_jobs('11111111-1111-1111-1111-111111111111', true),
+  1,
+  'member replay requeues only their workspace automate jobs');
+reset role;
+
+select is(
+  (select status from movp_internal.movp_jobs where idempotency_key='replay:w1'),
+  'pending',
+  'workspace replay marks the member workspace job pending');
+select is(
+  (select status from movp_internal.movp_jobs where idempotency_key='replay:w2'),
+  'dead',
+  'workspace replay leaves other workspace jobs dead');
+
+set local role authenticated;
+set local request.jwt.claims = '{"sub":"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"}';
+select throws_ok(
+  $$select public.replay_workflow_jobs('11111111-1111-1111-1111-111111111111', true)$$,
+  '42501', NULL,
+  'non-member cannot replay workflow jobs for a workspace');
+reset role;
 
 rollback;

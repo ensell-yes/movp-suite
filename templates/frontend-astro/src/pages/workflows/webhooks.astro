@@ -1,0 +1,201 @@
+---
+import Base from '../../layouts/Base.astro'
+import AuthFailure from '../../components/states/AuthFailure.astro'
+import ErrorRetry from '../../components/states/ErrorRetry.astro'
+import EmptyState from '../../components/states/EmptyState.astro'
+import { readServerEnv } from '../../lib/env.ts'
+import { gqlRequest } from '../../lib/graphql.ts'
+import { getSessionToken } from '../../lib/session.ts'
+import {
+  REGISTER_WEBHOOK_MUTATION,
+  ROTATE_WEBHOOK_MUTATION,
+  SET_WEBHOOK_ACTIVE_MUTATION,
+  SET_WEBHOOK_FILTER_MUTATION,
+  WORKFLOW_WEBHOOKS_QUERY,
+  type EventTypeRow,
+  type WebhookSecret,
+  type WebhookSubscriptionPage,
+  type WebhookSubscriptionRow,
+} from '../../lib/workflow-queries.ts'
+
+type PageData = { eventTypes: { items: EventTypeRow[] }; webhook_subscriptions: WebhookSubscriptionPage }
+
+function parseOptionalJson(raw: string): { ok: true; value: string | undefined } | { ok: false; message: string } {
+  const trimmed = raw.trim()
+  if (!trimmed) return { ok: true, value: undefined }
+  try {
+    JSON.parse(trimmed)
+    return { ok: true, value: trimmed }
+  } catch {
+    return { ok: false, message: 'Filter must be valid JSON.' }
+  }
+}
+
+const token = getSessionToken(Astro.cookies)
+let state: 'auth' | 'error' | 'empty' | 'ok' = 'auth'
+let eventTypes: EventTypeRow[] = []
+let subscriptions: WebhookSubscriptionRow[] = []
+let notice = ''
+let formError = ''
+let oneTimeSecret: WebhookSecret | null = null
+
+if (token) {
+  state = 'ok'
+  const { graphqlEndpoint, workspaceId } = readServerEnv()
+  if (Astro.request.method === 'POST') {
+    const form = await Astro.request.formData()
+    const action = String(form.get('action') ?? '')
+    if (action === 'register') {
+      const filter = parseOptionalJson(String(form.get('filter') ?? ''))
+      if (!filter.ok) formError = filter.message
+      else {
+        const registered = await gqlRequest<{ registerWebhookSubscription: WebhookSecret }>(
+          { endpoint: graphqlEndpoint, token },
+          REGISTER_WEBHOOK_MUTATION,
+          {
+            workspaceId,
+            eventKey: String(form.get('eventKey') ?? ''),
+            url: String(form.get('url') ?? ''),
+            filter: filter.value,
+          },
+        )
+        if (!registered.ok && registered.code === 'auth_error') state = 'auth'
+        else if (!registered.ok) formError = registered.message ?? 'Could not register webhook.'
+        else {
+          oneTimeSecret = registered.data.registerWebhookSubscription
+          notice = 'Webhook registered.'
+        }
+      }
+    } else if (action === 'rotate') {
+      const rotated = await gqlRequest<{ rotateWebhookSecret: WebhookSecret }>(
+        { endpoint: graphqlEndpoint, token },
+        ROTATE_WEBHOOK_MUTATION,
+        { workspaceId, subscriptionId: String(form.get('subscriptionId') ?? '') },
+      )
+      if (!rotated.ok && rotated.code === 'auth_error') state = 'auth'
+      else if (!rotated.ok) formError = rotated.message ?? 'Could not rotate webhook secret.'
+      else {
+        oneTimeSecret = rotated.data.rotateWebhookSecret
+        notice = 'Secret rotated.'
+      }
+    } else if (action === 'active') {
+      const active = String(form.get('active') ?? '') === 'true'
+      const updated = await gqlRequest(
+        { endpoint: graphqlEndpoint, token },
+        SET_WEBHOOK_ACTIVE_MUTATION,
+        { workspaceId, subscriptionId: String(form.get('subscriptionId') ?? ''), active },
+      )
+      if (!updated.ok && updated.code === 'auth_error') state = 'auth'
+      else if (!updated.ok) formError = updated.message ?? 'Could not update webhook status.'
+      else notice = active ? 'Webhook activated.' : 'Webhook deactivated.'
+    } else if (action === 'filter') {
+      const filter = parseOptionalJson(String(form.get('filter') ?? ''))
+      if (!filter.ok) formError = filter.message
+      else {
+        const updated = await gqlRequest(
+          { endpoint: graphqlEndpoint, token },
+          SET_WEBHOOK_FILTER_MUTATION,
+          { workspaceId, subscriptionId: String(form.get('subscriptionId') ?? ''), filter: filter.value ?? '{}' },
+        )
+        if (!updated.ok && updated.code === 'auth_error') state = 'auth'
+        else if (!updated.ok) formError = updated.message ?? 'Could not update webhook filter.'
+        else notice = 'Filter saved.'
+      }
+    }
+  }
+
+  if (state !== 'auth') {
+    const result = await gqlRequest<PageData>({ endpoint: graphqlEndpoint, token }, WORKFLOW_WEBHOOKS_QUERY, { workspaceId, first: 100 })
+    if (!result.ok && result.code === 'auth_error') state = 'auth'
+    else if (!result.ok) state = 'error'
+    else {
+      eventTypes = result.data.eventTypes.items
+      subscriptions = result.data.webhook_subscriptions.items
+      state = subscriptions.length === 0 ? 'empty' : 'ok'
+    }
+  }
+}
+---
+<Base title="Workflow Webhooks">
+  <h1 tabindex="-1" id="workflow-webhooks-heading">Workflow Webhooks</h1>
+  <p><a href="/workflows/rules">Rules</a> <a href="/workflows/runs">Audit runs</a></p>
+  {state === 'auth' && <AuthFailure resource="workflow webhooks" />}
+  {state === 'error' && <ErrorRetry message="Could not load workflow webhooks." retryHref={Astro.url.pathname} />}
+  {notice && <p role="status" data-testid="workflow-notice">{notice}</p>}
+  {formError && <p role="alert" data-testid="workflow-form-error">{formError}</p>}
+  {oneTimeSecret && (
+    <section data-testid="webhook-secret" role="status" aria-labelledby="secret-heading">
+      <h2 id="secret-heading">One-time secret</h2>
+      <p>Store this secret now. It will not be shown again.</p>
+      <code>{oneTimeSecret.secret}</code>
+      <script is:inline>
+        history.replaceState(null, '', location.pathname)
+      </script>
+    </section>
+  )}
+
+  {(state === 'ok' || state === 'empty') && (
+    <section aria-labelledby="register-webhook-heading">
+      <h2 id="register-webhook-heading">Register webhook</h2>
+      <form method="post" data-testid="webhook-register-form">
+        <input type="hidden" name="action" value="register" />
+        <label>
+          Event
+          <select name="eventKey" required>
+            {eventTypes.map((eventType) => <option value={eventType.key}>{eventType.key}</option>)}
+          </select>
+        </label>
+        <label>
+          URL
+          <input name="url" type="url" required placeholder="https://example.test/hook" />
+        </label>
+        <label>
+          Filter JSON
+          <textarea name="filter" rows="5"></textarea>
+        </label>
+        <button type="submit">Register webhook</button>
+      </form>
+    </section>
+  )}
+  {state === 'empty' && <EmptyState message="No webhook subscriptions yet." />}
+  {state === 'ok' && (
+    <table data-testid="workflow-webhooks">
+      <thead>
+        <tr><th>Event</th><th>URL</th><th>Status</th><th>Secret</th><th>Filter</th><th>Actions</th></tr>
+      </thead>
+      <tbody>
+        {subscriptions.map((sub) => (
+          <tr>
+            <td>{eventTypes.find((eventType) => eventType.id === sub.event_type_id)?.key ?? sub.event_type_id}</td>
+            <td>{sub.url}</td>
+            <td>{sub.active ? 'active' : 'inactive'}</td>
+            <td>{sub.secret_set ? `set ${sub.secret_last_rotated_at ?? ''}` : 'not set'}</td>
+            <td><code>{sub.filter ?? '{}'}</code></td>
+            <td>
+              <form method="post">
+                <input type="hidden" name="action" value="rotate" />
+                <input type="hidden" name="subscriptionId" value={sub.id} />
+                <button type="submit">Rotate secret</button>
+              </form>
+              <form method="post">
+                <input type="hidden" name="action" value="active" />
+                <input type="hidden" name="subscriptionId" value={sub.id} />
+                <input type="hidden" name="active" value={sub.active ? 'false' : 'true'} />
+                <button type="submit">{sub.active ? 'Deactivate' : 'Activate'}</button>
+              </form>
+              <form method="post">
+                <input type="hidden" name="action" value="filter" />
+                <input type="hidden" name="subscriptionId" value={sub.id} />
+                <label>
+                  Filter
+                  <textarea name="filter" rows="3" value={sub.filter ?? '{}'}></textarea>
+                </label>
+                <button type="submit">Save filter</button>
+              </form>
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  )}
+</Base>

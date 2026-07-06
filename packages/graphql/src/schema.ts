@@ -46,6 +46,21 @@ function domainFrom(ctx: GraphQLContext): Domain {
   }, { embedder: ctx.embedder })
 }
 
+function workflowAuditEvent(event: Record<string, unknown>): Record<string, unknown> {
+  const payload = event.payload
+  const payloadKeys = payload && typeof payload === 'object' && !Array.isArray(payload)
+    ? Object.keys(payload as Record<string, unknown>).sort()
+    : []
+  return {
+    id: event.id,
+    type: event.type,
+    workspace_id: event.workspace_id,
+    payload_keys: payloadKeys,
+    trace_id: event.trace_id,
+    created_at: event.created_at,
+  }
+}
+
 export function buildSchema(schema: MovpSchema): GraphQLSchema {
   const builder = new SchemaBuilder<{ Context: GraphQLContext }>({
     plugins: [DataloaderPlugin, ComplexityPlugin],
@@ -77,6 +92,15 @@ export function buildSchema(schema: MovpSchema): GraphQLSchema {
   })
   const shareLinkToken = builder.objectRef<{ token: string }>('ShareLinkToken').implement({
     fields: (t) => ({ token: t.exposeString('token') }),
+  })
+  const webhookSecretRef = builder.objectRef<{ subscriptionId: string; secret: string }>('WebhookSecret').implement({
+    fields: (t) => ({
+      subscriptionId: t.exposeID('subscriptionId'),
+      secret: t.exposeString('secret'),
+    }),
+  })
+  const workflowReplayRef = builder.objectRef<{ replayed: number }>('WorkflowReplayResult').implement({
+    fields: (t) => ({ replayed: t.exposeInt('replayed') }),
   })
   const resolvedShareLink = builder
     .objectRef<{ entity_type: string; entity_id: string; workspace_id: string }>('ResolvedShareLink')
@@ -161,6 +185,195 @@ export function buildSchema(schema: MovpSchema): GraphQLSchema {
 
   builder.queryType({})
   builder.mutationType({})
+
+  const parseJsonArg = (raw: string | null | undefined, fallback: unknown): unknown => {
+    if (raw == null || raw.length === 0) return fallback
+    try {
+      return JSON.parse(raw)
+    } catch {
+      throw new Error('invalid_json')
+    }
+  }
+
+  if (refs.has('event_type') && refs.has('automation_rule') && refs.has('webhook_subscription')) {
+    const workflowEventTypeRef = refs.get('event_type')
+    const workflowAutomationRuleRef = refs.get('automation_rule')
+    const workflowEventTypesPage = builder.objectRef<Page<Row>>('WorkflowEventTypePage').implement({
+      fields: (t: any) => ({
+        items: t.field({ type: [workflowEventTypeRef], resolve: (p: Page<Row>) => p.items }),
+        nextCursor: t.string({ nullable: true, resolve: (p: Page<Row>) => p.nextCursor ?? null }),
+      }),
+    })
+    const workflowAutomationRulesPage = builder.objectRef<Page<Row>>('WorkflowAutomationRulePage').implement({
+      fields: (t: any) => ({
+        items: t.field({ type: [workflowAutomationRuleRef], resolve: (p: Page<Row>) => p.items }),
+        nextCursor: t.string({ nullable: true, resolve: (p: Page<Row>) => p.nextCursor ?? null }),
+      }),
+    })
+
+    builder.queryField('eventTypes', (t: any) =>
+      t.field({
+        type: workflowEventTypesPage,
+        complexity: (args: any) => ({ field: 1, multiplier: clampPageSize(args.first) }),
+        args: {
+          first: t.arg.int({ required: false }),
+          after: t.arg.string({ required: false }),
+        },
+        resolve: (_r: unknown, args: any, ctx: GraphQLContext) =>
+          domainFrom(ctx).workflows.listEventTypes({
+            first: clampPageSize(args.first),
+            after: args.after ?? null,
+          }),
+      }),
+    )
+
+    builder.queryField('automationRules', (t: any) =>
+      t.field({
+        type: workflowAutomationRulesPage,
+        complexity: (args: any) => ({ field: 1, multiplier: clampPageSize(args.first) }),
+        args: {
+          workspaceId: t.arg.id({ required: true }),
+          first: t.arg.int({ required: false }),
+          after: t.arg.string({ required: false }),
+        },
+        resolve: (_r: unknown, args: any, ctx: GraphQLContext) =>
+          domainFrom(ctx).workflows.listRules({
+            workspaceId: String(args.workspaceId),
+            first: clampPageSize(args.first),
+            after: args.after ?? null,
+          }),
+      }),
+    )
+
+    builder.queryField('workflowEvent', (t: any) =>
+      t.field({
+        type: 'String',
+        nullable: true,
+        complexity: 5,
+        args: { workspaceId: t.arg.id({ required: true }), eventId: t.arg.id({ required: true }) },
+        resolve: async (_r: unknown, args: any, ctx: GraphQLContext) => {
+          const event = await domainFrom(ctx).workflows.getEvent({
+            workspaceId: String(args.workspaceId),
+            eventId: String(args.eventId),
+          })
+          return event == null ? null : JSON.stringify(workflowAuditEvent(event))
+        },
+      }),
+    )
+
+    builder.mutationField('upsertAutomationRule', (t: any) =>
+      t.field({
+        type: workflowAutomationRuleRef,
+        complexity: 10,
+        args: {
+          workspaceId: t.arg.id({ required: true }),
+          id: t.arg.id({ required: false }),
+          triggerEventTypeId: t.arg.id({ required: true }),
+          condition: t.arg.string({ required: false }),
+          actionType: t.arg.string({ required: true }),
+          actionConfig: t.arg.string({ required: true }),
+          enabled: t.arg.boolean({ required: true }),
+          priority: t.arg.int({ required: true }),
+        },
+        resolve: (_r: unknown, args: any, ctx: GraphQLContext) =>
+          domainFrom(ctx).workflows.upsertRule({
+            workspaceId: String(args.workspaceId),
+            id: args.id ? String(args.id) : undefined,
+            triggerEventTypeId: String(args.triggerEventTypeId),
+            condition: parseJsonArg(args.condition, {}) as Record<string, unknown>,
+            actionType: String(args.actionType) as any,
+            actionConfig: parseJsonArg(args.actionConfig, {}) as Record<string, unknown>,
+            enabled: Boolean(args.enabled),
+            priority: Number(args.priority),
+          }),
+      }),
+    )
+
+    builder.mutationField('registerWebhookSubscription', (t: any) =>
+      t.field({
+        type: webhookSecretRef,
+        complexity: 10,
+        args: {
+          workspaceId: t.arg.id({ required: true }),
+          eventKey: t.arg.string({ required: true }),
+          url: t.arg.string({ required: true }),
+          filter: t.arg.string({ required: false }),
+        },
+        resolve: (_r: unknown, args: any, ctx: GraphQLContext) =>
+          domainFrom(ctx).workflows.registerWebhook({
+            workspaceId: String(args.workspaceId),
+            eventKey: String(args.eventKey),
+            url: String(args.url),
+            filter: parseJsonArg(args.filter, undefined),
+          }),
+      }),
+    )
+
+    builder.mutationField('rotateWebhookSecret', (t: any) =>
+      t.field({
+        type: webhookSecretRef,
+        complexity: 10,
+        args: { workspaceId: t.arg.id({ required: true }), subscriptionId: t.arg.id({ required: true }) },
+        resolve: (_r: unknown, args: any, ctx: GraphQLContext) =>
+          domainFrom(ctx).workflows.rotateWebhook({
+            workspaceId: String(args.workspaceId),
+            subscriptionId: String(args.subscriptionId),
+          }),
+      }),
+    )
+
+    builder.mutationField('setWebhookActive', (t: any) =>
+      t.field({
+        type: refs.get('webhook_subscription'),
+        complexity: 5,
+        args: {
+          workspaceId: t.arg.id({ required: true }),
+          subscriptionId: t.arg.id({ required: true }),
+          active: t.arg.boolean({ required: true }),
+        },
+        resolve: (_r: unknown, args: any, ctx: GraphQLContext) =>
+          domainFrom(ctx).workflows.setWebhookActive({
+            workspaceId: String(args.workspaceId),
+            subscriptionId: String(args.subscriptionId),
+            active: Boolean(args.active),
+          }),
+      }),
+    )
+
+    builder.mutationField('setWebhookFilter', (t: any) =>
+      t.field({
+        type: refs.get('webhook_subscription'),
+        complexity: 5,
+        args: {
+          workspaceId: t.arg.id({ required: true }),
+          subscriptionId: t.arg.id({ required: true }),
+          filter: t.arg.string({ required: true }),
+        },
+        resolve: (_r: unknown, args: any, ctx: GraphQLContext) =>
+          domainFrom(ctx).workflows.setWebhookFilter({
+            workspaceId: String(args.workspaceId),
+            subscriptionId: String(args.subscriptionId),
+            filter: parseJsonArg(args.filter, {}),
+          }),
+      }),
+    )
+
+    builder.mutationField('replayDeadWorkflowJobs', (t: any) =>
+      t.field({
+        type: workflowReplayRef,
+        complexity: 5,
+        args: { workspaceId: t.arg.id({ required: true }) },
+        resolve: async (_r: unknown, args: any, ctx: GraphQLContext) => {
+          const { data, error } = await ctx.db.rpc('replay_workflow_jobs', {
+            ws: String(args.workspaceId),
+            only_dead: true,
+          })
+          if (error) throw new Error(`replay_dead_workflow_jobs_failed:${error.code ?? 'unknown'}`)
+          return { replayed: Number(data ?? 0) }
+        },
+      }),
+    )
+  }
 
   for (const c of schema.collections as CollectionDef[]) {
     if (c.internal) continue

@@ -5,7 +5,7 @@ import { createDomain, type CollectionService, type Domain } from '@movp/domain'
 import { resolveCliCtx, type CliCtx } from './client.ts'
 
 export interface JobsHandlers {
-  replay: (o: { kind?: string; dead?: boolean }) => Promise<void>
+  replay: (o: { kind?: string; dead?: boolean; workspaceId?: string }) => Promise<void>
   reindex: (collection: string) => Promise<void>
 }
 
@@ -23,6 +23,15 @@ function service(domain: Domain, name: string): AnyService {
   const svc = (domain as unknown as Record<string, AnyService>)[name]
   if (!svc || typeof svc.create !== 'function') throw new Error(`no domain service for collection: ${name}`)
   return svc
+}
+
+function parseJsonFlag(value: string | undefined, fallback: unknown): unknown {
+  if (value == null || value.length === 0) return fallback
+  try {
+    return JSON.parse(value)
+  } catch {
+    throw new Error('invalid_json')
+  }
 }
 
 export function buildProgram(opts: BuildProgramOpts = {}): Command {
@@ -364,6 +373,120 @@ export function buildProgram(opts: BuildProgramOpts = {}): Command {
         mime: o.mime,
         sizeBytes: o.sizeBytes,
       })))
+    })
+
+  const workflowsCmd = program.command('workflows').description('Manage workflow automation and webhooks')
+  workflowsCmd
+    .command('events')
+    .option('--first <n>', 'page size', (v) => parseInt(v, 10))
+    .option('--after <cursor>', 'page cursor')
+    .action(async (o: { first?: number; after?: string }) => {
+      const domain = createDomain(resolveCtx())
+      out(JSON.stringify(await domain.workflows.listEventTypes({ first: o.first, after: o.after ?? null })))
+    })
+
+  const workflowRulesCmd = workflowsCmd.command('rules').description('Workflow automation rules')
+  workflowRulesCmd
+    .command('list')
+    .requiredOption('--workspace <id>', 'workspace id')
+    .option('--first <n>', 'page size', (v) => parseInt(v, 10))
+    .option('--after <cursor>', 'page cursor')
+    .action(async (o: { workspace: string; first?: number; after?: string }) => {
+      const domain = createDomain(resolveCtx())
+      out(JSON.stringify(await domain.workflows.listRules({ workspaceId: o.workspace, first: o.first, after: o.after ?? null })))
+    })
+  workflowRulesCmd
+    .command('upsert')
+    .requiredOption('--workspace <id>', 'workspace id')
+    .option('--id <id>', 'existing rule id')
+    .requiredOption('--trigger-event-type <id>', 'event_type id')
+    .option('--condition <json>', 'condition JSON')
+    .requiredOption('--action-type <type>', 'action type')
+    .requiredOption('--action-config <json>', 'action config JSON')
+    .option('--enabled', 'enable the rule')
+    .option('--disabled', 'disable the rule')
+    .option('--priority <n>', 'rule priority', (v) => parseInt(v, 10), 100)
+    .action(async (o: {
+      workspace: string
+      id?: string
+      triggerEventType: string
+      condition?: string
+      actionType: string
+      actionConfig: string
+      enabled?: boolean
+      disabled?: boolean
+      priority: number
+    }) => {
+      const domain = createDomain(resolveCtx())
+      out(JSON.stringify(await domain.workflows.upsertRule({
+        workspaceId: o.workspace,
+        id: o.id,
+        triggerEventTypeId: o.triggerEventType,
+        condition: parseJsonFlag(o.condition, {}) as Record<string, unknown>,
+        actionType: o.actionType as any,
+        actionConfig: parseJsonFlag(o.actionConfig, {}) as Record<string, unknown>,
+        enabled: o.disabled ? false : !!o.enabled,
+        priority: o.priority,
+      })))
+    })
+
+  workflowsCmd
+    .command('runs')
+    .requiredOption('--workspace <id>', 'workspace id')
+    .option('--first <n>', 'page size', (v) => parseInt(v, 10))
+    .option('--after <cursor>', 'page cursor')
+    .action(async (o: { workspace: string; first?: number; after?: string }) => {
+      const domain = createDomain(resolveCtx())
+      out(JSON.stringify(await domain.workflow_run.list({ workspaceId: o.workspace, first: o.first, after: o.after ?? null })))
+    })
+
+  const workflowWebhookCmd = workflowsCmd.command('webhooks').description('Workflow webhook subscriptions')
+  workflowWebhookCmd
+    .command('register')
+    .requiredOption('--workspace <id>', 'workspace id')
+    .requiredOption('--event <key>', 'event type key')
+    .requiredOption('--url <url>', 'webhook URL')
+    .option('--filter <json>', 'filter JSON')
+    .action(async (o: { workspace: string; event: string; url: string; filter?: string }) => {
+      const domain = createDomain(resolveCtx())
+      out(JSON.stringify(await domain.workflows.registerWebhook({
+        workspaceId: o.workspace,
+        eventKey: o.event,
+        url: o.url,
+        filter: parseJsonFlag(o.filter, undefined),
+      })))
+    })
+  workflowWebhookCmd
+    .command('rotate')
+    .requiredOption('--workspace <id>', 'workspace id')
+    .requiredOption('--subscription <id>', 'subscription id')
+    .action(async (o: { workspace: string; subscription: string }) => {
+      const domain = createDomain(resolveCtx())
+      out(JSON.stringify(await domain.workflows.rotateWebhook({ workspaceId: o.workspace, subscriptionId: o.subscription })))
+    })
+  workflowWebhookCmd
+    .command('activate')
+    .requiredOption('--workspace <id>', 'workspace id')
+    .requiredOption('--subscription <id>', 'subscription id')
+    .action(async (o: { workspace: string; subscription: string }) => {
+      const domain = createDomain(resolveCtx())
+      out(JSON.stringify(await domain.workflows.setWebhookActive({ workspaceId: o.workspace, subscriptionId: o.subscription, active: true })))
+    })
+  workflowWebhookCmd
+    .command('deactivate')
+    .requiredOption('--workspace <id>', 'workspace id')
+    .requiredOption('--subscription <id>', 'subscription id')
+    .action(async (o: { workspace: string; subscription: string }) => {
+      const domain = createDomain(resolveCtx())
+      out(JSON.stringify(await domain.workflows.setWebhookActive({ workspaceId: o.workspace, subscriptionId: o.subscription, active: false })))
+    })
+
+  workflowsCmd
+    .command('replay')
+    .requiredOption('--workspace <id>', 'workspace id')
+    .option('--dead', 'replay dead-lettered automate jobs')
+    .action(async (o: { workspace: string; dead?: boolean }) => {
+      await jobs.replay({ kind: 'automate', dead: !!o.dead, workspaceId: o.workspace })
     })
 
   program

@@ -8,7 +8,7 @@ function rpcDb() {
     rpc(fn: string, args: unknown) {
       calls.push({ fn, args })
       if (fn === 'claim_jobs') return Promise.resolve({ data: [], error: null })
-      if (fn === 'replay_jobs' || fn === 'reindex_collection') return Promise.resolve({ data: 1, error: null })
+      if (fn === 'replay_jobs' || fn === 'replay_workflow_jobs' || fn === 'reindex_collection') return Promise.resolve({ data: 1, error: null })
       return Promise.resolve({ data: null, error: null })
     },
   }
@@ -22,6 +22,7 @@ describe('job rpc helpers', () => {
     await completeJob(db as any, 'j', true)
     await deadJob(db as any, 'j', 'bad')
     expect(await replayJobs(db as any, { kind: 'webhook', dead: true })).toBe(1)
+    expect(await replayJobs(db as any, { kind: 'automate', dead: true, workspaceId: 'w' })).toBe(1)
     expect(await reindexCollection(db as any, 'note')).toBe(1)
     expect(db.calls.map((c) => c.fn)).toEqual([
       'enqueue_job',
@@ -29,7 +30,12 @@ describe('job rpc helpers', () => {
       'complete_job',
       'dead_job',
       'replay_jobs',
+      'replay_workflow_jobs',
       'reindex_collection',
     ])
+    expect(db.calls.at(-2)).toEqual({
+      fn: 'replay_workflow_jobs',
+      args: { ws: 'w', only_dead: true },
+    })
   })
 })
