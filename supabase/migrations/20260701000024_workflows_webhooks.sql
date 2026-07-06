@@ -77,3 +77,126 @@ $$;
 
 revoke all on function public.register_webhook_subscription(uuid, text, text, jsonb) from public, anon, authenticated;
 grant execute on function public.register_webhook_subscription(uuid, text, text, jsonb) to authenticated;
+
+create or replace function public.rotate_webhook_secret(subscription_id uuid, ws uuid)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_sub public.webhook_subscription%rowtype;
+  v_secret text := encode(extensions.gen_random_bytes(32), 'hex');
+begin
+  if not public.is_workspace_member(ws) then
+    raise exception 'not_workspace_member' using errcode = '42501';
+  end if;
+
+  select *
+    into v_sub
+    from public.webhook_subscription s
+   where s.id = subscription_id
+     and s.workspace_id = ws;
+  if not found then
+    raise exception 'webhook_subscription_not_found' using errcode = '22023';
+  end if;
+
+  update movp_internal.webhooks w
+     set secret = v_secret
+   where w.id = v_sub.internal_webhook_id
+     and w.workspace_id = ws
+     and w.managed_by = 'workflow_subscription';
+  if not found then
+    raise exception 'internal_webhook_not_found' using errcode = 'P0001';
+  end if;
+
+  update public.webhook_subscription
+     set secret_set = true,
+         secret_last_rotated_at = now(),
+         updated_at = now()
+   where id = subscription_id;
+
+  return jsonb_build_object('subscription_id', subscription_id, 'secret', v_secret);
+end;
+$$;
+
+revoke all on function public.rotate_webhook_secret(uuid, uuid) from public, anon, authenticated;
+grant execute on function public.rotate_webhook_secret(uuid, uuid) to authenticated;
+
+create or replace function public.set_webhook_active(subscription_id uuid, ws uuid, active boolean)
+returns public.webhook_subscription
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_sub public.webhook_subscription%rowtype;
+begin
+  if not public.is_workspace_member(ws) then
+    raise exception 'not_workspace_member' using errcode = '42501';
+  end if;
+
+  select *
+    into v_sub
+    from public.webhook_subscription s
+   where s.id = subscription_id
+     and s.workspace_id = ws;
+  if not found then
+    raise exception 'webhook_subscription_not_found' using errcode = '22023';
+  end if;
+
+  update movp_internal.webhooks w
+     set active = set_webhook_active.active
+   where w.id = v_sub.internal_webhook_id
+     and w.workspace_id = ws
+     and w.managed_by = 'workflow_subscription';
+  if not found then
+    raise exception 'internal_webhook_not_found' using errcode = 'P0001';
+  end if;
+
+  update public.webhook_subscription s
+     set active = set_webhook_active.active,
+         updated_at = now()
+   where s.id = subscription_id
+   returning * into v_sub;
+
+  return v_sub;
+end;
+$$;
+
+revoke all on function public.set_webhook_active(uuid, uuid, boolean) from public, anon, authenticated;
+grant execute on function public.set_webhook_active(uuid, uuid, boolean) to authenticated;
+
+create or replace function public.set_webhook_filter(subscription_id uuid, ws uuid, filter jsonb)
+returns public.webhook_subscription
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_sub public.webhook_subscription%rowtype;
+begin
+  if not public.is_workspace_member(ws) then
+    raise exception 'not_workspace_member' using errcode = '42501';
+  end if;
+
+  if filter is not null and jsonb_typeof(filter) <> 'object' then
+    raise exception 'filter_invalid' using errcode = '22023';
+  end if;
+
+  update public.webhook_subscription s
+     set filter = set_webhook_filter.filter,
+         updated_at = now()
+   where s.id = subscription_id
+     and s.workspace_id = ws
+   returning * into v_sub;
+  if not found then
+    raise exception 'webhook_subscription_not_found' using errcode = '22023';
+  end if;
+
+  return v_sub;
+end;
+$$;
+
+revoke all on function public.set_webhook_filter(uuid, uuid, jsonb) from public, anon, authenticated;
+grant execute on function public.set_webhook_filter(uuid, uuid, jsonb) to authenticated;

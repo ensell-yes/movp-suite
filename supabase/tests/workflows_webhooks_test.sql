@@ -1,5 +1,5 @@
 begin;
-select plan(12);
+select plan(24);
 
 insert into public.workspace (id, name) values
   ('11111111-1111-1111-1111-111111111111', 'W1'),
@@ -92,5 +92,97 @@ select throws_ok(
   $$select public.register_webhook_subscription('11111111-1111-1111-1111-111111111111', 'task.completed', 'https://example.test/nope', '[]'::jsonb)$$,
   '22023', NULL,
   'subscription filter must be a JSON object when present');
+
+create temp table _rotated as
+select public.rotate_webhook_secret(
+  ((select result->>'subscription_id' from _registered)::uuid),
+  '11111111-1111-1111-1111-111111111111'
+) as result;
+
+select isnt(
+  (select result->>'secret' from _rotated),
+  (select result->>'secret' from _registered),
+  'rotate returns a new one-time secret');
+
+reset role;
+select is(
+  (select w.secret
+     from movp_internal.webhooks w
+     join public.webhook_subscription s on s.internal_webhook_id = w.id
+    where s.id = ((select result->>'subscription_id' from _registered)::uuid)),
+  (select result->>'secret' from _rotated),
+  'rotate updates the paired internal secret');
+select ok(
+  not exists (
+    select 1
+      from public.webhook_subscription s
+     where s.id = ((select result->>'subscription_id' from _registered)::uuid)
+       and to_jsonb(s)::text like '%' || (select result->>'secret' from _rotated) || '%'
+  ),
+  'rotated secret is not persisted publicly');
+
+set local role authenticated;
+set local request.jwt.claims = '{"sub":"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"}';
+select throws_ok(
+  $$select public.rotate_webhook_secret((select (result->>'subscription_id')::uuid from _registered), '11111111-1111-1111-1111-111111111111')$$,
+  '42501', NULL,
+  'non-member cannot rotate a subscription');
+select throws_ok(
+  $$select public.set_webhook_active((select (result->>'subscription_id')::uuid from _registered), '11111111-1111-1111-1111-111111111111', false)$$,
+  '42501', NULL,
+  'non-member cannot deactivate a subscription');
+select throws_ok(
+  $$select public.set_webhook_filter((select (result->>'subscription_id')::uuid from _registered), '11111111-1111-1111-1111-111111111111', '{}'::jsonb)$$,
+  '42501', NULL,
+  'non-member cannot update a subscription filter');
+
+set local request.jwt.claims = '{"sub":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"}';
+select ok(
+  not (public.set_webhook_active(
+    ((select result->>'subscription_id' from _registered)::uuid),
+    '11111111-1111-1111-1111-111111111111',
+    false
+  )).active,
+  'member can deactivate the public subscription');
+
+reset role;
+select is(
+  (select w.active
+     from movp_internal.webhooks w
+     join public.webhook_subscription s on s.internal_webhook_id = w.id
+    where s.id = ((select result->>'subscription_id' from _registered)::uuid)),
+  false,
+  'deactivate updates the paired internal webhook');
+
+set local role authenticated;
+set local request.jwt.claims = '{"sub":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"}';
+select ok(
+  (public.set_webhook_active(
+    ((select result->>'subscription_id' from _registered)::uuid),
+    '11111111-1111-1111-1111-111111111111',
+    true
+  )).active,
+  'member can reactivate the public subscription');
+select is(
+  (public.set_webhook_filter(
+    ((select result->>'subscription_id' from _registered)::uuid),
+    '11111111-1111-1111-1111-111111111111',
+    '{"field":"event","op":"eq","value":"content.published"}'::jsonb
+  )).filter,
+  '{"op": "eq", "field": "event", "value": "content.published"}'::jsonb,
+  'member can update the subscription filter');
+select throws_ok(
+  $$select public.set_webhook_filter((select (result->>'subscription_id')::uuid from _registered), '11111111-1111-1111-1111-111111111111', '[]'::jsonb)$$,
+  '22023', NULL,
+  'set_webhook_filter validates JSON object shape');
+reset role;
+select ok(
+  not exists (
+    select 1
+      from public.webhook_subscription s
+     where s.id = ((select result->>'subscription_id' from _registered)::uuid)
+       and to_jsonb(s)::text like '%' || (select result->>'secret' from _registered) || '%'
+  ),
+  'public row still contains no old secret after management operations');
 
 rollback;
