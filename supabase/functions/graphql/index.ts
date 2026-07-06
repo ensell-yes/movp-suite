@@ -3,7 +3,6 @@ import { schema } from '@movp/core-schema'
 import { resolvePrincipal } from '@movp/auth'
 import { emit, REDACTION_VERSION } from '@movp/obs'
 import { GteSmallProvider } from '@movp/search/gte-small'
-import { createClient } from '@supabase/supabase-js'
 
 const yoga = createYoga({ schema })
 
@@ -11,7 +10,6 @@ Deno.serve(async (req: Request): Promise<Response> => {
   const env = {
     SUPABASE_URL: Deno.env.get('SUPABASE_URL')!,
     SUPABASE_ANON_KEY: Deno.env.get('SUPABASE_ANON_KEY')!,
-    SUPABASE_SERVICE_ROLE_KEY: Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
     SUPABASE_JWT_ISSUER: Deno.env.get('MOVP_JWT_ISSUER') ?? Deno.env.get('SUPABASE_JWT_ISSUER') ?? undefined,
   }
   const principal = await resolvePrincipal(req, env)
@@ -32,10 +30,8 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
   const url = new URL(req.url)
   const yogaReq = new Request(new URL(`/graphql${url.search}`, url.origin), req)
-  const adminDb = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } })
   return yoga.handleRequest(yogaReq, {
     db: principal.db,
-    adminDb,
     userId: principal.userId,
     embedder: new GteSmallProvider(),
     accessToken: req.headers.get('Authorization')?.replace(/^Bearer\s+/i, ''),

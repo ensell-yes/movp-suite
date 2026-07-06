@@ -516,11 +516,11 @@ export function buildMcpServer(schema: MovpSchema, ctx: McpCtx): McpServer {
     'workflow.jobs.replay_dead',
     {
       title: 'Replay dead workflow jobs',
-      description: 'Replay dead-lettered automate jobs',
-      inputSchema: {},
+      description: 'Replay dead-lettered automate jobs in a workspace',
+      inputSchema: { workspaceId: z.string() },
     },
-    async () => {
-      const { data, error } = await ctx.db.rpc('replay_jobs', { job_kind: 'automate', only_dead: true })
+    async ({ workspaceId }) => {
+      const { data, error } = await ctx.db.rpc('replay_workflow_jobs', { ws: workspaceId, only_dead: true })
       if (error) throw new Error(`replay_dead_workflow_jobs_failed:${error.code ?? 'unknown'}`)
       return text({ replayed: Number(data ?? 0) })
     },

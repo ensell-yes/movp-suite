@@ -46,6 +46,21 @@ function domainFrom(ctx: GraphQLContext): Domain {
   }, { embedder: ctx.embedder })
 }
 
+function workflowAuditEvent(event: Record<string, unknown>): Record<string, unknown> {
+  const payload = event.payload
+  const payloadKeys = payload && typeof payload === 'object' && !Array.isArray(payload)
+    ? Object.keys(payload as Record<string, unknown>).sort()
+    : []
+  return {
+    id: event.id,
+    type: event.type,
+    workspace_id: event.workspace_id,
+    payload_keys: payloadKeys,
+    trace_id: event.trace_id,
+    created_at: event.created_at,
+  }
+}
+
 export function buildSchema(schema: MovpSchema): GraphQLSchema {
   const builder = new SchemaBuilder<{ Context: GraphQLContext }>({
     plugins: [DataloaderPlugin, ComplexityPlugin],
@@ -241,7 +256,7 @@ export function buildSchema(schema: MovpSchema): GraphQLSchema {
             workspaceId: String(args.workspaceId),
             eventId: String(args.eventId),
           })
-          return event == null ? null : JSON.stringify(event)
+          return event == null ? null : JSON.stringify(workflowAuditEvent(event))
         },
       }),
     )
@@ -347,10 +362,12 @@ export function buildSchema(schema: MovpSchema): GraphQLSchema {
       t.field({
         type: workflowReplayRef,
         complexity: 5,
-        args: {},
-        resolve: async (_r: unknown, _args: unknown, ctx: GraphQLContext) => {
-          if (!ctx.adminDb) throw new Error('replay_dead_workflow_jobs_failed:service_role_unavailable')
-          const { data, error } = await ctx.adminDb.rpc('replay_jobs', { job_kind: 'automate', only_dead: true })
+        args: { workspaceId: t.arg.id({ required: true }) },
+        resolve: async (_r: unknown, args: any, ctx: GraphQLContext) => {
+          const { data, error } = await ctx.db.rpc('replay_workflow_jobs', {
+            ws: String(args.workspaceId),
+            only_dead: true,
+          })
           if (error) throw new Error(`replay_dead_workflow_jobs_failed:${error.code ?? 'unknown'}`)
           return { replayed: Number(data ?? 0) }
         },

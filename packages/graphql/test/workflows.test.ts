@@ -43,7 +43,14 @@ const mocks = vi.hoisted(() => {
     listEventTypes: vi.fn(async (args: unknown) => ({ items: [eventType], nextCursor: null, args })),
     listRules: vi.fn(async (args: unknown) => ({ items: [rule], nextCursor: null, args })),
     upsertRule: vi.fn(async (input: unknown) => ({ ...rule, ...(input as Record<string, unknown>) })),
-    getEvent: vi.fn(async () => ({ id: 'ev1', type: 'task.completed', payload: { id: 'task1' } })),
+    getEvent: vi.fn(async () => ({
+      id: 'ev1',
+      type: 'task.completed',
+      workspace_id: 'w',
+      payload: { task_id: 'task1', email: 'member@example.test', body: 'Secret body should not render' },
+      trace_id: 'trace-1',
+      created_at: 't',
+    })),
     registerWebhook: vi.fn(async () => ({ subscriptionId: 'sub1', secret: 's'.repeat(64) })),
     rotateWebhook: vi.fn(async () => ({ subscriptionId: 'sub1', secret: 'r'.repeat(64) })),
     setWebhookActive: vi.fn(async () => ({ ...subscription, active: false })),
@@ -74,9 +81,8 @@ vi.mock('@movp/domain', () => ({
   }),
 }))
 
-const userRpc = vi.fn(async () => ({ data: null, error: { code: '42501' } }))
-const adminRpc = vi.fn(async () => ({ data: 3, error: null }))
-const ctx = { db: { rpc: userRpc } as never, adminDb: { rpc: adminRpc } as never, userId: 'u' }
+const rpc = vi.fn(async () => ({ data: 3, error: null }))
+const ctx = { db: { rpc } as never, userId: 'u' }
 const run = (source: string) => graphql({ schema: buildSchema(movpSchema), source, contextValue: ctx })
 
 describe('workflow GraphQL surface', () => {
@@ -125,7 +131,11 @@ describe('workflow GraphQL surface', () => {
     const res = await run('query { workflowEvent(workspaceId: "w", eventId: "ev1") }')
     expect(res.errors).toBeUndefined()
     expect(mocks.getEvent).toHaveBeenCalledWith({ workspaceId: 'w', eventId: 'ev1' })
-    expect(JSON.parse((res.data as { workflowEvent: string }).workflowEvent).type).toBe('task.completed')
+    const event = JSON.parse((res.data as { workflowEvent: string }).workflowEvent)
+    expect(event.type).toBe('task.completed')
+    expect(event.payload_keys).toEqual(['body', 'email', 'task_id'])
+    expect(JSON.stringify(event)).not.toContain('member@example.test')
+    expect(JSON.stringify(event)).not.toContain('Secret body should not render')
   })
 
   it('updates webhook active/filter and replays dead workflow jobs', async () => {
@@ -135,10 +145,9 @@ describe('workflow GraphQL surface', () => {
     await run('mutation { setWebhookFilter(workspaceId: "w", subscriptionId: "sub1", filter: "{\\"field\\":\\"event\\"}") { id filter } }')
     expect(mocks.setWebhookFilter).toHaveBeenCalledWith({ workspaceId: 'w', subscriptionId: 'sub1', filter: { field: 'event' } })
 
-    const replay = await run('mutation { replayDeadWorkflowJobs { replayed } }')
+    const replay = await run('mutation { replayDeadWorkflowJobs(workspaceId: "w") { replayed } }')
     expect(replay.errors).toBeUndefined()
-    expect(adminRpc).toHaveBeenCalledWith('replay_jobs', { job_kind: 'automate', only_dead: true })
-    expect(userRpc).not.toHaveBeenCalledWith('replay_jobs', { job_kind: 'automate', only_dead: true })
+    expect(rpc).toHaveBeenCalledWith('replay_workflow_jobs', { ws: 'w', only_dead: true })
     expect((replay.data as { replayDeadWorkflowJobs: { replayed: number } }).replayDeadWorkflowJobs.replayed).toBe(3)
   })
 })

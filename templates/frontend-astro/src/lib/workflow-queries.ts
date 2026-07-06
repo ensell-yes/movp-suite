@@ -133,5 +133,6 @@ export const SET_WEBHOOK_FILTER_MUTATION = /* GraphQL */ `
   }`
 
 export const REPLAY_DEAD_WORKFLOW_JOBS_MUTATION = /* GraphQL */ `
-  mutation ReplayDeadWorkflowJobs { replayDeadWorkflowJobs { replayed } }`
-
+  mutation ReplayDeadWorkflowJobs($workspaceId: ID!) {
+    replayDeadWorkflowJobs(workspaceId: $workspaceId) { replayed }
+  }`

@@ -3,7 +3,6 @@ import type { EmbeddingProvider } from '@movp/domain'
 
 export interface GraphQLContext {
   db: SupabaseClient
-  adminDb?: SupabaseClient
   userId: string
   embedder?: EmbeddingProvider
   accessToken?: string

@@ -280,7 +280,8 @@ describe('buildMcpServer', () => {
 
   it('registers workflow tools and only returns secrets from register/rotate', async () => {
     const client = new Client({ name: 'test', version: '0.0.0' })
-    const server = buildMcpServer(schema, { db: { rpc: vi.fn(async () => ({ data: 2, error: null })) } as never, userId: 'u' })
+    const rpc = vi.fn(async () => ({ data: 2, error: null }))
+    const server = buildMcpServer(schema, { db: { rpc } as never, userId: 'u' })
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
     await Promise.all([server.connect(serverTransport), client.connect(clientTransport)])
 
@@ -327,5 +328,13 @@ describe('buildMcpServer', () => {
       arguments: { workspaceId: 'w', subscriptionId: 'sub1', active: false },
     })
     expect(JSON.stringify(active.content)).not.toContain('s'.repeat(64))
+
+    const replay = await client.callTool({
+      name: 'workflow.jobs.replay_dead',
+      arguments: { workspaceId: 'w' },
+    })
+    const replayContent = replay.content as Array<{ type: 'text'; text: string }>
+    expect(JSON.parse(replayContent[0]!.text)).toEqual({ replayed: 2 })
+    expect(rpc).toHaveBeenCalledWith('replay_workflow_jobs', { ws: 'w', only_dead: true })
   })
 })

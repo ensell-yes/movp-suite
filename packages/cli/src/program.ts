@@ -5,7 +5,7 @@ import { createDomain, type CollectionService, type Domain } from '@movp/domain'
 import { resolveCliCtx, type CliCtx } from './client.ts'
 
 export interface JobsHandlers {
-  replay: (o: { kind?: string; dead?: boolean }) => Promise<void>
+  replay: (o: { kind?: string; dead?: boolean; workspaceId?: string }) => Promise<void>
   reindex: (collection: string) => Promise<void>
 }
 
@@ -483,9 +483,10 @@ export function buildProgram(opts: BuildProgramOpts = {}): Command {
 
   workflowsCmd
     .command('replay')
+    .requiredOption('--workspace <id>', 'workspace id')
     .option('--dead', 'replay dead-lettered automate jobs')
-    .action(async (o: { dead?: boolean }) => {
-      await jobs.replay({ kind: 'automate', dead: !!o.dead })
+    .action(async (o: { workspace: string; dead?: boolean }) => {
+      await jobs.replay({ kind: 'automate', dead: !!o.dead, workspaceId: o.workspace })
     })
 
   program

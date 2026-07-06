@@ -391,7 +391,7 @@ describe('movp CLI', () => {
     expect(workflowSetWebhookActive).toHaveBeenCalledWith({ workspaceId: 'w', subscriptionId: 'sub1', active: false })
     expect(out.at(-1)).not.toContain('s'.repeat(64))
 
-    await cmd.parseAsync(['node', 'movp', 'workflows', 'replay', '--dead'])
-    expect(replay).toHaveBeenCalledWith({ kind: 'automate', dead: true })
+    await cmd.parseAsync(['node', 'movp', 'workflows', 'replay', '--workspace', 'w', '--dead'])
+    expect(replay).toHaveBeenCalledWith({ kind: 'automate', dead: true, workspaceId: 'w' })
   })
 })

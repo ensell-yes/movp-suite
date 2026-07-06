@@ -593,7 +593,7 @@ RULES="$(post_graphql "{\"query\":\"query{automationRules(workspaceId:\\\"$WS\\\
 echo "$RULES" | grep -q "$WF_RULE_ID" || { echo "automationRules did not expose the workflow rule: $RULES"; exit 1; }
 psql "$DB_URL" -v ON_ERROR_STOP=1 -c "update movp_internal.movp_jobs set status='dead', last_error_code='slice_skips_external_email' where kind='notify' and status in ('pending','running');" >/dev/null
 psql "$DB_URL" -v ON_ERROR_STOP=1 -c "update movp_internal.movp_jobs set status='dead', last_error_code='slice_isolates_workflow_block' where kind='automate' and status in ('pending','running');" >/dev/null
-psql "$DB_URL" -v ON_ERROR_STOP=1 -c "select public.emit_event('task.completed','$WS', jsonb_build_object('entity_id','$TASK_ID','actor_id','$USER_ID'), 'workflow-slice-create-task');" >/dev/null
+psql "$DB_URL" -v ON_ERROR_STOP=1 -c "select public.emit_event('task.completed','$WS', jsonb_build_object('entity_id','$TASK_ID','actor_id','$USER_ID','contact_email','e2e@example.com','body','semantic lighthouse','secret','workflow-secret-value'), 'workflow-slice-create-task');" >/dev/null
 WF_EVENT_ID="$(psql "$DB_URL" -tAc "select id from movp_internal.movp_events where type='task.completed' and trace_id='workflow-slice-create-task' order by created_at desc limit 1;" | tr -d '[:space:]')"
 [ -n "$WF_EVENT_ID" ] || { echo "workflow task.completed event was not recorded"; exit 1; }
 WF_AUTOMATE_JOB_ID="$(psql "$DB_URL" -tAc "select id from movp_internal.movp_jobs where kind='automate' and payload->>'event_id'='$WF_EVENT_ID' order by created_at desc limit 1;" | tr -d '[:space:]')"
@@ -669,8 +669,10 @@ OUT_RUNS="$(post_graphql_as "$TOKEN3" "{\"query\":\"query{workflow_runs(workspac
 echo "$OUT_RUNS" | grep -q "$WF_EVENT_ID" && { echo "non-member saw workflow runs: $OUT_RUNS"; exit 1; }
 DENY_ROTATE="$(post_graphql_as "$TOKEN3" "{\"query\":\"mutation{rotateWebhookSecret(workspaceId:\\\"$WS\\\", subscriptionId:\\\"$WF_SUB_ID\\\"){subscriptionId secret}}\"}")"
 echo "$DENY_ROTATE" | grep -q '"errors"' || { echo "non-member rotated workflow webhook: $DENY_ROTATE"; exit 1; }
+DENY_REPLAY="$(post_graphql_as "$TOKEN3" "{\"query\":\"mutation{replayDeadWorkflowJobs(workspaceId:\\\"$WS\\\"){replayed}}\"}")"
+echo "$DENY_REPLAY" | grep -q '"errors"' || { echo "non-member replayed workflow jobs: $DENY_REPLAY"; exit 1; }
 psql "$DB_URL" -v ON_ERROR_STOP=1 -c "update movp_internal.movp_jobs set status='dead', last_error_code='slice_replay_probe' where id='$WF_AUTOMATE_JOB_ID';" >/dev/null
-REPLAY="$(post_graphql '{"query":"mutation{replayDeadWorkflowJobs{replayed}}"}')"
+REPLAY="$(post_graphql "{\"query\":\"mutation{replayDeadWorkflowJobs(workspaceId:\\\"$WS\\\"){replayed}}\"}")"
 echo "$REPLAY" | grep -q '"replayed"' || { echo "replayDeadWorkflowJobs did not return a replay count: $REPLAY"; exit 1; }
 curl -sS -f -X POST "$API_URL/functions/v1/flows" \
   -H "Authorization: Bearer $SERVICE_ROLE_KEY" -H "apikey: $SERVICE_ROLE_KEY" \
@@ -696,7 +698,10 @@ LOOP_ERR="$(psql "$DB_URL" -tAc "select error_code from public.workflow_run wher
 echo "== [workflows] (f) audit drilldown + redaction =="
 EVENT_DETAIL="$(post_graphql "{\"query\":\"query{workflowEvent(workspaceId:\\\"$WS\\\", eventId:\\\"$WF_EVENT_ID\\\")}\"}")"
 echo "$EVENT_DETAIL" | grep -q 'task.completed' || { echo "workflowEvent did not return the source event: $EVENT_DETAIL"; exit 1; }
+echo "$EVENT_DETAIL" | grep -q 'payload_keys' || { echo "workflowEvent did not return redacted payload keys: $EVENT_DETAIL"; exit 1; }
 echo "$EVENT_DETAIL" | grep -q 'e2e@example.com' && { echo "workflowEvent leaked email payload values: $EVENT_DETAIL"; exit 1; }
+echo "$EVENT_DETAIL" | grep -q 'semantic lighthouse' && { echo "workflowEvent leaked content body payload values: $EVENT_DETAIL"; exit 1; }
+echo "$EVENT_DETAIL" | grep -q 'workflow-secret-value' && { echo "workflowEvent leaked secret payload values: $EVENT_DETAIL"; exit 1; }
 WF_LEAK="$(psql "$DB_URL" -tAc "select count(*) from public.workflow_run where to_jsonb(workflow_run)::text like '%$WF_OLD_SECRET%' or to_jsonb(workflow_run)::text like '%$WF_NEW_SECRET%' or to_jsonb(workflow_run)::text like '%e2e@example.com%' or to_jsonb(workflow_run)::text like '%semantic lighthouse%';" | tr -d '[:space:]')"
 [ "${WF_LEAK:-1}" -eq 0 ] || { echo "workflow_run leaked secret/email/content values (count=$WF_LEAK)"; exit 1; }
 grep -q "$WF_OLD_SECRET" /tmp/movp-functions.log && { echo "function log leaked old webhook secret"; exit 1; } || true

@@ -261,7 +261,7 @@ const workflowRuns = [
 const workflowEvent = {
   id: 'ev-workflow-1',
   type: 'task.completed',
-  payload: { task_id: 'task-1', email: 'member@example.com', body: 'Secret body should not render' },
+  payload_keys: ['body', 'email', 'task_id'],
   trace_id: 'trace-workflow-1',
 }
 
