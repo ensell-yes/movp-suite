@@ -1,0 +1,117 @@
+---
+import Base from '../../layouts/Base.astro'
+import AuthFailure from '../../components/states/AuthFailure.astro'
+import ErrorRetry from '../../components/states/ErrorRetry.astro'
+import EmptyState from '../../components/states/EmptyState.astro'
+import { readServerEnv } from '../../lib/env.ts'
+import { gqlRequest } from '../../lib/graphql.ts'
+import { getSessionToken } from '../../lib/session.ts'
+import {
+  REPLAY_DEAD_WORKFLOW_JOBS_MUTATION,
+  WORKFLOW_EVENT_QUERY,
+  WORKFLOW_RUNS_QUERY,
+  type WorkflowReplayResult,
+  type WorkflowRunPage,
+  type WorkflowRunRow,
+} from '../../lib/workflow-queries.ts'
+
+function eventSummary(raw: string | null): { type: string; keys: string[] } | null {
+  if (!raw) return null
+  try {
+    const parsed = JSON.parse(raw) as { type?: unknown; payload?: unknown }
+    const payload = parsed.payload && typeof parsed.payload === 'object' && !Array.isArray(parsed.payload)
+      ? Object.keys(parsed.payload as Record<string, unknown>).sort()
+      : []
+    return { type: typeof parsed.type === 'string' ? parsed.type : 'event', keys: payload }
+  } catch {
+    return { type: 'event', keys: [] }
+  }
+}
+
+const token = getSessionToken(Astro.cookies)
+let state: 'auth' | 'error' | 'empty' | 'ok' = 'auth'
+let runs: WorkflowRunRow[] = []
+let notice = ''
+let eventDetail: { type: string; keys: string[] } | null = null
+
+if (token) {
+  state = 'ok'
+  const { graphqlEndpoint, workspaceId } = readServerEnv()
+  if (Astro.request.method === 'POST') {
+    const replay = await gqlRequest<{ replayDeadWorkflowJobs: WorkflowReplayResult }>(
+      { endpoint: graphqlEndpoint, token },
+      REPLAY_DEAD_WORKFLOW_JOBS_MUTATION,
+      {},
+    )
+    if (!replay.ok && replay.code === 'auth_error') state = 'auth'
+    else if (!replay.ok) notice = replay.message ?? 'Could not replay workflow jobs.'
+    else notice = `Replayed ${replay.data.replayDeadWorkflowJobs.replayed} jobs.`
+  }
+
+  if (state !== 'auth') {
+    const result = await gqlRequest<{ workflow_runs: WorkflowRunPage }>(
+      { endpoint: graphqlEndpoint, token },
+      WORKFLOW_RUNS_QUERY,
+      { workspaceId, first: 100 },
+    )
+    if (!result.ok && result.code === 'auth_error') state = 'auth'
+    else if (!result.ok) state = 'error'
+    else {
+      runs = result.data.workflow_runs.items
+      state = runs.length === 0 ? 'empty' : 'ok'
+    }
+
+    const eventId = Astro.url.searchParams.get('event')
+    if ((state === 'ok' || state === 'empty') && eventId) {
+      const event = await gqlRequest<{ workflowEvent: string | null }>(
+        { endpoint: graphqlEndpoint, token },
+        WORKFLOW_EVENT_QUERY,
+        { workspaceId, eventId },
+      )
+      if (event.ok) eventDetail = eventSummary(event.data.workflowEvent)
+    }
+  }
+}
+---
+<Base title="Workflow Audit">
+  <h1 tabindex="-1" id="workflow-runs-heading">Workflow Audit</h1>
+  <p><a href="/workflows/rules">Rules</a> <a href="/workflows/webhooks">Webhooks</a></p>
+  {state === 'auth' && <AuthFailure resource="workflow audit" />}
+  {state === 'error' && <ErrorRetry message="Could not load workflow runs." retryHref={Astro.url.pathname} />}
+  {notice && <p role="status" data-testid="workflow-notice">{notice}</p>}
+
+  {(state === 'ok' || state === 'empty') && (
+    <form method="post">
+      <button type="submit">Replay dead workflow jobs</button>
+    </form>
+  )}
+
+  {eventDetail && (
+    <section data-testid="workflow-event-detail" aria-labelledby="event-detail-heading">
+      <h2 id="event-detail-heading">Event detail</h2>
+      <p>{eventDetail.type}</p>
+      <p>Payload keys: {eventDetail.keys.length > 0 ? eventDetail.keys.join(', ') : 'none'}</p>
+    </section>
+  )}
+
+  {state === 'empty' && <EmptyState message="No workflow runs yet." />}
+  {state === 'ok' && (
+    <table data-testid="workflow-runs">
+      <thead>
+        <tr><th>Event</th><th>Action</th><th>Outcome</th><th>Error</th><th>Trace</th><th>Updated</th></tr>
+      </thead>
+      <tbody>
+        {runs.map((run) => (
+          <tr>
+            <td><a href={`/workflows/runs?event=${run.source_event_id}`}>{run.event_type ?? run.source_event_id}</a></td>
+            <td>{run.action_type}</td>
+            <td>{run.outcome}{run.matched === false ? ' · skipped' : ''}</td>
+            <td>{run.error_code ?? '—'}</td>
+            <td>{run.trace_id ?? '—'}</td>
+            <td>{run.updated_at}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  )}
+</Base>

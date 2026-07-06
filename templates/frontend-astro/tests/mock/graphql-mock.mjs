@@ -200,6 +200,71 @@ const segmentSnapshots = [
 ]
 const snapshotDiff = { added: ['user-8'], removed: [], addedCount: 1, removedCount: 0 }
 
+// ── Workflows (Part 06d) fixtures ──
+const eventTypes = [
+  { id: 'evt-task-completed', key: 'task.completed', domain: 'task', label: 'Task completed', active: true },
+  { id: 'evt-content-approved', key: 'content.approved', domain: 'cms', label: 'Content approved', active: true },
+]
+const workflowRules = [
+  {
+    id: 'rule-1',
+    trigger_event_type_id: 'evt-task-completed',
+    condition: JSON.stringify({ field: 'status', op: 'eq', value: 'done' }),
+    action_type: 'notify',
+    action_config: JSON.stringify({ recipient_user_id: 'user-2' }),
+    enabled: true,
+    priority: 10,
+    updated_at: '2026-07-04T00:00:00Z',
+  },
+]
+const workflowSubscriptions = [
+  {
+    id: 'sub-1',
+    event_type_id: 'evt-task-completed',
+    url: 'https://hooks.example.test/workflows',
+    filter: JSON.stringify({ field: 'event', op: 'eq', value: 'task.completed' }),
+    active: true,
+    secret_set: true,
+    secret_last_rotated_at: '2026-07-04T00:00:00Z',
+    internal_webhook_id: 'wh-1',
+    updated_at: '2026-07-04T00:00:00Z',
+  },
+]
+const workflowRuns = [
+  {
+    id: 'run-1',
+    source_event_id: 'ev-workflow-1',
+    event_type: 'task.completed',
+    matched: true,
+    action_type: 'notify',
+    outcome: 'succeeded',
+    job_id: 'job-1',
+    error_code: null,
+    trace_id: 'trace-workflow-1',
+    automation_rule_id: 'rule-1',
+    updated_at: '2026-07-04T00:00:00Z',
+  },
+  {
+    id: 'run-2',
+    source_event_id: 'ev-workflow-2',
+    event_type: 'content.approved',
+    matched: false,
+    action_type: 'deliver_webhook',
+    outcome: 'skipped',
+    job_id: 'job-2',
+    error_code: 'condition_not_matched',
+    trace_id: 'trace-workflow-2',
+    automation_rule_id: 'rule-1',
+    updated_at: '2026-07-04T00:01:00Z',
+  },
+]
+const workflowEvent = {
+  id: 'ev-workflow-1',
+  type: 'task.completed',
+  payload: { task_id: 'task-1', email: 'member@example.com', body: 'Secret body should not render' },
+  trace_id: 'trace-workflow-1',
+}
+
 createServer(async (req, res) => {
   const url = new URL(req.url ?? '/', `http://127.0.0.1:${port}`)
   if (url.pathname === '/health') return json(res, 200, { ok: true })
@@ -370,6 +435,63 @@ createServer(async (req, res) => {
   }
   if (query.includes('query Segment(')) {
     return json(res, 200, { data: { segment: scenario === 'empty' ? null : segmentHeader } })
+  }
+  if (query.includes('query WorkflowRules')) {
+    return json(res, 200, {
+      data: {
+        eventTypes: { items: eventTypes, nextCursor: null },
+        automationRules: { items: scenario === 'empty' ? [] : workflowRules, nextCursor: null },
+      },
+    })
+  }
+  if (query.includes('mutation UpsertAutomationRule')) {
+    if (String(parsed.variables?.condition ?? '').includes('not-json')) {
+      return json(res, 200, { errors: [{ message: 'condition_invalid' }] })
+    }
+    return json(res, 200, {
+      data: {
+        upsertAutomationRule: {
+          id: 'rule-2',
+          action_type: parsed.variables?.actionType,
+          enabled: parsed.variables?.enabled,
+          priority: parsed.variables?.priority,
+          updated_at: '2026-07-04T00:02:00Z',
+        },
+      },
+    })
+  }
+  if (query.includes('query WorkflowWebhooks')) {
+    return json(res, 200, {
+      data: {
+        eventTypes: { items: eventTypes, nextCursor: null },
+        webhook_subscriptions: { items: scenario === 'empty' ? [] : workflowSubscriptions, nextCursor: null },
+      },
+    })
+  }
+  if (query.includes('mutation RegisterWebhookSubscription')) {
+    return json(res, 200, {
+      data: { registerWebhookSubscription: { subscriptionId: 'sub-new', secret: 'register-secret-value-1234567890' } },
+    })
+  }
+  if (query.includes('mutation RotateWebhookSecret')) {
+    return json(res, 200, {
+      data: { rotateWebhookSecret: { subscriptionId: parsed.variables?.subscriptionId, secret: 'rotated-secret-value-1234567890' } },
+    })
+  }
+  if (query.includes('mutation SetWebhookActive')) {
+    return json(res, 200, { data: { setWebhookActive: { id: parsed.variables?.subscriptionId, active: parsed.variables?.active, updated_at: '2026-07-04T00:03:00Z' } } })
+  }
+  if (query.includes('mutation SetWebhookFilter')) {
+    return json(res, 200, { data: { setWebhookFilter: { id: parsed.variables?.subscriptionId, filter: parsed.variables?.filter, updated_at: '2026-07-04T00:03:00Z' } } })
+  }
+  if (query.includes('query WorkflowRuns')) {
+    return json(res, 200, { data: { workflow_runs: { items: scenario === 'empty' ? [] : workflowRuns, nextCursor: null } } })
+  }
+  if (query.includes('query WorkflowEvent')) {
+    return json(res, 200, { data: { workflowEvent: JSON.stringify(workflowEvent) } })
+  }
+  if (query.includes('mutation ReplayDeadWorkflowJobs')) {
+    return json(res, 200, { data: { replayDeadWorkflowJobs: { replayed: 2 } } })
   }
   return json(res, 200, { data: {} })
 }).listen(port, '127.0.0.1')
