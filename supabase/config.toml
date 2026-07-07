@@ -130,10 +130,10 @@ port = 64324
 # sender_name = "Admin"
 
 [storage]
-# TEMPORARILY DISABLED (2026-07-04): local storage healthcheck can fail with an OCI
-# `fork/exec /proc/self/fd/6` Docker runtime glitch, blocking `supabase db reset`.
-# Campaigns DB gates are pure Postgres; re-enable after Docker Desktop restart for CMS asset e2e.
-enabled = false
+# Storage must stay enabled so CMS asset flows are covered by local and CI stack gates.
+# If a local Docker healthcheck glitch blocks pure-Postgres work, disable it only as a
+# temporary uncommitted local change and re-enable before CMS asset or slice-e2e gates.
+enabled = true
 # The maximum file size allowed (e.g. "5MB", "500KB").
 file_size_limit = "50MiB"
 

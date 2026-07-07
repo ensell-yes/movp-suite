@@ -9,6 +9,17 @@
 - Storage may be temporarily disabled for pure-Postgres DB gates only when the local storage container healthcheck
   blocks `supabase db reset`. Re-enable storage before CMS asset or frontend e2e work.
 
+## Migration Discipline
+
+- Migrations are forward-only from the freeze baseline in `supabase/.forward-only-migration-baseline`.
+  Do not edit, delete, rename, or regenerate an already-merged migration, including
+  `20260701000002_movp_generated.sql`; add a new timestamped migration instead.
+- The guard is `node scripts/check-forward-only-migrations.mjs` / `pnpm test:forward-only-migrations`.
+  It must run in CI. An override (`MOVP_ALLOW_MERGED_MIGRATION_REWRITE=1`) is only for an explicit,
+  pre-deploy emergency and must not be set in CI.
+- Future schema/codegen changes must either emit additive hand migrations or introduce a new generated-delta
+  migration strategy. The original generated migration is frozen as historical deployment input.
+
 ## Phase Completion Signal
 
 - A phase (`app-01` … `app-06`) is DONE only when **every part in its plan series** is executed —
