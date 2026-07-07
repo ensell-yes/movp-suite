@@ -8,6 +8,11 @@
   not belong to this repo, stop and fix the local Supabase target before trusting pgTAP results.
 - Storage may be temporarily disabled for pure-Postgres DB gates only when the local storage container healthcheck
   blocks `supabase db reset`. Re-enable storage before CMS asset or frontend e2e work.
+- When debugging `scripts/slice-e2e.sh` Edge Functions locally, use the script's env-file pattern:
+  `supabase functions serve ... --env-file <file>` with `MOVP_JWT_ISSUER=<API_URL>/auth/v1`.
+  Shell-prefixed env vars may not propagate into the edge runtime and can look like JWT/auth defects.
+- The slice only kills existing local edge-runtime/function processes in CI, or when explicitly run with
+  `MOVP_CLEAN_EDGE_RUNTIME=1`; keep that cleanup opt-in locally so other Supabase projects are not disturbed.
 
 ## Migration Discipline
 

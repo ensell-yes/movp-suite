@@ -43,6 +43,18 @@ restart_project_kong() {
   sleep 2
 }
 
+cleanup_edge_runtime() {
+  if [ "${MOVP_SKIP_EDGE_PROCESS_CLEANUP:-}" = "1" ]; then
+    return 0
+  fi
+  if [ "${CI:-}" != "true" ] && [ "${MOVP_CLEAN_EDGE_RUNTIME:-}" != "1" ]; then
+    return 0
+  fi
+  if command -v pkill >/dev/null 2>&1; then
+    pkill -f 'supabase.*functions serve|edge-runtime' >/dev/null 2>&1 || true
+  fi
+}
+
 echo "== [1] migrate + drift gate =="
 supabase_local db reset
 drift="$(supabase_local db diff || true)"
@@ -103,13 +115,19 @@ psql "$DB_URL" -v ON_ERROR_STOP=1 \
   -c "insert into public.workspace_membership (workspace_id,user_id,role) values ('$WS','$USER_ID','owner') on conflict do nothing;"
 
 echo "== serve edge functions =="
+cleanup_edge_runtime
 FN_ENV_FILE="$(mktemp "${TMPDIR:-/tmp}/movp-functions.XXXXXX")"
+# Keep local JWT issuer in an env file. On this stack, shell-assigned env vars
+# can fail to propagate into the edge runtime and produce misleading invalid_token
+# responses during manual debugging.
 printf 'MOVP_JWT_ISSUER=%s\n' "$API_URL/auth/v1" >"$FN_ENV_FILE"
 printf 'RESEND_API_KEY=%s\n' "slice-e2e-placeholder" >>"$FN_ENV_FILE"
 supabase_local functions serve graphql mcp index-embeddings flows ingest --env-file "$FN_ENV_FILE" >/tmp/movp-functions.log 2>&1 &
 FN_PID=$!
 trap 'kill $FN_PID 2>/dev/null || true; rm -f "$FN_ENV_FILE"' EXIT
 GRAPHQL_READY=0
+BOOT_ERROR_COUNT=0
+LAST_BOOT_ERROR=""
 for _ in $(seq 1 60); do
   READY_BODY="$(post_graphql '{"query":"query{__typename}"}' || true)"
   if printf '%s' "$READY_BODY" | grep -q '"__typename"'; then
@@ -117,13 +135,20 @@ for _ in $(seq 1 60); do
     break
   fi
   if printf '%s' "$READY_BODY" | grep -q 'BOOT_ERROR'; then
-    echo "graphql function boot failed during readiness: $READY_BODY"
-    tail -n 80 /tmp/movp-functions.log
-    exit 1
+    BOOT_ERROR_COUNT=$((BOOT_ERROR_COUNT + 1))
+    LAST_BOOT_ERROR="$READY_BODY"
+    echo "graphql readiness saw transient BOOT_ERROR #$BOOT_ERROR_COUNT; retrying until timeout" >&2
   fi
   sleep 1
 done
-[ "$GRAPHQL_READY" = "1" ] || { echo "graphql function did not become ready; last response=${READY_BODY:-none}"; tail -n 80 /tmp/movp-functions.log; exit 1; }
+[ "$GRAPHQL_READY" = "1" ] || {
+  echo "graphql function did not become ready; last response=${READY_BODY:-none}"
+  if [ -n "$LAST_BOOT_ERROR" ]; then
+    echo "last boot error: $LAST_BOOT_ERROR"
+  fi
+  tail -n 120 /tmp/movp-functions.log
+  exit 1
+}
 
 echo "== [3] GraphQL: create + query back =="
 CREATE="$(post_graphql "{\"query\":\"mutation(\$i:NoteCreateInput!){createNote(input:\$i){id title}}\",\"variables\":{\"i\":{\"workspace_id\":\"$WS\",\"title\":\"E2E note\",\"body\":\"semantic lighthouse phrase for e2e verification\"}}}")"
