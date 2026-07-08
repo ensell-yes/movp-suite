@@ -50,6 +50,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm bootstrap -- --ci --skip-frontend
       - run: pnpm --filter @movp/frontend-astro exec playwright install --with-deps chromium
+      - run: pnpm --filter @movp/frontend-astro e2e:gotrue
       - run: pnpm --filter @movp/frontend-astro e2e login
 
   boundary:

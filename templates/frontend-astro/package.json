@@ -9,6 +9,7 @@
     "typecheck": "node scripts/typecheck.mjs",
     "test": "vitest run",
     "e2e": "playwright test",
+    "e2e:gotrue": "node scripts/run-gotrue-login-e2e.mjs",
     "preview": "wrangler dev"
   },
   "dependencies": {

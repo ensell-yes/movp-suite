@@ -103,6 +103,7 @@ pnpm check:docs
 pnpm check:quickstart-docs
 pnpm check:packages
 pnpm check:demo-seed
+pnpm --filter @movp/frontend-astro e2e:gotrue
 pnpm typecheck
 pnpm test
 pnpm test:forward-only-migrations

@@ -410,8 +410,11 @@ build: add package artifact checks
 - Create: `templates/frontend-astro/src/pages/auth/callback.astro`
 - Create/update: `templates/frontend-astro/src/lib/auth.ts`
 - Create: `templates/frontend-astro/tests/e2e/login.spec.ts`
+- Create: `templates/frontend-astro/tests/e2e/gotrue-auth.spec.ts`
+- Create: `supabase/templates/magic_link.html`
 - Update: `templates/frontend-astro/tests/mock/graphql-mock.mjs` if the login test needs a
   local callback fixture.
+- Update: `supabase/config.toml`
 
 **Interfaces**
 
@@ -439,6 +442,8 @@ data-testid="login-error"
   - callback with `token_hash` calls Supabase Auth verify and sets `sb-access-token`;
   - callback with an invalid `token_hash` sets no cookie and renders `login-error`;
   - callback with an `access_token` query param is ignored and sets no cookie;
+  - real local GoTrue sends a Mailpit email whose link contains `token_hash` and
+    completes the callback into an httpOnly `sb-access-token` cookie;
   - protected page renders seeded data after callback.
 - [ ] Extend `templates/frontend-astro/tests/mock/graphql-mock.mjs` with a minimal
   `/auth/v1/verify` route for login tests. `/auth/v1/verify` returns a session for the
@@ -501,6 +506,23 @@ await fetch(otpUrl, {
 })
 ```
 
+- [ ] Add the Supabase Auth magic-link email template. This is the producer for the
+  server callback; the default `ConfirmationURL` flow returns URL fragment tokens that
+  Astro server code cannot read:
+
+```html
+<!doctype html>
+<html lang="en">
+  <body>
+    <p>Sign in to MOVP Suite:</p>
+    <p>
+      <a href="{{ .RedirectTo }}?token_hash={{ .TokenHash }}&type=email">Sign in to MOVP Suite</a>
+    </p>
+    <p>If you did not request this link, ignore this email.</p>
+  </body>
+</html>
+```
+
 - [ ] Implement `/auth/callback` so it exchanges a valid `token_hash` for a local session
   and sets the httpOnly cookie only after verification. Do not implement or test an
   `access_token` query-string login path; bearer tokens must never ride in URLs.
@@ -554,6 +576,7 @@ return Astro.redirect('/')
 ```sh
 pnpm --filter @movp/frontend-astro typecheck
 pnpm --filter @movp/frontend-astro e2e -- login
+pnpm --filter @movp/frontend-astro e2e:gotrue
 bash scripts/check-boundary.sh
 ```
 
@@ -1019,6 +1042,7 @@ pnpm install --frozen-lockfile
 pnpm check:docs
 pnpm check:packages
 pnpm check:quickstart-docs
+pnpm --filter @movp/frontend-astro e2e:gotrue
 pnpm --filter @movp/frontend-astro e2e -- login
 bash scripts/slice-e2e.sh
 ```
@@ -1043,6 +1067,7 @@ pnpm typecheck
 pnpm check:docs
 pnpm check:packages
 pnpm check:quickstart-docs
+pnpm --filter @movp/frontend-astro e2e:gotrue
 pnpm test:graphql-shape
 pnpm test:jobs
 pnpm test:redaction
