@@ -61,7 +61,9 @@ Both use the local password `MovpDemo123!`. Do not use these credentials outside
 stack.
 
 The Astro template login page is `/login`. Supabase magic-link callbacks must redirect to
-`/auth/callback` through `site_url` or `additional_redirect_urls`.
+`/auth/callback` through `site_url` or `additional_redirect_urls`. The committed local
+Supabase config allows the Astro dev URL (`http://127.0.0.1:4321/auth/callback`) and the
+Playwright/Wrangler test URL (`http://127.0.0.1:8788/auth/callback`).
 
 ## Pages To Inspect
 
@@ -80,6 +82,8 @@ Start the frontend when you are not using `--ci`:
 ```sh
 pnpm --filter @movp/frontend-astro dev
 ```
+
+Then open `http://127.0.0.1:4321/login`.
 
 ## Common Local Failures
 

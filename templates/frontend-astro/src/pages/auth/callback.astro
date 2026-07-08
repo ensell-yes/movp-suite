@@ -1,18 +1,12 @@
 ---
-import { SESSION_COOKIE, verifyAccessToken, verifyMagicLink } from '../../lib/auth.ts'
+import { SESSION_COOKIE, verifyMagicLink } from '../../lib/auth.ts'
 import { readServerEnv } from '../../lib/env.ts'
 
 const url = new URL(Astro.request.url)
-const directToken = url.searchParams.get('access_token')
 const tokenHash = url.searchParams.get('token_hash')
 const linkType = url.searchParams.get('type') ?? 'email'
-const isTestShortcut = url.searchParams.get('test') === '1'
 
 const env = readServerEnv()
-
-if (isTestShortcut && env.movpE2eTestAuth !== '1') {
-  return new Response('not found', { status: 404 })
-}
 
 let token = ''
 if (tokenHash) {
@@ -25,18 +19,9 @@ if (tokenHash) {
     linkType,
   )
   token = session?.accessToken ?? ''
-} else if (directToken) {
-  const ok = await verifyAccessToken(
-    {
-      supabaseUrl: env.supabaseUrl,
-      anonKey: env.supabaseAnonKey,
-    },
-    directToken,
-  )
-  token = ok ? directToken : ''
 }
 
-if (!token && !tokenHash && !directToken) {
+if (!token && !tokenHash) {
   return Astro.redirect('/login?error=missing_token')
 }
 

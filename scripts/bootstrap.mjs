@@ -29,5 +29,5 @@ if (!args.has('--ci')) {
   console.log('MOVP local stack ready')
   console.log('API: http://127.0.0.1:64321')
   console.log('Studio: http://127.0.0.1:64323')
-  console.log('Login: /login with demo-owner@example.test')
+  console.log('Login: http://127.0.0.1:4321/login with demo-owner@example.test')
 }

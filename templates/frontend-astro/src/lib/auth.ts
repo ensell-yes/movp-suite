@@ -8,18 +8,6 @@ export type AuthEnv = {
 
 export type VerifiedSession = { accessToken: string }
 
-export async function verifyAccessToken(env: AuthEnv, token: string): Promise<boolean> {
-  if (!token || token.length < 20) return false
-  const doFetch = env.fetchImpl ?? fetch
-  const res = await doFetch(`${env.supabaseUrl}/auth/v1/user`, {
-    headers: {
-      apikey: env.anonKey,
-      Authorization: `Bearer ${token}`,
-    },
-  })
-  return res.ok
-}
-
 export async function verifyMagicLink(env: AuthEnv, tokenHash: string, type = 'email'): Promise<VerifiedSession | null> {
   if (!tokenHash) return null
   const doFetch = env.fetchImpl ?? fetch

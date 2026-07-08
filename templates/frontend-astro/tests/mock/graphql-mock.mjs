@@ -289,10 +289,12 @@ createServer(async (req, res) => {
     let body = ''
     for await (const chunk of req) body += String(chunk)
     const parsed = JSON.parse(body || '{}')
-    if (typeof parsed.email === 'string' && parsed.email.includes('@')) {
+    const redirectTo = url.searchParams.get('redirect_to') ?? ''
+    const redirectPath = redirectTo ? new URL(redirectTo).pathname : ''
+    if (typeof parsed.email === 'string' && parsed.email.includes('@') && redirectPath === '/auth/callback') {
       return json(res, 200, {})
     }
-    return json(res, 400, { error: 'invalid_email' })
+    return json(res, 400, { error: 'invalid_otp_request' })
   }
   if (url.pathname === '/scenario') {
     const next = url.searchParams.get('name') ?? 'ok'

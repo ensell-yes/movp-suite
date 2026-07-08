@@ -434,26 +434,26 @@ data-testid="login-error"
 - [ ] Add `login.spec.ts` first:
   - unauthenticated `/` redirects or links to `/login`;
   - `/login` renders email input and OAuth button placeholders;
+  - login POST sends Supabase Auth `/otp?redirect_to=.../auth/callback` and does
+    not rely on ignored body redirect fields;
   - callback with `token_hash` calls Supabase Auth verify and sets `sb-access-token`;
   - callback with an invalid `token_hash` sets no cookie and renders `login-error`;
-  - callback with a verified test token sets `sb-access-token`;
-  - callback with an invalid token sets no cookie and renders `login-error`;
-  - test shortcut returns 404 when `MOVP_E2E_TEST_AUTH` is not `1`;
+  - callback with an `access_token` query param is ignored and sets no cookie;
   - protected page renders seeded data after callback.
 - [ ] Extend `templates/frontend-astro/tests/mock/graphql-mock.mjs` with a minimal
-  `/auth/v1/user` route and `/auth/v1/verify` route for login tests. `/auth/v1/verify`
-  returns a session for the seeded `token_hash` and 400 for an invalid hash. `/auth/v1/user`
-  returns 200 only for the seeded direct test token and 401 for anything else, so callback
-  e2e proves verification rather than bypassing it.
+  `/auth/v1/verify` route for login tests. `/auth/v1/verify` returns a session for the
+  seeded `token_hash` and 400 for an invalid hash. The `/auth/v1/otp` mock must assert
+  the `redirect_to` query param points at `/auth/callback`; this pins the real GoTrue
+  request shape instead of accepting ignored body-only redirect options.
 
 Expected failure: `/login` is 404 or protected pages render `auth-failure`.
 
-- [ ] Implement `templates/frontend-astro/src/lib/auth.ts`. Any caller-supplied token path
-  must verify the token with Supabase Auth before setting the cookie. Do not persist an
-  unverified token.
+- [ ] Implement `templates/frontend-astro/src/lib/auth.ts`. The production callback must
+  accept only Supabase's `token_hash` magic-link exchange; do not accept bearer access
+  tokens in URL query params.
 - [ ] Extend `templates/frontend-astro/src/lib/env.ts` to return `supabaseUrl`,
-  `supabaseAnonKey`, and optional `movpE2eTestAuth` using the existing
-  `cloudflare:workers` `env` pattern. Do not use `Astro.locals.runtime.env`.
+  `supabaseAnonKey` using the existing `cloudflare:workers` `env` pattern. Do not use
+  `Astro.locals.runtime.env`.
 
 Use this verification helper:
 
@@ -467,18 +467,6 @@ export type AuthEnv = {
 }
 
 export type VerifiedSession = { accessToken: string }
-
-export async function verifyAccessToken(env: AuthEnv, token: string): Promise<boolean> {
-  if (!token || token.length < 20) return false
-  const doFetch = env.fetchImpl ?? fetch
-  const res = await doFetch(`${env.supabaseUrl}/auth/v1/user`, {
-    headers: {
-      apikey: env.anonKey,
-      Authorization: `Bearer ${token}`,
-    },
-  })
-  return res.ok
-}
 
 export async function verifyMagicLink(env: AuthEnv, tokenHash: string, type = 'email'): Promise<VerifiedSession | null> {
   if (!tokenHash) return null
@@ -501,27 +489,34 @@ export async function verifyMagicLink(env: AuthEnv, tokenHash: string, type = 'e
 - [ ] Implement `/login` using Supabase Auth magic-link form for production. Keep
   service-role out of the template. Pin Supabase Auth redirect config in docs/tests:
   `site_url` or `additional_redirect_urls` must point magic links at `/auth/callback`.
-- [ ] Implement `/auth/callback` so it exchanges or receives a valid local session and sets
-  the httpOnly cookie only after verification.
+  The `/auth/v1/otp` call must carry `redirect_to` in the query string:
+
+```ts
+const otpUrl = new URL('/auth/v1/otp', env.supabaseUrl)
+otpUrl.searchParams.set('redirect_to', new URL('/auth/callback', Astro.url).toString())
+await fetch(otpUrl, {
+  method: 'POST',
+  headers: { apikey: env.supabaseAnonKey, 'Content-Type': 'application/json' },
+  body: JSON.stringify({ email }),
+})
+```
+
+- [ ] Implement `/auth/callback` so it exchanges a valid `token_hash` for a local session
+  and sets the httpOnly cookie only after verification. Do not implement or test an
+  `access_token` query-string login path; bearer tokens must never ride in URLs.
 
 The callback must follow this guard shape:
 
 ```astro
 ---
-import { SESSION_COOKIE, verifyAccessToken, verifyMagicLink } from '../../lib/auth.ts'
+import { SESSION_COOKIE, verifyMagicLink } from '../../lib/auth.ts'
 import { readServerEnv } from '../../lib/env.ts'
 
 const url = new URL(Astro.request.url)
-const directToken = url.searchParams.get('access_token')
 const tokenHash = url.searchParams.get('token_hash')
 const linkType = url.searchParams.get('type') ?? 'email'
-const isTestShortcut = url.searchParams.get('test') === '1'
 
 const env = readServerEnv()
-
-if (isTestShortcut && env.movpE2eTestAuth !== '1') {
-  return new Response('not found', { status: 404 })
-}
 
 let token = ''
 if (tokenHash) {
@@ -530,15 +525,9 @@ if (tokenHash) {
     anonKey: env.supabaseAnonKey,
   }, tokenHash, linkType)
   token = session?.accessToken ?? ''
-} else if (directToken) {
-  const ok = await verifyAccessToken({
-    supabaseUrl: env.supabaseUrl,
-    anonKey: env.supabaseAnonKey,
-  }, directToken)
-  token = ok ? directToken : ''
 }
 
-if (!token && !tokenHash && !directToken) {
+if (!token && !tokenHash) {
   return Astro.redirect('/login?error=missing_token')
 }
 

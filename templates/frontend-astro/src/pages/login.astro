@@ -10,17 +10,15 @@ if (Astro.request.method === 'POST') {
   email = String(form.get('email') ?? '').trim()
   const env = readServerEnv()
   const redirectTo = new URL('/auth/callback', Astro.url).toString()
-  const res = await fetch(`${env.supabaseUrl}/auth/v1/otp`, {
+  const otpUrl = new URL('/auth/v1/otp', env.supabaseUrl)
+  otpUrl.searchParams.set('redirect_to', redirectTo)
+  const res = await fetch(otpUrl, {
     method: 'POST',
     headers: {
       apikey: env.supabaseAnonKey,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({
-      email,
-      type: 'magiclink',
-      options: { email_redirect_to: redirectTo },
-    }),
+    body: JSON.stringify({ email }),
   })
   state = res.ok ? 'sent' : 'error'
 }

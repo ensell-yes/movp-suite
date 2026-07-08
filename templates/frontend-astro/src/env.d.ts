@@ -5,7 +5,6 @@ type CfEnv = {
   WORKSPACE_ID: string
   SUPABASE_URL: string
   SUPABASE_ANON_KEY: string
-  MOVP_E2E_TEST_AUTH?: string
   MEDIA_BUCKET: R2Bucket
   ASSETS: Fetcher
 }

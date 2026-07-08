@@ -5,7 +5,6 @@ export type ServerEnv = {
   workspaceId: string
   supabaseUrl: string
   supabaseAnonKey: string
-  movpE2eTestAuth?: string
 }
 
 export function readServerEnv(): ServerEnv {
@@ -16,5 +15,5 @@ export function readServerEnv(): ServerEnv {
   if (!graphqlEndpoint || !workspaceId || !supabaseUrl || !supabaseAnonKey) {
     throw new Error('env_misconfigured: GRAPHQL_ENDPOINT, WORKSPACE_ID, SUPABASE_URL, or SUPABASE_ANON_KEY is not set')
   }
-  return { graphqlEndpoint, workspaceId, supabaseUrl, supabaseAnonKey, movpE2eTestAuth: env.MOVP_E2E_TEST_AUTH }
+  return { graphqlEndpoint, workspaceId, supabaseUrl, supabaseAnonKey }
 }

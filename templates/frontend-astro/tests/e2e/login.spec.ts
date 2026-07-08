@@ -1,5 +1,4 @@
 import { expect, test } from '@playwright/test'
-import { scenario, scenarioToken } from './scenario.ts'
 
 test('unauthenticated home links to login', async ({ page, context }) => {
   await context.clearCookies()
@@ -34,24 +33,9 @@ test('invalid token_hash renders login error without setting a cookie', async ({
   await expect(page.getByTestId('login-error')).toBeVisible()
 })
 
-test('verified direct token callback sets the session cookie', async ({ page, context }) => {
-  await scenario('ok')
-  const token = scenarioToken()
-  await page.goto(`/auth/callback?access_token=${encodeURIComponent(token)}`)
-  await page.waitForURL('/')
-  const cookie = (await context.cookies()).find((c) => c.name === 'sb-access-token')
-  expect(cookie?.value).toBe(token)
-  await expect(page.getByTestId('notes-list')).toContainText('First note')
-})
-
-test('invalid direct token callback sets no cookie and renders login error', async ({ page, context }) => {
-  await page.goto('/auth/callback?access_token=invalid')
-  await page.waitForURL('/login?error=invalid_token')
+test('access_token query callbacks are ignored and set no cookie', async ({ page, context }) => {
+  await page.goto('/auth/callback?access_token=test-token-should-not-be-accepted')
+  await page.waitForURL('/login?error=missing_token')
   expect((await context.cookies()).find((c) => c.name === 'sb-access-token')).toBeUndefined()
   await expect(page.getByTestId('login-error')).toBeVisible()
-})
-
-test('test shortcut is unavailable unless explicitly enabled', async ({ page }) => {
-  const res = await page.goto('/auth/callback?test=1&access_token=test-token-shortcut-1234567890')
-  expect(res?.status()).toBe(404)
 })
