@@ -22,32 +22,30 @@ execFileSync('pnpm', ['pack', '--help'], { stdio: 'pipe' })
 for (const dirName of publishable) {
   const dir = join('packages', dirName)
   const pkg = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'))
-  const entryValues = []
   const collect = (value) => {
-    if (!value) return
+    const values = []
+    if (!value) return values
     if (typeof value === 'string') {
-      entryValues.push(value)
-      return
+      values.push(value)
+      return values
     }
     if (Array.isArray(value)) {
-      for (const item of value) collect(item)
-      return
+      for (const item of value) values.push(...collect(item))
+      return values
     }
     if (typeof value === 'object') {
-      for (const item of Object.values(value)) collect(item)
+      for (const item of Object.values(value)) values.push(...collect(item))
     }
+    return values
   }
-  collect(pkg.main)
-  collect(pkg.exports)
-  collect(pkg.types)
-  collect(pkg.bin)
-
-  const sourceEntrypoints = entryValues.filter((value) => {
-    return value.includes('/src/') || (value.endsWith('.ts') && !value.endsWith('.d.ts'))
-  })
-  if (sourceEntrypoints.length > 0) {
-    console.error(`package artifact check failed: ${pkg.name} points at source`)
-    process.exit(1)
+  const sourceEntrypoints = (manifest) => {
+    const entryValues = [
+      ...collect(manifest.main),
+      ...collect(manifest.exports),
+      ...collect(manifest.types),
+      ...collect(manifest.bin),
+    ]
+    return entryValues.filter((value) => value.includes('/src/') || (value.endsWith('.ts') && !value.endsWith('.d.ts')))
   }
 
   const out = mkdtempSync(join(tmpdir(), `movp-pack-${dirName}-`))
@@ -58,6 +56,16 @@ for (const dirName of publishable) {
     const listing = execFileSync('tar', ['-tzf', join(out, tgz)], { encoding: 'utf8' })
     if (!listing.includes('package/dist/')) {
       console.error(`package artifact check failed: ${pkg.name} has no dist artifacts`)
+      process.exit(1)
+    }
+    const packedManifest = JSON.parse(execFileSync('tar', ['-xOzf', join(out, tgz), 'package/package.json'], { encoding: 'utf8' }))
+    const packedSourceEntrypoints = sourceEntrypoints(packedManifest)
+    if (packedSourceEntrypoints.length > 0) {
+      console.error(`package artifact check failed: ${pkg.name} packed manifest points at source`)
+      process.exit(1)
+    }
+    if (!collect(packedManifest.exports).some((value) => value.includes('/dist/'))) {
+      console.error(`package artifact check failed: ${pkg.name} packed exports do not point at dist`)
       process.exit(1)
     }
   } finally {

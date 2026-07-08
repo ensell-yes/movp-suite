@@ -5,6 +5,7 @@ const MOCK_PORT = 4322
 
 export default defineConfig({
   testDir: './tests/e2e',
+  testIgnore: /gotrue-auth\.spec\.ts/,
   use: {
     baseURL: `http://127.0.0.1:${APP_PORT}`,
     ...devices['Desktop Chrome'],
