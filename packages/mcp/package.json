@@ -1,15 +1,18 @@
 {
   "name": "@movp/mcp",
   "version": "0.0.0",
-  "private": true,
   "type": "module",
-  "main": "./src/index.ts",
+  "main": "./dist/index.js",
   "exports": {
-    ".": "./src/index.ts"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
   },
   "scripts": {
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build": "tsup src/index.ts --format esm --dts --sourcemap --clean --target node20 --out-dir dist"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.26.0",
@@ -20,5 +23,9 @@
   },
   "devDependencies": {
     "vitest": "^3.2.6"
-  }
+  },
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ]
 }

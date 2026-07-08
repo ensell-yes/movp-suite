@@ -20,7 +20,21 @@ jobs:
         with: { node-version: 22, cache: pnpm }
       - run: pnpm install --frozen-lockfile
       - run: pnpm check:docs
+      - run: pnpm build
       - run: pnpm typecheck
+
+  package-artifacts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 9.12.0 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: pnpm check:packages
+      - run: pnpm check:release-preflight
 
   boundary:
     runs-on: ubuntu-latest
