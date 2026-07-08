@@ -304,7 +304,7 @@ Run:
 grep -cE 'create trigger deliverable_(assigned|completed)_emit_event_tg' \
   supabase/migrations/20260701000018_campaigns_bridge.sql
 grep -c "dst_type = 'task' and dst_id" supabase/migrations/20260701000018_campaigns_bridge.sql
-grep -c 'traverse_edges' supabase/migrations/20260701000018_campaigns_bridge.sql
+grep -v '^--' supabase/migrations/20260701000018_campaigns_bridge.sql | grep -c 'traverse_edges'
 ```
 Expected: the first grep prints `2`; the second prints `2` (both triggers use the reverse lookup); the third prints `0` (traverse_edges is never used in the bridge).
 
