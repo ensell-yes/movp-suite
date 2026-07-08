@@ -1,0 +1,49 @@
+---
+import Base from '../layouts/Base.astro'
+import { readServerEnv } from '../lib/env.ts'
+
+let state: 'form' | 'sent' | 'error' = Astro.url.searchParams.get('error') ? 'error' : 'form'
+let email = ''
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData()
+  email = String(form.get('email') ?? '').trim()
+  const env = readServerEnv()
+  const redirectTo = new URL('/auth/callback', Astro.url).toString()
+  const otpUrl = new URL('/auth/v1/otp', env.supabaseUrl)
+  otpUrl.searchParams.set('redirect_to', redirectTo)
+  const res = await fetch(otpUrl, {
+    method: 'POST',
+    headers: {
+      apikey: env.supabaseAnonKey,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ email }),
+  })
+  state = res.ok ? 'sent' : 'error'
+}
+---
+<Base title="Sign in">
+  <h1 tabindex="-1" id="login-heading">Sign in</h1>
+  {state === 'error' && (
+    <section data-testid="login-error" role="alert">
+      <p>We could not sign you in. Request a new link and try again.</p>
+    </section>
+  )}
+  {state === 'sent' && (
+    <section data-testid="login-sent" role="status">
+      <p>Check your email for a magic link.</p>
+    </section>
+  )}
+  <form data-testid="login-form" method="post" aria-labelledby="login-heading">
+    <label>
+      Email
+      <input type="email" name="email" value={email} autocomplete="email" required />
+    </label>
+    <button type="submit">Send magic link</button>
+  </form>
+  <div aria-label="OAuth providers">
+    <button type="button" disabled>Continue with GitHub</button>
+    <button type="button" disabled>Continue with Google</button>
+  </div>
+</Base>

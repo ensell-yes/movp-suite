@@ -268,6 +268,34 @@ const workflowEvent = {
 createServer(async (req, res) => {
   const url = new URL(req.url ?? '/', `http://127.0.0.1:${port}`)
   if (url.pathname === '/health') return json(res, 200, { ok: true })
+  if (url.pathname === '/auth/v1/verify') {
+    let body = ''
+    for await (const chunk of req) body += String(chunk)
+    const parsed = JSON.parse(body || '{}')
+    if (parsed.token_hash === 'valid-token-hash' && (parsed.type ?? 'email') === 'email') {
+      return json(res, 200, { session: { access_token: 'verified-login-token-1234567890' } })
+    }
+    return json(res, 400, { error: 'invalid_token_hash' })
+  }
+  if (url.pathname === '/auth/v1/user') {
+    const auth = String(req.headers.authorization ?? '')
+    const token = auth.match(/^Bearer\s+(.+)$/i)?.[1] ?? ''
+    if (token.startsWith('test-token-') || token === 'verified-login-token-1234567890') {
+      return json(res, 200, { id: 'user-login-1', email: 'demo-owner@example.test' })
+    }
+    return json(res, 401, { error: 'invalid_token' })
+  }
+  if (url.pathname === '/auth/v1/otp') {
+    let body = ''
+    for await (const chunk of req) body += String(chunk)
+    const parsed = JSON.parse(body || '{}')
+    const redirectTo = url.searchParams.get('redirect_to') ?? ''
+    const redirectPath = redirectTo ? new URL(redirectTo).pathname : ''
+    if (typeof parsed.email === 'string' && parsed.email.includes('@') && redirectPath === '/auth/callback') {
+      return json(res, 200, {})
+    }
+    return json(res, 400, { error: 'invalid_otp_request' })
+  }
   if (url.pathname === '/scenario') {
     const next = url.searchParams.get('name') ?? 'ok'
     const token = url.searchParams.get('token')

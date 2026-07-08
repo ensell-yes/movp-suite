@@ -1,0 +1,41 @@
+---
+import { SESSION_COOKIE, verifyMagicLink } from '../../lib/auth.ts'
+import { readServerEnv } from '../../lib/env.ts'
+
+const url = new URL(Astro.request.url)
+const tokenHash = url.searchParams.get('token_hash')
+const linkType = url.searchParams.get('type') ?? 'email'
+
+const env = readServerEnv()
+
+let token = ''
+if (tokenHash) {
+  const session = await verifyMagicLink(
+    {
+      supabaseUrl: env.supabaseUrl,
+      anonKey: env.supabaseAnonKey,
+    },
+    tokenHash,
+    linkType,
+  )
+  token = session?.accessToken ?? ''
+}
+
+if (!token && !tokenHash) {
+  return Astro.redirect('/login?error=missing_token')
+}
+
+if (!token) {
+  Astro.cookies.delete(SESSION_COOKIE, { path: '/' })
+  return Astro.redirect('/login?error=invalid_token')
+}
+
+Astro.cookies.set(SESSION_COOKIE, token, {
+  path: '/',
+  httpOnly: true,
+  secure: url.protocol === 'https:',
+  sameSite: 'lax',
+})
+
+return Astro.redirect('/')
+---

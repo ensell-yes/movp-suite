@@ -10,7 +10,9 @@
   ],
   "vars": {
     "GRAPHQL_ENDPOINT": "http://127.0.0.1:54321/functions/v1/graphql",
-    "WORKSPACE_ID": "33333333-3333-3333-3333-333333333333"
+    "WORKSPACE_ID": "33333333-3333-3333-3333-333333333333",
+    "SUPABASE_URL": "http://127.0.0.1:54321",
+    "SUPABASE_ANON_KEY": "replace-with-local-anon-key"
   },
   "observability": { "enabled": true }
 }

@@ -1,13 +1,15 @@
 {
   "name": "@movp/auth",
   "version": "0.0.0",
-  "private": true,
   "type": "module",
   "main": "./src/index.ts",
-  "exports": { ".": "./src/index.ts" },
+  "exports": {
+    ".": "./src/index.ts"
+  },
   "scripts": {
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build": "tsup src/index.ts --format esm --dts --sourcemap --clean --target node20 --out-dir dist"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.0",
@@ -16,5 +18,19 @@
   "devDependencies": {
     "msw": "^2.4.0",
     "vitest": "^3.2.6"
+  },
+  "types": "./src/index.ts",
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js"
+      }
+    }
   }
 }
