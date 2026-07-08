@@ -23,20 +23,23 @@ hosted production service.
 
 ## Quickstart
 
-The full one-command bootstrap lands in Stage C1. Until then, the verified local flow is:
+The verified local bootstrap is:
 
 ```sh
 pnpm install --frozen-lockfile
-supabase start
-supabase db reset
-pnpm test
-pnpm typecheck
-bash scripts/slice-e2e.sh
+pnpm bootstrap
 ```
 
 Local Supabase ports are intentionally remapped to the 64xxx range to avoid collisions with
-other local projects. Do not normalize them to Supabase defaults without proving the default
-ports are free.
+other local projects on maintainer machines:
+
+- API: `http://127.0.0.1:64321`
+- DB: `postgresql://postgres:postgres@127.0.0.1:64322/postgres`
+- Studio: `http://127.0.0.1:64323`
+- Mailpit: `http://127.0.0.1:64324`
+
+Do not normalize these to Supabase defaults without a proven per-user override strategy and
+updated docs. `pnpm check:supabase-ports` pins that contract.
 
 ## Architecture
 
@@ -60,6 +63,8 @@ Useful gates:
 
 ```sh
 pnpm check:docs
+pnpm check:supabase-ports
+pnpm check:demo-seed
 pnpm test
 pnpm typecheck
 pnpm test:forward-only-migrations
