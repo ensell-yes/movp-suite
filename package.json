@@ -9,6 +9,7 @@
     "check:packages": "node scripts/check-package-artifacts.mjs",
     "check:release-preflight": "node scripts/check-release-preflight.mjs",
     "check:demo-seed": "node scripts/check-demo-seed.mjs",
+    "check:quickstart-docs": "node scripts/check-quickstart-docs.mjs",
     "check:supabase-ports": "node scripts/check-supabase-port-strategy.mjs",
     "seed:demo": "tsx scripts/seed-demo.ts",
     "bootstrap": "node scripts/bootstrap.mjs",

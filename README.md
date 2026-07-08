@@ -41,6 +41,9 @@ other local projects on maintainer machines:
 Do not normalize these to Supabase defaults without a proven per-user override strategy and
 updated docs. `pnpm check:supabase-ports` pins that contract.
 
+For the full onboarding path, seeded login, common local failures, and gate list, read
+[docs/quickstart.md](docs/quickstart.md).
+
 ## Architecture
 
 The system is config-first:
