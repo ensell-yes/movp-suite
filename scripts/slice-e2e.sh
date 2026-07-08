@@ -32,6 +32,14 @@ post_graphql() {
     -d "$body"
 }
 
+post_graphql_as() {
+  curl -sS "$API_URL/functions/v1/graphql" \
+    -H "Authorization: Bearer $1" \
+    -H "apikey: $ANON_KEY" \
+    -H "content-type: application/json" \
+    -d "$2"
+}
+
 restart_project_kong() {
   if ! command -v docker >/dev/null 2>&1; then
     return 0
@@ -95,6 +103,17 @@ VS_DB_URL="$DB_URL" node scripts/check-vector-scale.mjs
 
 restart_project_kong
 
+echo "== [quickstart] seed demo data + login token =="
+pnpm seed:demo
+pnpm check:demo-seed
+DEMO_TOKEN="$(
+  curl -sS "$API_URL/auth/v1/token?grant_type=password" \
+    -H "apikey: $ANON_KEY" \
+    -H "content-type: application/json" \
+    -d '{"email":"demo-owner@example.test","password":"MovpDemo123!"}' | json_get access_token
+)"
+[ -n "$DEMO_TOKEN" ] || { echo "failed to mint demo owner token"; exit 1; }
+
 echo "== mint a real member JWT via gotrue =="
 curl -sS "$API_URL/auth/v1/admin/users" \
   -H "Authorization: Bearer $SERVICE_ROLE_KEY" \
@@ -150,6 +169,15 @@ done
   exit 1
 }
 
+echo "== [quickstart] bootstrap + login + seeded pages =="
+DEMO_NOTES="$(post_graphql_as "$DEMO_TOKEN" "{\"query\":\"query{notes(workspaceId:\\\"$WS\\\", first:20){items{id title}}}\"}")"
+echo "$DEMO_NOTES" | grep -q 'Welcome to MOVP' || { echo "quickstart notes missing seeded note: $DEMO_NOTES"; exit 1; }
+DEMO_TASKS="$(post_graphql_as "$DEMO_TOKEN" "{\"query\":\"query{tasks(workspaceId:\\\"$WS\\\", first:20){items{id title}}}\"}")"
+echo "$DEMO_TASKS" | grep -q 'Review the demo workspace' || { echo "quickstart tasks missing seeded task: $DEMO_TASKS"; exit 1; }
+DEMO_WORKFLOWS="$(post_graphql_as "$DEMO_TOKEN" "{\"query\":\"query{automationRules(workspaceId:\\\"$WS\\\", first:20){items{id action_type}} workflow_runs(workspaceId:\\\"$WS\\\", first:20){items{id outcome}}}\"}")"
+echo "$DEMO_WORKFLOWS" | grep -q 'notify' || { echo "quickstart workflows missing seeded rule: $DEMO_WORKFLOWS"; exit 1; }
+echo "$DEMO_WORKFLOWS" | grep -q 'skipped' || { echo "quickstart workflows missing seeded run: $DEMO_WORKFLOWS"; exit 1; }
+
 echo "== [3] GraphQL: create + query back =="
 CREATE="$(post_graphql "{\"query\":\"mutation(\$i:NoteCreateInput!){createNote(input:\$i){id title}}\",\"variables\":{\"i\":{\"workspace_id\":\"$WS\",\"title\":\"E2E note\",\"body\":\"semantic lighthouse phrase for e2e verification\"}}}")"
 echo "$CREATE" | grep -q 'E2E note' || { echo "create failed: $CREATE"; exit 1; }
@@ -190,13 +218,6 @@ MCP="$(curl -sS "$API_URL/functions/v1/mcp" \
 echo "$MCP" | grep -qi 'note' || { echo "MCP tools/list missing note tools: $MCP"; exit 1; }
 
 echo "== [collab] define a token-scoped GraphQL helper + a 2nd member =="
-post_graphql_as() {
-  curl -sS "$API_URL/functions/v1/graphql" \
-    -H "Authorization: Bearer $1" \
-    -H "apikey: $ANON_KEY" \
-    -H "content-type: application/json" \
-    -d "$2"
-}
 curl -sS "$API_URL/auth/v1/admin/users" \
   -H "Authorization: Bearer $SERVICE_ROLE_KEY" -H "apikey: $SERVICE_ROLE_KEY" \
   -H "content-type: application/json" \
