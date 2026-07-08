@@ -5,6 +5,7 @@
   "packageManager": "pnpm@9.12.0",
   "scripts": {
     "codegen": "tsx scripts/codegen.ts",
+    "check:docs": "node scripts/check-docs-presence.mjs",
     "test": "turbo run test",
     "test:event-catalog": "node scripts/check-event-catalog.mjs",
     "test:forward-only-migrations": "node scripts/check-forward-only-migrations.mjs",
