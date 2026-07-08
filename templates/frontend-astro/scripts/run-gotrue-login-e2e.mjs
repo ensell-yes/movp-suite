@@ -33,6 +33,7 @@ if (missing.length) {
 
 const runEnv = {
   ...process.env,
+  MOVP_GOTRUE_APP_PORT: process.env.MOVP_GOTRUE_APP_PORT ?? '8788',
   SUPABASE_URL: env.API_URL,
   SUPABASE_ANON_KEY: env.ANON_KEY,
   MAILPIT_URL: env.MAILPIT_URL,
