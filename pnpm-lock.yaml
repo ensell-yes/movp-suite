@@ -21,6 +21,9 @@ importers:
       '@movp/core-schema':
         specifier: workspace:*
         version: link:packages/core-schema
+      '@supabase/supabase-js':
+        specifier: ^2.45.0
+        version: 2.110.0
       '@types/node':
         specifier: ^26.0.1
         version: 26.0.1

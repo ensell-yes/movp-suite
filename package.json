@@ -8,6 +8,8 @@
     "check:docs": "node scripts/check-docs-presence.mjs",
     "check:packages": "node scripts/check-package-artifacts.mjs",
     "check:release-preflight": "node scripts/check-release-preflight.mjs",
+    "check:demo-seed": "node scripts/check-demo-seed.mjs",
+    "seed:demo": "tsx scripts/seed-demo.ts",
     "test": "turbo run test",
     "test:event-catalog": "node scripts/check-event-catalog.mjs",
     "test:forward-only-migrations": "node scripts/check-forward-only-migrations.mjs",
@@ -20,6 +22,7 @@
   "devDependencies": {
     "@movp/codegen": "workspace:*",
     "@movp/core-schema": "workspace:*",
+    "@supabase/supabase-js": "^2.45.0",
     "tsup": "^8.5.1",
     "tsx": "^4.19.0",
     "turbo": "^2.1.0",
