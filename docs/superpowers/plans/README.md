@@ -45,6 +45,32 @@ Campaigns (`app-03`) → Segmentation (`app-04`) → Domain Workflows (`app-06`)
 > | Segmentation (`app-04`) | 04a–04d | ✅ EXECUTED (04a hardened; 04b ingestion; 04c recompute+injection-safe compiler 28/28; 04d surfaces/frontend/BI/e2e — all gates green, `slice-e2e: PASS`; merged PR #2, `f5f3a36`) |
 > | Domain Workflows (`app-06`) | 06a–06d | ✅ EXECUTED (06a catalog/event spine merged PR #3 `c96282a`; 06b automation engine merged PR #4 `0316279`; 06c webhook management merged PR #5 `ab34575`; 06d admin surfaces + `[workflows]` slice merged PR #6 `72ae592`) |
 
+**Stage C — OSS Release & Capability Expansion (post-app-06 epoch).** Roadmap
+`2026-07-07-movp-stage-c-oss-roadmap.md` (8 phases C1–C8; reviewed 9.25) + TDD breakdown
+`2026-07-07-movp-stage-c-tdd-breakdown.md` (56 tasks; reviewed 9.24). Build order: C1 first;
+C2 & C3 in parallel after C1; C4←C2; C5←C3; C6←C1; C7←C1; C8←C3. Expand each phase into a
+bite-sized TDD plan (as C1 was) before building.
+
+> **Stage C EXECUTION STATUS (authoritative — update when a phase lands):**
+>
+> | Phase | Plan | Status |
+> |---|---|---|
+> | C1 OSS Packaging & Onboarding | `2026-07-07-movp-stage-c-01-oss-packaging-onboarding.md` | ✅ MERGED (PR #8 `7f65eff`, reviewed 9.2) |
+> | C2 Admin Console & Operations | `2026-07-08-movp-stage-c-02-admin-console.md` | 🟢 EXPANDED — ready for Codex (precondition: C1 ✅) |
+> | C3 Agent Connectivity (PATs/MCP/CLI) | breakdown only | ⬜ expand before build (unblocked by C1) |
+> | C4 Reporting Views & Dashboards | breakdown only | ⬜ expand before build (needs C2) |
+> | C5 Integration Fabric | breakdown only | ⬜ expand before build (needs C3) |
+> | C6 Templates & Scaffolding | breakdown only | ⬜ expand before build (needs C1) |
+> | C7 Inline Editing & Delivery | breakdown only | ⬜ expand before build (needs C1) |
+> | C8 Retrieval & RAG | breakdown only | ⬜ expand before build (needs C3) |
+
+**Phase C2 — Admin Console is EXPANDED and EXECUTABLE** (bite-sized TDD; precondition: C1
+merged ✅). Execute `2026-07-08-movp-stage-c-02-admin-console.md` **in order** C2.1→C2.7:
+one commit per task, TDD (failing test first), all repo gates + the `[admin]` slice green,
+review ≥9.2 per part. Key correction vs the breakdown prose: `workspace_membership.role`
+(`owner`/`admin`/`member`) already exists — C2.1 adds an `is_workspace_admin()` helper +
+enforcement, not the column.
+
 **Phase 2 — Collaboration is EXPANDED and EXECUTABLE** (bite-sized TDD, committed
 `31cceed`/`09a75a5`; passed adversarial review at 9.31). Execute **in order**:
 1. `2026-07-01-movp-app-05a-collaboration-data.md` — the 5 collab collections (config-first,

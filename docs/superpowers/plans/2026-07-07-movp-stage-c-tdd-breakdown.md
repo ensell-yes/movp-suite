@@ -33,7 +33,7 @@ failure-first tests, implementation target, and gate per task.
 
 | Phase | Depends on | Task count | Gate to call phase complete |
 |---|---|---:|---|
-| C1 OSS Packaging & Onboarding | none | 8 | expanded in `2026-07-07-movp-stage-c-01-oss-packaging-onboarding.md`; quickstart CI, login e2e, seed idempotence, full repo gates |
+| C1 OSS Packaging & Onboarding ✅ MERGED (PR #8) | none | 8 | ✅ done — `2026-07-07-movp-stage-c-01-oss-packaging-onboarding.md`; quickstart CI, login e2e, seed idempotence, full repo gates all green |
 | C2 Admin Console & Operations | C1 | 7 | admin pgTAP, admin Playwright, boundary, full repo gates |
 | C3 Agent Connectivity | C1 | 7 | PAT RLS proof, MCP HTTP+stdio smoke, CLI login integration |
 | C4 Reporting & Dashboards | C2 | 7 | reporting codegen goldens, generated-delta freeze proof, pgTAP views/RPCs, dashboard e2e |
@@ -166,8 +166,10 @@ collections from the UI.
 
 **Failing test:** non-owner member can call a proposed admin RPC or no admin RPC exists.
 
-**Implementation:** add owner/admin checks to admin-only RPCs without introducing a full
-RBAC matrix. Preserve flat `is_workspace_member` semantics for existing non-admin paths.
+**Implementation:** the `workspace_membership.role` column ALREADY EXISTS
+(`owner`/`admin`/`member`, default `member`) — add an `is_workspace_admin(ws)` helper and
+enforce it on admin-only RPCs; do NOT re-add the column. `is_workspace_member` stays the
+gate for existing non-admin paths. No full RBAC matrix.
 
 **Gate:** pgTAP owner/member/non-member matrix, definer-audit, db diff clean.
 
