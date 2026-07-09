@@ -1,7 +1,7 @@
 import SchemaBuilder from '@pothos/core'
 import ComplexityPlugin from '@pothos/plugin-complexity'
 import DataloaderPlugin from '@pothos/plugin-dataloader'
-import type { GraphQLSchema } from 'graphql'
+import { GraphQLError, type GraphQLSchema } from 'graphql'
 import type { CollectionDef, FieldDef, MovpSchema } from '@movp/core-schema'
 import {
   createDomain,
@@ -49,6 +49,27 @@ function domainFrom(ctx: GraphQLContext): Domain {
     accessToken: ctx.accessToken,
     assetsFnUrl: ctx.assetsFnUrl,
   }, { embedder: ctx.embedder })
+}
+
+function adminGraphqlError(error: unknown): never {
+  const message = error instanceof Error ? error.message : 'domain.admin failed [unknown]'
+  const pgCode = /\[([^\]]+)\]/.exec(message)?.[1] ?? 'unknown'
+  const code = pgCode === '42501'
+    ? 'FORBIDDEN'
+    : pgCode === '22023'
+      ? 'BAD_USER_INPUT'
+      : pgCode === 'P0001'
+        ? 'CONFLICT'
+        : 'INTERNAL_SERVER_ERROR'
+  throw new GraphQLError(message, { extensions: { code, pgCode } })
+}
+
+async function adminCall<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn()
+  } catch (error) {
+    adminGraphqlError(error)
+  }
 }
 
 function workflowAuditEvent(event: Record<string, unknown>): Record<string, unknown> {
@@ -479,7 +500,7 @@ export function buildSchema(schema: MovpSchema): GraphQLSchema {
       complexity: 10,
       args: { workspaceId: t.arg.id({ required: true }) },
       resolve: (_r: unknown, args: any, ctx: GraphQLContext) =>
-        domainFrom(ctx).admin.listMembers({ workspaceId: String(args.workspaceId) }),
+        adminCall(() => domainFrom(ctx).admin.listMembers({ workspaceId: String(args.workspaceId) })),
     }),
   )
 
@@ -512,7 +533,7 @@ export function buildSchema(schema: MovpSchema): GraphQLSchema {
       complexity: 10,
       args: { workspaceId: t.arg.id({ required: true }) },
       resolve: (_r: unknown, args: any, ctx: GraphQLContext) =>
-        domainFrom(ctx).admin.listIngestKeys({ workspaceId: String(args.workspaceId) }),
+        adminCall(() => domainFrom(ctx).admin.listIngestKeys({ workspaceId: String(args.workspaceId) })),
     }),
   )
 
@@ -522,7 +543,7 @@ export function buildSchema(schema: MovpSchema): GraphQLSchema {
       complexity: 5,
       args: { workspaceId: t.arg.id({ required: true }) },
       resolve: async (_r: unknown, args: any, ctx: GraphQLContext) =>
-        JSON.stringify(await domainFrom(ctx).admin.jobCounts({ workspaceId: String(args.workspaceId) })),
+        JSON.stringify(await adminCall(() => domainFrom(ctx).admin.jobCounts({ workspaceId: String(args.workspaceId) }))),
     }),
   )
 
@@ -535,10 +556,10 @@ export function buildSchema(schema: MovpSchema): GraphQLSchema {
         first: t.arg.int({ required: false }),
       },
       resolve: (_r: unknown, args: any, ctx: GraphQLContext) =>
-        domainFrom(ctx).admin.deadJobs({
+        adminCall(() => domainFrom(ctx).admin.deadJobs({
           workspaceId: String(args.workspaceId),
           first: clampPageSize(args.first),
-        }),
+        })),
     }),
   )
 
@@ -548,7 +569,7 @@ export function buildSchema(schema: MovpSchema): GraphQLSchema {
       complexity: 5,
       args: { workspaceId: t.arg.id({ required: true }) },
       resolve: (_r: unknown, args: any, ctx: GraphQLContext) =>
-        domainFrom(ctx).admin.settings({ workspaceId: String(args.workspaceId) }),
+        adminCall(() => domainFrom(ctx).admin.settings({ workspaceId: String(args.workspaceId) })),
     }),
   )
 
@@ -558,7 +579,7 @@ export function buildSchema(schema: MovpSchema): GraphQLSchema {
       complexity: 10,
       args: { name: t.arg.string({ required: true }) },
       resolve: (_r: unknown, args: any, ctx: GraphQLContext) =>
-        domainFrom(ctx).admin.createWorkspace({ name: String(args.name) }),
+        adminCall(() => domainFrom(ctx).admin.createWorkspace({ name: String(args.name) })),
     }),
   )
 
@@ -572,11 +593,11 @@ export function buildSchema(schema: MovpSchema): GraphQLSchema {
         role: t.arg.string({ required: true }),
       },
       resolve: (_r: unknown, args: any, ctx: GraphQLContext) =>
-        domainFrom(ctx).admin.inviteMember({
+        adminCall(() => domainFrom(ctx).admin.inviteMember({
           workspaceId: String(args.workspaceId),
           email: String(args.email),
           role: String(args.role) as 'admin' | 'member',
-        }),
+        })),
     }),
   )
 
@@ -586,7 +607,7 @@ export function buildSchema(schema: MovpSchema): GraphQLSchema {
       complexity: 10,
       args: { token: t.arg.string({ required: true }) },
       resolve: (_r: unknown, args: any, ctx: GraphQLContext) =>
-        domainFrom(ctx).admin.acceptInvite({ token: String(args.token) }),
+        adminCall(() => domainFrom(ctx).admin.acceptInvite({ token: String(args.token) })),
     }),
   )
 
@@ -600,11 +621,11 @@ export function buildSchema(schema: MovpSchema): GraphQLSchema {
         role: t.arg.string({ required: true }),
       },
       resolve: (_r: unknown, args: any, ctx: GraphQLContext) =>
-        domainFrom(ctx).admin.setMemberRole({
+        adminCall(() => domainFrom(ctx).admin.setMemberRole({
           workspaceId: String(args.workspaceId),
           userId: String(args.userId),
           role: String(args.role) as 'owner' | 'admin' | 'member',
-        }),
+        })),
     }),
   )
 
@@ -617,10 +638,10 @@ export function buildSchema(schema: MovpSchema): GraphQLSchema {
         userId: t.arg.id({ required: true }),
       },
       resolve: async (_r: unknown, args: any, ctx: GraphQLContext) => {
-        await domainFrom(ctx).admin.removeMember({
+        await adminCall(() => domainFrom(ctx).admin.removeMember({
           workspaceId: String(args.workspaceId),
           userId: String(args.userId),
-        })
+        }))
         return true
       },
     }),
@@ -635,10 +656,10 @@ export function buildSchema(schema: MovpSchema): GraphQLSchema {
         label: t.arg.string({ required: true }),
       },
       resolve: (_r: unknown, args: any, ctx: GraphQLContext) =>
-        domainFrom(ctx).admin.createIngestKey({
+        adminCall(() => domainFrom(ctx).admin.createIngestKey({
           workspaceId: String(args.workspaceId),
           label: String(args.label),
-        }),
+        })),
     }),
   )
 
@@ -651,10 +672,10 @@ export function buildSchema(schema: MovpSchema): GraphQLSchema {
         keyId: t.arg.id({ required: true }),
       },
       resolve: (_r: unknown, args: any, ctx: GraphQLContext) =>
-        domainFrom(ctx).admin.rotateIngestKey({
+        adminCall(() => domainFrom(ctx).admin.rotateIngestKey({
           workspaceId: String(args.workspaceId),
           keyId: String(args.keyId),
-        }),
+        })),
     }),
   )
 
@@ -667,10 +688,10 @@ export function buildSchema(schema: MovpSchema): GraphQLSchema {
         keyId: t.arg.id({ required: true }),
       },
       resolve: async (_r: unknown, args: any, ctx: GraphQLContext) => {
-        await domainFrom(ctx).admin.revokeIngestKey({
+        await adminCall(() => domainFrom(ctx).admin.revokeIngestKey({
           workspaceId: String(args.workspaceId),
           keyId: String(args.keyId),
-        })
+        }))
         return true
       },
     }),
@@ -685,10 +706,10 @@ export function buildSchema(schema: MovpSchema): GraphQLSchema {
         kind: t.arg.string({ required: false }),
       },
       resolve: async (_r: unknown, args: any, ctx: GraphQLContext) => ({
-        replayed: await domainFrom(ctx).admin.replayDeadJobs({
+        replayed: await adminCall(() => domainFrom(ctx).admin.replayDeadJobs({
           workspaceId: String(args.workspaceId),
           kind: args.kind == null ? null : String(args.kind),
-        }),
+        })),
       }),
     }),
   )

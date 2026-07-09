@@ -61,14 +61,18 @@ if (token) {
       else if (!result.ok) formError = result.message ?? 'Could not update member role.'
       else notice = 'Role updated.'
     } else if (action === 'remove') {
-      const result = await gqlRequest(
-        { endpoint: graphqlEndpoint, token },
-        REMOVE_MEMBER_MUTATION,
-        { workspaceId, userId: String(form.get('userId') ?? '') },
-      )
-      if (!result.ok && result.code === 'auth_error') state = 'auth'
-      else if (!result.ok) formError = result.message ?? 'Could not remove member.'
-      else notice = 'Member removed.'
+      if (form.get('confirm_remove') !== '1') {
+        formError = 'Confirm member removal before continuing.'
+      } else {
+        const result = await gqlRequest(
+          { endpoint: graphqlEndpoint, token },
+          REMOVE_MEMBER_MUTATION,
+          { workspaceId, userId: String(form.get('userId') ?? '') },
+        )
+        if (!result.ok && result.code === 'auth_error') state = 'auth'
+        else if (!result.ok) formError = result.message ?? 'Could not remove member.'
+        else notice = 'Member removed.'
+      }
     }
   }
 
@@ -152,7 +156,16 @@ if (token) {
               <form method="post">
                 <input type="hidden" name="action" value="remove" />
                 <input type="hidden" name="userId" value={member.user_id} />
-                <button type="submit">Remove member</button>
+                <label>
+                  <input
+                    type="checkbox"
+                    name="confirm_remove"
+                    value="1"
+                    aria-label={`Confirm removal of member ${member.user_id}`}
+                  />
+                  Confirm removal
+                </label>
+                <button type="submit" aria-label={`Remove member ${member.user_id}`}>Remove member</button>
               </form>
             </td>
           </tr>

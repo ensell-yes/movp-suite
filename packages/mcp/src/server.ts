@@ -540,20 +540,26 @@ export function buildMcpServer(schema: MovpSchema, ctx: McpCtx): McpServer {
     'admin.ingest_key.create',
     {
       title: 'Create ingest API key',
-      description: 'Create an ingest API key and return the raw key once',
+      description: 'Create an ingest API key and return only its handle; raw secrets are not exposed to MCP clients',
       inputSchema: { workspaceId: z.string(), label: z.string() },
     },
-    async ({ workspaceId, label }) => text(await domain.admin.createIngestKey({ workspaceId, label })),
+    async ({ workspaceId, label }) => {
+      const created = await domain.admin.createIngestKey({ workspaceId, label })
+      return text({ keyId: created.keyId })
+    },
   )
 
   server.registerTool(
     'admin.ingest_key.rotate',
     {
       title: 'Rotate ingest API key',
-      description: 'Rotate an ingest API key and return the raw key once',
+      description: 'Rotate an ingest API key and return only its handle; raw secrets are not exposed to MCP clients',
       inputSchema: { workspaceId: z.string(), keyId: z.string() },
     },
-    async ({ workspaceId, keyId }) => text(await domain.admin.rotateIngestKey({ workspaceId, keyId })),
+    async ({ workspaceId, keyId }) => {
+      const rotated = await domain.admin.rotateIngestKey({ workspaceId, keyId })
+      return text({ keyId: rotated.keyId })
+    },
   )
 
   server.registerTool(

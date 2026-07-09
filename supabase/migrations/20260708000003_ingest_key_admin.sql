@@ -39,10 +39,10 @@ begin
   end if;
 
   update movp_internal.ingest_key
-     set key_hash = encode(extensions.digest(raw_key, 'sha256'), 'hex'),
-         active = true
+     set key_hash = encode(extensions.digest(raw_key, 'sha256'), 'hex')
    where id = rotate_ingest_key.key_id
-     and workspace_id = ws;
+     and workspace_id = ws
+     and active;
 
   if not found then
     raise exception 'ingest_key_not_found' using errcode = 'P0001';

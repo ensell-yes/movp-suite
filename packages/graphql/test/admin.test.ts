@@ -147,4 +147,13 @@ describe('admin GraphQL surface', () => {
       member_count: 2,
     })
   })
+
+  it('maps admin domain failures to typed GraphQL errors', async () => {
+    mocks.inviteMember.mockRejectedValueOnce(new Error('domain.admin.inviteMember failed [42501]'))
+    const denied = await run('mutation { inviteMember(workspaceId: "w-admin", email: "blocked@example.test", role: "member") { inviteId token } }')
+
+    expect(denied.data).toEqual({ inviteMember: null })
+    expect(denied.errors?.[0]?.message).toContain('[42501]')
+    expect(denied.errors?.[0]?.extensions).toMatchObject({ code: 'FORBIDDEN', pgCode: '42501' })
+  })
 })

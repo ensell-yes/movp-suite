@@ -230,11 +230,11 @@ admin-approved link — but default to email-match (Supabase magic-link JWTs car
 
 **TDD steps**
 
-- [ ] **Step 1 — failing pgTAP** `supabase/tests/member_admin_test.sql` (plan 13, complete):
+- [ ] **Step 1 — failing pgTAP** `supabase/tests/member_admin_test.sql` (plan 16, complete):
 
 ```sql
 begin;
-select plan(13);
+select plan(16);
 
 -- (1) owner can create a workspace; (2) creator is owner/admin
 set local role authenticated;
@@ -282,9 +282,31 @@ set local role authenticated;
 set local request.jwt.claims = '{"sub":"eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee","email":"invitee@example.test"}';
 select throws_ok(
   format($$select public.accept_invite(%L)$$, (select r->>'token' from _inv)),
-  'P0001', null, 'accepted invite cannot be reused');
+  'P0001', 'invite_not_found', 'accepted invite cannot be reused');
 
--- (9) an admin can promote a member; (10) a non-admin cannot set roles
+-- (9-11) existing owner accepting a lower-role invite is not demoted; expired invites are rejected distinctly.
+set local request.jwt.claims = '{"sub":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","email":"owner@example.test"}';
+create temp table _self_inv as
+  select public.invite_member((select id from _ws), 'owner@example.test', 'member') as r;
+select lives_ok(
+  format($$select public.accept_invite(%L)$$, (select r->>'token' from _self_inv)),
+  'existing owner accepting lower-role invite does not fail');
+reset role;
+select is(
+  (select role from public.workspace_membership
+     where workspace_id = (select id from _ws) and user_id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'),
+  'owner', 'existing owner accepting lower-role invite is not demoted');
+insert into movp_internal.workspace_invite (workspace_id, email, role, token_hash, invited_by, expires_at)
+  values ((select id from _ws), 'expired@example.test', 'member',
+    encode(extensions.digest('expired-token', 'sha256'), 'hex'),
+    'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+    now() - interval '1 minute');
+set local role authenticated;
+set local request.jwt.claims = '{"sub":"ffffffff-ffff-ffff-ffff-ffffffffffff","email":"expired@example.test"}';
+select throws_ok($$select public.accept_invite('expired-token')$$,
+  'P0001', 'invite_expired', 'expired pending invite is rejected distinctly');
+
+-- (12) an admin can promote a member; (13) a non-admin cannot set roles
 set local request.jwt.claims = '{"sub":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","email":"owner@example.test"}';
 select lives_ok(
   format($$select public.set_member_role(%L, 'cccccccc-cccc-cccc-cccc-cccccccccccc', 'admin')$$, (select id from _ws)),
@@ -294,16 +316,16 @@ select throws_ok(
   format($$select public.set_member_role(%L, 'cccccccc-cccc-cccc-cccc-cccccccccccc', 'member')$$, (select id from _ws)),
   '42501', null, 'non-admin cannot set roles');
 
--- (11) demoting and (12) removing the last owner are both rejected
+-- (14) demoting and (15) removing the last owner are both rejected
 set local request.jwt.claims = '{"sub":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","email":"owner@example.test"}';
 select throws_ok(
   format($$select public.set_member_role(%L, 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'member')$$, (select id from _ws)),
-  'P0001', null, 'cannot demote the last owner');
+  'P0001', 'last_owner_guard', 'cannot demote the last owner');
 select throws_ok(
   format($$select public.remove_member(%L, 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa')$$, (select id from _ws)),
-  'P0001', null, 'cannot remove the last owner');
+  'P0001', 'last_owner_guard', 'cannot remove the last owner');
 
--- (13) an admin can remove a non-owner member
+-- (16) an admin can remove a non-owner member
 select lives_ok(
   format($$select public.remove_member(%L, 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee')$$, (select id from _ws)),
   'admin removes a non-owner member');
@@ -324,11 +346,12 @@ create table if not exists movp_internal.workspace_invite (
   id           uuid primary key default gen_random_uuid(),
   workspace_id uuid not null references public.workspace(id) on delete cascade,
   email        text not null,
-  role         text not null default 'member' check (role in ('owner','admin','member')),
+  role         text not null default 'member' check (role in ('admin','member')),
   token_hash   text not null unique,
   status       text not null default 'pending' check (status in ('pending','accepted','revoked')),
   invited_by   uuid not null,
-  created_at   timestamptz not null default now()
+  created_at   timestamptz not null default now(),
+  expires_at   timestamptz not null default now() + interval '7 days'
 );
 alter table movp_internal.workspace_invite enable row level security; -- no policies = closed
 revoke all on movp_internal.workspace_invite from anon, authenticated;
@@ -355,7 +378,7 @@ as $$
 declare v_token text := encode(extensions.gen_random_bytes(32), 'hex'); v_id uuid;
 begin
   if not public.is_workspace_admin(ws) then raise exception 'not a workspace admin' using errcode = '42501'; end if;
-  if role not in ('owner','admin','member') then raise exception 'bad role' using errcode = '22023'; end if;
+  if role not in ('admin','member') then raise exception 'bad role' using errcode = '22023'; end if;
   insert into movp_internal.workspace_invite (workspace_id, email, role, token_hash, invited_by)
     values (ws, lower(invite_member.email), invite_member.role,
             encode(extensions.digest(v_token, 'sha256'), 'hex'), (select auth.uid()))
@@ -373,12 +396,14 @@ declare v_inv movp_internal.workspace_invite; v_email text := lower(coalesce(aut
 begin
   select * into v_inv from movp_internal.workspace_invite
     where token_hash = encode(extensions.digest(accept_invite.token, 'sha256'), 'hex') and status = 'pending';
-  if not found then raise exception 'invite not found or used' using errcode = 'P0001'; end if;
+  if not found then raise exception 'invite_not_found' using errcode = 'P0001'; end if;
+  if v_inv.expires_at <= now() then raise exception 'invite_expired' using errcode = 'P0001'; end if;
   if v_email = '' or v_email <> v_inv.email then raise exception 'invite email mismatch' using errcode = '42501'; end if;
   insert into public.workspace_membership (workspace_id, user_id, role)
     values (v_inv.workspace_id, (select auth.uid()), v_inv.role)
-    on conflict (workspace_id, user_id) do update set role = excluded.role
-    returning * into m;
+    on conflict (workspace_id, user_id) do nothing;
+  select * into m from public.workspace_membership
+    where workspace_id = v_inv.workspace_id and user_id = (select auth.uid());
   update movp_internal.workspace_invite set status = 'accepted' where id = v_inv.id;
   return m;
 end;
@@ -527,12 +552,12 @@ so an owner/admin can manage keys from the UI. Reads never return `key_hash`.
 
 **TDD steps**
 
-- [ ] **Step 1 — failing pgTAP** `supabase/tests/ingest_key_admin_test.sql` (plan 9, complete;
+- [ ] **Step 1 — failing pgTAP** `supabase/tests/ingest_key_admin_test.sql` (plan 11, complete;
   mirrors the `segmentation_ingest_test.sql` length checks + admin/member gating):
 
 ```sql
 begin;
-select plan(9);
+select plan(11);
 insert into public.workspace (id, name) values ('11111111-1111-1111-1111-111111111111','W1');
 insert into public.workspace_membership (workspace_id, user_id, role) values
   ('11111111-1111-1111-1111-111111111111','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','owner'),
@@ -572,18 +597,23 @@ select throws_ok(
   format($$select public.revoke_ingest_key(%L, '11111111-1111-1111-1111-111111111111')$$, (select r->>'key_id' from _key)),
   '42501', null, 'member cannot revoke key');
 
--- (8) admin rotate on a missing key raises P0001
+-- (8-10) admin rotate on a missing key raises P0001; revoked keys cannot be rotated
 set local request.jwt.claims = '{"sub":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"}';
 select throws_ok(
   $$select public.rotate_ingest_key('99999999-9999-9999-9999-999999999999','11111111-1111-1111-1111-111111111111')$$,
-  'P0001', null, 'rotate on a missing key raises P0001');
+  'P0001', 'ingest_key_not_found', 'rotate on a missing key raises P0001');
 
--- (9) revoke deactivates the key
 select public.revoke_ingest_key((select (r->>'key_id')::uuid from _key), '11111111-1111-1111-1111-111111111111');
+select throws_ok(
+  format($$select public.rotate_ingest_key(%L, '11111111-1111-1111-1111-111111111111')$$, (select r->>'key_id' from _key)),
+  'P0001', 'ingest_key_not_found', 'rotating a revoked key is rejected');
 reset role;
 select is(
   (select active from movp_internal.ingest_key where id = (select (r->>'key_id')::uuid from _key)),
-  false, 'revoke deactivates the key');
+  false, 'revoked key remains inactive after rejected rotate');
+select is(
+  (select length(key_hash) from movp_internal.ingest_key where id = (select (r->>'key_id')::uuid from _key)),
+  64, 'rejected rotate does not clear the stored hash');
 
 select * from finish();
 rollback;
@@ -616,8 +646,8 @@ as $$
 declare raw_key text := encode(extensions.gen_random_bytes(24), 'hex');
 begin
   if not public.is_workspace_admin(ws) then raise exception 'not a workspace admin' using errcode = '42501'; end if;
-  update movp_internal.ingest_key set key_hash = encode(extensions.digest(raw_key,'sha256'),'hex'), active = true
-    where id = rotate_ingest_key.key_id and workspace_id = ws;
+  update movp_internal.ingest_key set key_hash = encode(extensions.digest(raw_key,'sha256'),'hex')
+    where id = rotate_ingest_key.key_id and workspace_id = ws and active;
   if not found then raise exception 'key not found' using errcode = 'P0001'; end if;
   return jsonb_build_object('key_id', key_id, 'raw_key', raw_key);
 end;
@@ -658,8 +688,8 @@ grant execute on function public.list_ingest_keys(uuid) to authenticated;
   `revokeIngestKey`/`listIngestKeys` (rpc wrappers, same shape as C2.2).
 - [ ] **Step 6 — surfaces:** GraphQL mutations `createIngestKey`/`rotateIngestKey`/
   `revokeIngestKey` (return `{ keyId, rawKey }` / void) + query `ingestKeys(workspaceId)`;
-  MCP tools `admin.ingest_key.create/rotate/revoke/list` (mirror `workflow.webhook.register`
-  at server.ts:483-492, dotted name, `text(await domain.admin.…)`); CLI group
+  MCP tools `admin.ingest_key.create/rotate/revoke/list` (create/rotate return `{keyId}` only;
+  raw keys must not enter model context); CLI group
   `admin ingest-key create|rotate|revoke|list` (mirror the `workflows webhooks` group at
   program.ts:443-482).
 - [ ] **Step 7 — frontend** `src/pages/admin/api-keys.astro`: mirror `workflows/webhooks.astro`
@@ -1036,8 +1066,8 @@ pnpm --filter @movp/frontend-astro e2e
 bash scripts/slice-e2e.sh
 ```
 Expected: all PASS; `supabase test db` plan total = 533 base + the C2 files
-(admin_role 5 + member_admin 13 + ingest_key_admin 9 + admin_jobs 8 + admin_collections 4 +
-workspace_settings 5 = 44) → **577 across 29 files**.
+(admin_role 5 + member_admin 16 + ingest_key_admin 11 + admin_jobs 8 + admin_collections 4 +
+workspace_settings 5 = 49) → **582 across 29 files**.
 ```bash
 git commit -am "test(admin): [admin] slice-e2e gate"
 ```

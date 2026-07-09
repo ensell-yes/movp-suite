@@ -41,7 +41,9 @@ test('admin members auth, error, empty, invite, role, and remove paths render', 
   await page.locator('tr', { hasText: 'member-1' }).getByRole('button', { name: 'Set role' }).click()
   await expect(page.getByTestId('admin-notice')).toContainText('Role updated')
 
-  await page.locator('tr', { hasText: 'member-1' }).getByRole('button', { name: 'Remove member' }).click()
+  const memberRow = page.locator('tr', { hasText: 'member-1' })
+  await memberRow.getByLabel('Confirm removal of member member-1').check()
+  await memberRow.getByRole('button', { name: 'Remove member member-1' }).click()
   await expect(page.getByTestId('admin-notice')).toContainText('Member removed')
 })
 
@@ -86,10 +88,13 @@ test('admin ingest API keys show raw keys only for create and rotate responses',
   await expect(page.getByTestId('ingest-key-secret')).toHaveCount(0)
   await expect(page.locator('body')).not.toContainText('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')
 
-  await page.getByRole('button', { name: 'Rotate key' }).click()
+  const keyRow = page.locator('tr', { hasText: 'ci' })
+  await keyRow.getByLabel('Confirm rotation of ingest key ci').check()
+  await keyRow.getByRole('button', { name: 'Rotate ingest key ci' }).click()
   await expect(page.getByTestId('ingest-key-secret')).toContainText('bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb')
 
-  await page.getByRole('button', { name: 'Revoke key' }).click()
+  await keyRow.getByLabel('Confirm revocation of ingest key ci').check()
+  await keyRow.getByRole('button', { name: 'Revoke ingest key ci' }).click()
   await expect(page.getByTestId('admin-notice')).toContainText('Ingest key revoked')
 })
 
@@ -111,7 +116,8 @@ test('admin jobs render counts, payload keys only, and replay dead jobs', async 
   await expect(page.getByTestId('dead-jobs')).toContainText('secret_url')
   await expect(page.locator('body')).not.toContainText('evil.example')
 
-  await page.getByRole('button', { name: 'Replay dead jobs' }).click()
+  await page.getByLabel('Confirm replay of dead jobs').check()
+  await page.getByRole('button', { name: 'Replay dead jobs in this workspace' }).click()
   await expect(page.getByTestId('admin-notice')).toContainText('Replayed 1 dead jobs')
 })
 

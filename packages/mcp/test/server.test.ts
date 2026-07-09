@@ -361,14 +361,18 @@ describe('buildMcpServer', () => {
       arguments: { workspaceId: 'w', label: 'ci' },
     })
     expect(adminCreateIngestKey).toHaveBeenCalledWith({ workspaceId: 'w', label: 'ci' })
-    expect(JSON.stringify(created.content)).toContain('a'.repeat(48))
+    expect(JSON.stringify(created.content)).toContain('key1')
+    expect(JSON.stringify(created.content)).not.toContain('a'.repeat(48))
+    expect(JSON.stringify(created.content)).not.toContain('rawKey')
 
     const rotated = await client.callTool({
       name: 'admin.ingest_key.rotate',
       arguments: { workspaceId: 'w', keyId: 'key1' },
     })
     expect(adminRotateIngestKey).toHaveBeenCalledWith({ workspaceId: 'w', keyId: 'key1' })
-    expect(JSON.stringify(rotated.content)).toContain('b'.repeat(48))
+    expect(JSON.stringify(rotated.content)).toContain('key1')
+    expect(JSON.stringify(rotated.content)).not.toContain('b'.repeat(48))
+    expect(JSON.stringify(rotated.content)).not.toContain('rawKey')
 
     const revoked = await client.callTool({
       name: 'admin.ingest_key.revoke',

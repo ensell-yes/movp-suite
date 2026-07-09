@@ -1,6 +1,6 @@
 begin;
 
-select plan(9);
+select plan(11);
 
 insert into public.workspace (id, name) values ('11111111-1111-1111-1111-111111111111','W1');
 insert into public.workspace_membership (workspace_id, user_id, role) values
@@ -59,16 +59,28 @@ set local request.jwt.claims = '{"sub":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"}';
 select throws_ok(
   $$select public.rotate_ingest_key('99999999-9999-9999-9999-999999999999','11111111-1111-1111-1111-111111111111')$$,
   'P0001',
-  null,
+  'ingest_key_not_found',
   'rotate on a missing key raises P0001'
 );
 
 select public.revoke_ingest_key((select (r->>'key_id')::uuid from _key), '11111111-1111-1111-1111-111111111111');
+select throws_ok(
+  format($$select public.rotate_ingest_key(%L, '11111111-1111-1111-1111-111111111111')$$, (select r->>'key_id' from _key)),
+  'P0001',
+  'ingest_key_not_found',
+  'rotating a revoked key is rejected'
+);
 reset role;
 select is(
   (select active from movp_internal.ingest_key where id = (select (r->>'key_id')::uuid from _key)),
   false,
-  'revoke deactivates the key'
+  'revoked key remains inactive after rejected rotate'
+);
+
+select is(
+  (select length(key_hash) from movp_internal.ingest_key where id = (select (r->>'key_id')::uuid from _key)),
+  64,
+  'rejected rotate does not clear the stored hash'
 );
 
 select * from finish();

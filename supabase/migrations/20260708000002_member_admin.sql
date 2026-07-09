@@ -10,6 +10,7 @@ create table movp_internal.workspace_invite (
   invited_by uuid not null,
   accepted_by uuid,
   created_at timestamptz not null default now(),
+  expires_at timestamptz not null default now() + interval '7 days',
   accepted_at timestamptz
 );
 
@@ -102,14 +103,22 @@ begin
   if not found then
     raise exception 'invite_not_found' using errcode = 'P0001';
   end if;
+  if v_invite.expires_at <= now() then
+    raise exception 'invite_expired' using errcode = 'P0001';
+  end if;
   if v_email = '' or v_email <> v_invite.email then
     raise exception 'invite_email_mismatch' using errcode = '42501';
   end if;
 
   insert into public.workspace_membership (workspace_id, user_id, role)
     values (v_invite.workspace_id, v_user, v_invite.role)
-    on conflict (workspace_id, user_id) do update set role = excluded.role
-    returning * into v_membership;
+    on conflict (workspace_id, user_id) do nothing;
+
+  select *
+    into v_membership
+    from public.workspace_membership
+   where workspace_id = v_invite.workspace_id
+     and user_id = v_user;
 
   update movp_internal.workspace_invite
      set status = 'accepted', accepted_by = v_user, accepted_at = now()

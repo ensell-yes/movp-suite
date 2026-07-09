@@ -25,6 +25,7 @@ let formError = ''
 let oneTimeKey: IngestKeySecret | null = null
 
 if (token) {
+  Astro.response.headers.set('Cache-Control', 'no-store')
   state = 'ok'
   const { graphqlEndpoint, workspaceId } = readServerEnv()
 
@@ -44,26 +45,34 @@ if (token) {
         notice = 'Ingest key created.'
       }
     } else if (action === 'rotate') {
-      const result = await gqlRequest<{ rotateIngestKey: IngestKeySecret }>(
-        { endpoint: graphqlEndpoint, token },
-        ROTATE_INGEST_KEY_MUTATION,
-        { workspaceId, keyId: String(form.get('keyId') ?? '') },
-      )
-      if (!result.ok && result.code === 'auth_error') state = 'auth'
-      else if (!result.ok) formError = result.message ?? 'Could not rotate ingest key.'
-      else {
-        oneTimeKey = result.data.rotateIngestKey
-        notice = 'Ingest key rotated.'
+      if (form.get('confirm_rotate') !== '1') {
+        formError = 'Confirm key rotation before continuing.'
+      } else {
+        const result = await gqlRequest<{ rotateIngestKey: IngestKeySecret }>(
+          { endpoint: graphqlEndpoint, token },
+          ROTATE_INGEST_KEY_MUTATION,
+          { workspaceId, keyId: String(form.get('keyId') ?? '') },
+        )
+        if (!result.ok && result.code === 'auth_error') state = 'auth'
+        else if (!result.ok) formError = result.message ?? 'Could not rotate ingest key.'
+        else {
+          oneTimeKey = result.data.rotateIngestKey
+          notice = 'Ingest key rotated.'
+        }
       }
     } else if (action === 'revoke') {
-      const result = await gqlRequest(
-        { endpoint: graphqlEndpoint, token },
-        REVOKE_INGEST_KEY_MUTATION,
-        { workspaceId, keyId: String(form.get('keyId') ?? '') },
-      )
-      if (!result.ok && result.code === 'auth_error') state = 'auth'
-      else if (!result.ok) formError = result.message ?? 'Could not revoke ingest key.'
-      else notice = 'Ingest key revoked.'
+      if (form.get('confirm_revoke') !== '1') {
+        formError = 'Confirm key revocation before continuing.'
+      } else {
+        const result = await gqlRequest(
+          { endpoint: graphqlEndpoint, token },
+          REVOKE_INGEST_KEY_MUTATION,
+          { workspaceId, keyId: String(form.get('keyId') ?? '') },
+        )
+        if (!result.ok && result.code === 'auth_error') state = 'auth'
+        else if (!result.ok) formError = result.message ?? 'Could not revoke ingest key.'
+        else notice = 'Ingest key revoked.'
+      }
     }
   }
 
@@ -128,12 +137,30 @@ if (token) {
               <form method="post">
                 <input type="hidden" name="action" value="rotate" />
                 <input type="hidden" name="keyId" value={key.id} />
-                <button type="submit">Rotate key</button>
+                <label>
+                  <input
+                    type="checkbox"
+                    name="confirm_rotate"
+                    value="1"
+                    aria-label={`Confirm rotation of ingest key ${key.label ?? key.id}`}
+                  />
+                  Confirm rotation
+                </label>
+                <button type="submit" aria-label={`Rotate ingest key ${key.label ?? key.id}`}>Rotate key</button>
               </form>
               <form method="post">
                 <input type="hidden" name="action" value="revoke" />
                 <input type="hidden" name="keyId" value={key.id} />
-                <button type="submit">Revoke key</button>
+                <label>
+                  <input
+                    type="checkbox"
+                    name="confirm_revoke"
+                    value="1"
+                    aria-label={`Confirm revocation of ingest key ${key.label ?? key.id}`}
+                  />
+                  Confirm revocation
+                </label>
+                <button type="submit" aria-label={`Revoke ingest key ${key.label ?? key.id}`}>Revoke key</button>
               </form>
             </td>
           </tr>

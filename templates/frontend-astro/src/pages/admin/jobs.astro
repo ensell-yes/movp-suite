@@ -24,6 +24,7 @@ let state: 'auth' | 'error' | 'empty' | 'ok' = 'auth'
 let counts: Record<string, number> = {}
 let deadJobs: DeadJobRow[] = []
 let notice = ''
+let formError = ''
 
 if (token) {
   state = 'ok'
@@ -31,15 +32,19 @@ if (token) {
 
   if (Astro.request.method === 'POST') {
     const form = await Astro.request.formData()
-    const kind = String(form.get('kind') ?? '').trim()
-    const result = await gqlRequest<{ replayDeadJobs: { replayed: number } }>(
-      { endpoint: graphqlEndpoint, token },
-      REPLAY_DEAD_JOBS_MUTATION,
-      { workspaceId, kind: kind || undefined },
-    )
-    if (!result.ok && result.code === 'auth_error') state = 'auth'
-    else if (!result.ok) state = 'error'
-    else notice = `Replayed ${result.data.replayDeadJobs.replayed} dead jobs.`
+    if (form.get('confirm_replay') !== '1') {
+      formError = 'Confirm dead-job replay before continuing.'
+    } else {
+      const kind = String(form.get('kind') ?? '').trim()
+      const result = await gqlRequest<{ replayDeadJobs: { replayed: number } }>(
+        { endpoint: graphqlEndpoint, token },
+        REPLAY_DEAD_JOBS_MUTATION,
+        { workspaceId, kind: kind || undefined },
+      )
+      if (!result.ok && result.code === 'auth_error') state = 'auth'
+      else if (!result.ok) formError = result.message ?? 'Could not replay dead jobs.'
+      else notice = `Replayed ${result.data.replayDeadJobs.replayed} dead jobs.`
+    }
   }
 
   if (state !== 'auth') {
@@ -60,6 +65,7 @@ if (token) {
   {state === 'auth' && <AuthFailure resource="admin jobs" />}
   {state === 'error' && <ErrorRetry message="Could not load admin jobs." retryHref={Astro.url.pathname} />}
   {notice && <p role="status" data-testid="admin-notice">{notice}</p>}
+  {formError && <p role="alert" data-testid="admin-form-error">{formError}</p>}
 
   {(state === 'ok' || state === 'empty') && (
     <section aria-labelledby="job-counts-heading" data-testid="job-counts">
@@ -77,7 +83,16 @@ if (token) {
           Kind
           <input name="kind" placeholder="optional" />
         </label>
-        <button type="submit">Replay dead jobs</button>
+        <label>
+          <input
+            type="checkbox"
+            name="confirm_replay"
+            value="1"
+            aria-label="Confirm replay of dead jobs"
+          />
+          Confirm replay
+        </label>
+        <button type="submit" aria-label="Replay dead jobs in this workspace">Replay dead jobs</button>
       </form>
     </section>
   )}
