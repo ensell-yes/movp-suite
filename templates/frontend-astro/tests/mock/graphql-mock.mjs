@@ -579,7 +579,12 @@ createServer(async (req, res) => {
   }
   if (query.includes('mutation AcceptInvite')) {
     if (parsed.variables?.token === 'bad-token') {
-      return json(res, 200, { errors: [{ message: 'domain.admin.acceptInvite failed [P0001]' }] })
+      return json(res, 200, {
+        errors: [{
+          message: 'domain.admin.acceptInvite failed [P0001]: invite_not_found',
+          extensions: { code: 'NOT_FOUND', pgCode: 'P0001', reason: 'invite_not_found' },
+        }],
+      })
     }
     return json(res, 200, { data: { acceptInvite: { ...workspaceMembers[1], role: 'member' } } })
   }

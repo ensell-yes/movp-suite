@@ -1,15 +1,22 @@
 ---
 import Base from '../../layouts/Base.astro'
+import AuthFailure from '../../components/states/AuthFailure.astro'
+import { getSessionToken } from '../../lib/session.ts'
+
+const token = getSessionToken(Astro.cookies)
 ---
 <Base title="Admin">
   <h1 tabindex="-1" id="admin-heading">Admin</h1>
-  <nav aria-label="Admin sections">
-    <ul>
-      <li><a href="/admin/members">Members</a></li>
-      <li><a href="/admin/api-keys">API keys</a></li>
-      <li><a href="/admin/jobs">Jobs</a></li>
-      <li><a href="/admin/collections">Collections</a></li>
-      <li><a href="/admin/settings">Settings</a></li>
-    </ul>
-  </nav>
+  {!token && <AuthFailure resource="admin" />}
+  {token && (
+    <nav aria-label="Admin sections">
+      <ul>
+        <li><a href="/admin/members">Members</a></li>
+        <li><a href="/admin/api-keys">API keys</a></li>
+        <li><a href="/admin/jobs">Jobs</a></li>
+        <li><a href="/admin/collections">Collections</a></li>
+        <li><a href="/admin/settings">Settings</a></li>
+      </ul>
+    </nav>
+  )}
 </Base>

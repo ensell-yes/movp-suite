@@ -50,6 +50,24 @@ describe('gqlRequest', () => {
     expect(r).toEqual({ ok: false, code: 'graphql_error', message: 'nope' })
   })
 
+  it('maps admin GraphQL error extensions to friendly copy', async () => {
+    const r = await gqlRequest(
+      {
+        endpoint: 'https://x',
+        token: 't',
+        fetchImpl: mockFetch(200, {
+          errors: [{
+            message: 'domain.admin.setMemberRole failed [P0001]: last_owner_guard',
+            extensions: { code: 'CONFLICT', pgCode: 'P0001', reason: 'last_owner_guard' },
+          }],
+        }),
+      },
+      NOTES_QUERY,
+      { workspaceId: 'w', first: 20 },
+    )
+    expect(r).toEqual({ ok: false, code: 'graphql_error', message: 'At least one workspace owner must remain.' })
+  })
+
   it('maps a 401 or 403 to auth_error', async () => {
     const r = await gqlRequest(
       { endpoint: 'https://x', token: 't', fetchImpl: mockFetch(401, {}) },

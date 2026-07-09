@@ -470,12 +470,27 @@ grant execute on function public.list_workspace_members(uuid) to authenticated;
 // packages/domain/src/admin.ts (excerpt — factory style mirrors workflows.ts)
 import type { DomainCtx } from './types.ts'
 
-function fail(op: string, code?: string): never {
-  throw new Error(`domain.admin.${op} failed [${code ?? 'unknown'}]`)
+export class AdminDomainError extends Error {
+  readonly op: string
+  readonly pgCode: string
+  readonly reason: string
+
+  constructor(op: string, pgCode: string, reason?: string) {
+    const cleanReason = reason && reason.length > 0 ? reason : 'unknown'
+    super(`domain.admin.${op} failed [${pgCode}]: ${cleanReason}`)
+    this.name = 'AdminDomainError'
+    this.op = op
+    this.pgCode = pgCode
+    this.reason = cleanReason
+  }
+}
+
+function fail(op: string, code: string, reason?: string): never {
+  throw new AdminDomainError(op, code, reason)
 }
 async function rpc<T>(ctx: DomainCtx, name: string, args: Record<string, unknown>, op: string): Promise<T> {
   const { data, error } = await ctx.db.rpc(name, args)
-  if (error) fail(op, error.code)
+  if (error) fail(op, error.code ?? 'unknown', error.message)
   return data as T
 }
 
@@ -497,7 +512,7 @@ export function makeAdminService(ctx: DomainCtx) {
 export type AdminService = ReturnType<typeof makeAdminService>
 ```
   Wire: `packages/domain/src/types.ts` → add `admin: AdminService` to the `Domain` interface
-  (import the type); `packages/domain/src/index.ts` → `export { makeAdminService } from './admin.ts'`
+  (import the type); `packages/domain/src/index.ts` → `export { makeAdminService, AdminDomainError } from './admin.ts'`
   and `export type { AdminService } from './admin.ts'`; `packages/domain/src/domain.ts` →
   add `admin: makeAdminService(ctx),` inside the `createDomain` return object.
 
@@ -725,11 +740,11 @@ and the replay all agree on **dead-only** (this matches the `replay_workflow_job
 
 **TDD steps**
 
-- [ ] **Step 1 — failing pgTAP** `admin_jobs_test.sql` (plan 8, complete):
+- [ ] **Step 1 — failing pgTAP** `admin_jobs_test.sql` (plan 9, complete):
 
 ```sql
 begin;
-select plan(8);
+select plan(9);
 insert into public.workspace (id, name) values ('11111111-1111-1111-1111-111111111111','W1');
 insert into public.workspace_membership (workspace_id, user_id, role) values
   ('11111111-1111-1111-1111-111111111111','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','member');
@@ -759,7 +774,13 @@ select throws_ok($$select public.workspace_dead_jobs('11111111-1111-1111-1111-11
 select throws_ok($$select public.replay_dead_jobs('11111111-1111-1111-1111-111111111111', null)$$,
   '42501', null, 'non-member denied replay');
 
--- (7) a member replay resets EXACTLY the 1 dead job; (8) the failed job is left untouched (dead-only)
+-- (7) service_role has no shortcut through the member-facing admin surface
+set local role service_role;
+select throws_ok($$select public.workspace_job_counts('11111111-1111-1111-1111-111111111111')$$,
+  '42501', null, 'service_role has no member-facing admin job shortcut');
+
+-- (8) a member replay resets EXACTLY the 1 dead job; (9) the failed job is left untouched (dead-only)
+set local role authenticated;
 set local request.jwt.claims = '{"sub":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"}';
 select is(public.replay_dead_jobs('11111111-1111-1111-1111-111111111111', null), 1, 'replay resets exactly the 1 dead job');
 reset role;
@@ -779,20 +800,20 @@ create or replace function public.workspace_job_counts(ws uuid)
 returns jsonb language plpgsql security definer set search_path = ''
 as $$
 begin
-  if coalesce(auth.role(),'') <> 'service_role' and not public.is_workspace_member(ws)
+  if auth.uid() is null or not public.is_workspace_member(ws)
     then raise exception 'not a workspace member' using errcode = '42501'; end if;
   return coalesce((select jsonb_object_agg(status, c) from (
     select status, count(*) c from movp_internal.movp_jobs where workspace_id = ws group by status) s), '{}'::jsonb);
 end;
 $$;
-revoke all on function public.workspace_job_counts(uuid) from public, anon;
-grant execute on function public.workspace_job_counts(uuid) to authenticated, service_role;
+revoke all on function public.workspace_job_counts(uuid) from public, anon, authenticated;
+grant execute on function public.workspace_job_counts(uuid) to authenticated;
 
 create or replace function public.workspace_dead_jobs(ws uuid, lim int default 50)
 returns jsonb language plpgsql security definer set search_path = ''
 as $$
 begin
-  if coalesce(auth.role(),'') <> 'service_role' and not public.is_workspace_member(ws)
+  if auth.uid() is null or not public.is_workspace_member(ws)
     then raise exception 'not a workspace member' using errcode = '42501'; end if;
   return coalesce((select jsonb_agg(jsonb_build_object(
       'id', j.id, 'kind', j.kind, 'attempts', j.attempts, 'last_error_code', j.last_error_code,
@@ -804,15 +825,15 @@ begin
           limit least(greatest(lim,1),200)) j), '[]'::jsonb);
 end;
 $$;
-revoke all on function public.workspace_dead_jobs(uuid, int) from public, anon;
-grant execute on function public.workspace_dead_jobs(uuid, int) to authenticated, service_role;
+revoke all on function public.workspace_dead_jobs(uuid, int) from public, anon, authenticated;
+grant execute on function public.workspace_dead_jobs(uuid, int) to authenticated;
 
 create or replace function public.replay_dead_jobs(ws uuid, job_kind text default null)
 returns int language plpgsql security definer set search_path = ''
 as $$
 declare n int;
 begin
-  if coalesce(auth.role(),'') <> 'service_role' and not public.is_workspace_member(ws)
+  if auth.uid() is null or not public.is_workspace_member(ws)
     then raise exception 'not a workspace member' using errcode = '42501'; end if;
   update movp_internal.movp_jobs
      set status='pending', next_run_at=now(), locked_by=null, locked_at=null, lease_expires_at=null, updated_at=now()
@@ -821,8 +842,8 @@ begin
   get diagnostics n = row_count; return n;
 end;
 $$;
-revoke all on function public.replay_dead_jobs(uuid, text) from public, anon;
-grant execute on function public.replay_dead_jobs(uuid, text) to authenticated, service_role;
+revoke all on function public.replay_dead_jobs(uuid, text) from public, anon, authenticated;
+grant execute on function public.replay_dead_jobs(uuid, text) to authenticated;
 ```
   ⚠ Gotcha: keep `workspace_dead_jobs` payload-keys-only — the `jsonb_object_keys` subselect
   emits keys; never `select payload`. The pgTAP `not like '%evil.example%'` pins this.
@@ -1066,8 +1087,8 @@ pnpm --filter @movp/frontend-astro e2e
 bash scripts/slice-e2e.sh
 ```
 Expected: all PASS; `supabase test db` plan total = 533 base + the C2 files
-(admin_role 5 + member_admin 16 + ingest_key_admin 11 + admin_jobs 8 + admin_collections 4 +
-workspace_settings 5 = 49) → **582 across 29 files**.
+(admin_role 5 + member_admin 16 + ingest_key_admin 11 + admin_jobs 9 + admin_collections 4 +
+workspace_settings 5 = 50) → **583 across 29 files**.
 ```bash
 git commit -am "test(admin): [admin] slice-e2e gate"
 ```

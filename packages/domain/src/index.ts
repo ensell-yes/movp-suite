@@ -1,5 +1,5 @@
 export { makeCollectionService } from './collection.ts'
-export { makeAdminService } from './admin.ts'
+export { AdminDomainError, makeAdminService } from './admin.ts'
 export { makeCampaignService } from './campaign.ts'
 export { makeCollabService, resolveShareLink } from './collab.ts'
 export { makeContentService } from './content.ts'

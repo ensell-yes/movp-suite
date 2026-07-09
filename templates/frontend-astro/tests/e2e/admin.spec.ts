@@ -6,6 +6,17 @@ test.beforeEach(async ({ context }) => {
   await seedSession(context)
 })
 
+test('admin index requires a session before showing navigation', async ({ page, context }) => {
+  await context.clearCookies()
+  await page.goto('/admin')
+  await expect(page.getByTestId('auth-failure')).toBeVisible()
+  await expect(page.getByRole('navigation', { name: 'Admin sections' })).toHaveCount(0)
+
+  await seedSession(context)
+  await page.goto('/admin')
+  await expect(page.getByRole('navigation', { name: 'Admin sections' })).toBeVisible()
+})
+
 test('admin members auth, error, empty, invite, role, and remove paths render', async ({ page, context }) => {
   await context.clearCookies()
   await page.goto('/admin/members')
@@ -60,7 +71,7 @@ test('accept invite requires auth and handles success and invalid tokens', async
 
   await page.goto('/auth/accept-invite?token=bad-token')
   await page.getByRole('button', { name: 'Accept invite' }).click()
-  await expect(page.getByTestId('invite-error')).toContainText('P0001')
+  await expect(page.getByTestId('invite-error')).toContainText('This invite is no longer valid.')
 })
 
 test('admin ingest API keys show raw keys only for create and rotate responses', async ({ page, context }) => {

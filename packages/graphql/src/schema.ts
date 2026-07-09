@@ -5,6 +5,7 @@ import { GraphQLError, type GraphQLSchema } from 'graphql'
 import type { CollectionDef, FieldDef, MovpSchema } from '@movp/core-schema'
 import {
   createDomain,
+  AdminDomainError,
   resolveShareLink,
   type CollectionService,
   type Domain,
@@ -53,15 +54,20 @@ function domainFrom(ctx: GraphQLContext): Domain {
 
 function adminGraphqlError(error: unknown): never {
   const message = error instanceof Error ? error.message : 'domain.admin failed [unknown]'
-  const pgCode = /\[([^\]]+)\]/.exec(message)?.[1] ?? 'unknown'
+  const pgCode = error instanceof AdminDomainError
+    ? error.pgCode
+    : /\[([^\]]+)\]/.exec(message)?.[1] ?? 'unknown'
+  const reason = error instanceof AdminDomainError ? error.reason : undefined
   const code = pgCode === '42501'
     ? 'FORBIDDEN'
     : pgCode === '22023'
       ? 'BAD_USER_INPUT'
-      : pgCode === 'P0001'
-        ? 'CONFLICT'
-        : 'INTERNAL_SERVER_ERROR'
-  throw new GraphQLError(message, { extensions: { code, pgCode } })
+      : pgCode === 'P0001' && reason?.includes('not_found')
+        ? 'NOT_FOUND'
+        : pgCode === 'P0001'
+          ? 'CONFLICT'
+          : 'INTERNAL_SERVER_ERROR'
+  throw new GraphQLError(message, { extensions: { code, pgCode, reason } })
 }
 
 async function adminCall<T>(fn: () => Promise<T>): Promise<T> {

@@ -1,6 +1,7 @@
 import { graphql } from 'graphql/index.js'
 import { describe, expect, it, vi } from 'vitest'
 import { schema as movpSchema } from '@movp/core-schema'
+import { AdminDomainError } from '@movp/domain'
 import { buildSchema } from '../src/schema.ts'
 
 const mocks = vi.hoisted(() => {
@@ -37,6 +38,19 @@ const mocks = vi.hoisted(() => {
 })
 
 vi.mock('@movp/domain', () => ({
+  AdminDomainError: class AdminDomainError extends Error {
+    readonly op: string
+    readonly pgCode: string
+    readonly reason: string
+
+    constructor(op: string, pgCode: string, reason = 'unknown') {
+      super(`domain.admin.${op} failed [${pgCode}]: ${reason}`)
+      this.name = 'AdminDomainError'
+      this.op = op
+      this.pgCode = pgCode
+      this.reason = reason
+    }
+  },
   createDomain: () => ({
     admin: {
       createWorkspace: mocks.createWorkspace,
@@ -149,11 +163,15 @@ describe('admin GraphQL surface', () => {
   })
 
   it('maps admin domain failures to typed GraphQL errors', async () => {
-    mocks.inviteMember.mockRejectedValueOnce(new Error('domain.admin.inviteMember failed [42501]'))
+    mocks.inviteMember.mockRejectedValueOnce(new AdminDomainError('inviteMember', '42501', 'not_workspace_admin'))
     const denied = await run('mutation { inviteMember(workspaceId: "w-admin", email: "blocked@example.test", role: "member") { inviteId token } }')
 
     expect(denied.data).toEqual({ inviteMember: null })
-    expect(denied.errors?.[0]?.message).toContain('[42501]')
-    expect(denied.errors?.[0]?.extensions).toMatchObject({ code: 'FORBIDDEN', pgCode: '42501' })
+    expect(denied.errors?.[0]?.message).toContain('not_workspace_admin')
+    expect(denied.errors?.[0]?.extensions).toMatchObject({ code: 'FORBIDDEN', pgCode: '42501', reason: 'not_workspace_admin' })
+
+    mocks.rotateIngestKey.mockRejectedValueOnce(new AdminDomainError('rotateIngestKey', 'P0001', 'ingest_key_not_found'))
+    const missing = await run('mutation { rotateIngestKey(workspaceId: "w-admin", keyId: "key-missing") { keyId rawKey } }')
+    expect(missing.errors?.[0]?.extensions).toMatchObject({ code: 'NOT_FOUND', pgCode: 'P0001', reason: 'ingest_key_not_found' })
   })
 })

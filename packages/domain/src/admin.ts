@@ -10,8 +10,23 @@ import type {
   WorkspaceSettings,
 } from './types.ts'
 
-function fail(op: string, code: string): never {
-  throw new Error(`domain.admin.${op} failed [${code}]`)
+export class AdminDomainError extends Error {
+  readonly op: string
+  readonly pgCode: string
+  readonly reason: string
+
+  constructor(op: string, pgCode: string, reason?: string) {
+    const cleanReason = reason && reason.length > 0 ? reason : 'unknown'
+    super(`domain.admin.${op} failed [${pgCode}]: ${cleanReason}`)
+    this.name = 'AdminDomainError'
+    this.op = op
+    this.pgCode = pgCode
+    this.reason = cleanReason
+  }
+}
+
+function fail(op: string, code: string, reason?: string): never {
+  throw new AdminDomainError(op, code, reason)
 }
 
 function requireObject<T>(op: string, value: unknown): T {
@@ -48,7 +63,7 @@ export function makeAdminService(ctx: DomainCtx): AdminService {
   return {
     async createWorkspace({ name }) {
       const { data, error } = await ctx.db.rpc('create_workspace', { p_name: name })
-      if (error) fail('createWorkspace', error.code ?? 'unknown')
+      if (error) fail('createWorkspace', error.code ?? 'unknown', error.message)
       return requireObject<WorkspaceRow>('createWorkspace', data)
     },
 
@@ -58,19 +73,19 @@ export function makeAdminService(ctx: DomainCtx): AdminService {
         invite_email: email,
         invite_role: role,
       })
-      if (error) fail('inviteMember', error.code ?? 'unknown')
+      if (error) fail('inviteMember', error.code ?? 'unknown', error.message)
       return mapInvite(data)
     },
 
     async acceptInvite({ token }) {
       const { data, error } = await ctx.db.rpc('accept_invite', { invite_token: token })
-      if (error) fail('acceptInvite', error.code ?? 'unknown')
+      if (error) fail('acceptInvite', error.code ?? 'unknown', error.message)
       return requireObject<WorkspaceMemberRow>('acceptInvite', data)
     },
 
     async listMembers({ workspaceId }) {
       const { data, error } = await ctx.db.rpc('list_workspace_members', { ws: workspaceId })
-      if (error) fail('listMembers', error.code ?? 'unknown')
+      if (error) fail('listMembers', error.code ?? 'unknown', error.message)
       return Array.isArray(data) ? data as WorkspaceMemberRow[] : []
     },
 
@@ -80,41 +95,41 @@ export function makeAdminService(ctx: DomainCtx): AdminService {
         target_user: userId,
         new_role: role,
       })
-      if (error) fail('setMemberRole', error.code ?? 'unknown')
+      if (error) fail('setMemberRole', error.code ?? 'unknown', error.message)
       return requireObject<WorkspaceMemberRow>('setMemberRole', data)
     },
 
     async removeMember({ workspaceId, userId }) {
       const { error } = await ctx.db.rpc('remove_member', { ws: workspaceId, target_user: userId })
-      if (error) fail('removeMember', error.code ?? 'unknown')
+      if (error) fail('removeMember', error.code ?? 'unknown', error.message)
     },
 
     async createIngestKey({ workspaceId, label }) {
       const { data, error } = await ctx.db.rpc('create_ingest_key', { ws: workspaceId, label })
-      if (error) fail('createIngestKey', error.code ?? 'unknown')
+      if (error) fail('createIngestKey', error.code ?? 'unknown', error.message)
       return mapIngestSecret('createIngestKey', data)
     },
 
     async rotateIngestKey({ workspaceId, keyId }) {
       const { data, error } = await ctx.db.rpc('rotate_ingest_key', { key_id: keyId, ws: workspaceId })
-      if (error) fail('rotateIngestKey', error.code ?? 'unknown')
+      if (error) fail('rotateIngestKey', error.code ?? 'unknown', error.message)
       return mapIngestSecret('rotateIngestKey', data)
     },
 
     async revokeIngestKey({ workspaceId, keyId }) {
       const { error } = await ctx.db.rpc('revoke_ingest_key', { key_id: keyId, ws: workspaceId })
-      if (error) fail('revokeIngestKey', error.code ?? 'unknown')
+      if (error) fail('revokeIngestKey', error.code ?? 'unknown', error.message)
     },
 
     async listIngestKeys({ workspaceId }) {
       const { data, error } = await ctx.db.rpc('list_ingest_keys', { ws: workspaceId })
-      if (error) fail('listIngestKeys', error.code ?? 'unknown')
+      if (error) fail('listIngestKeys', error.code ?? 'unknown', error.message)
       return Array.isArray(data) ? data as IngestKeyRow[] : []
     },
 
     async jobCounts({ workspaceId }) {
       const { data, error } = await ctx.db.rpc('workspace_job_counts', { ws: workspaceId })
-      if (error) fail('jobCounts', error.code ?? 'unknown')
+      if (error) fail('jobCounts', error.code ?? 'unknown', error.message)
       return data && typeof data === 'object' && !Array.isArray(data)
         ? data as Record<string, number>
         : {}
@@ -122,19 +137,19 @@ export function makeAdminService(ctx: DomainCtx): AdminService {
 
     async deadJobs({ workspaceId, first }) {
       const { data, error } = await ctx.db.rpc('workspace_dead_jobs', { ws: workspaceId, lim: first ?? 50 })
-      if (error) fail('deadJobs', error.code ?? 'unknown')
+      if (error) fail('deadJobs', error.code ?? 'unknown', error.message)
       return Array.isArray(data) ? data as DeadJobRow[] : []
     },
 
     async replayDeadJobs({ workspaceId, kind }) {
       const { data, error } = await ctx.db.rpc('replay_dead_jobs', { ws: workspaceId, job_kind: kind ?? null })
-      if (error) fail('replayDeadJobs', error.code ?? 'unknown')
+      if (error) fail('replayDeadJobs', error.code ?? 'unknown', error.message)
       return Number(data ?? 0)
     },
 
     async settings({ workspaceId }) {
       const { data, error } = await ctx.db.rpc('workspace_settings', { ws: workspaceId })
-      if (error) fail('settings', error.code ?? 'unknown')
+      if (error) fail('settings', error.code ?? 'unknown', error.message)
       return mapSettings(data)
     },
   }

@@ -1,6 +1,6 @@
 begin;
 
-select plan(8);
+select plan(9);
 
 insert into public.workspace (id, name) values ('11111111-1111-1111-1111-111111111111','W1');
 insert into public.workspace_membership (workspace_id, user_id, role) values
@@ -46,6 +46,15 @@ select throws_ok(
   'non-member denied replay'
 );
 
+set local role service_role;
+select throws_ok(
+  $$select public.workspace_job_counts('11111111-1111-1111-1111-111111111111')$$,
+  '42501',
+  null,
+  'service_role has no member-facing admin job shortcut'
+);
+
+set local role authenticated;
 set local request.jwt.claims = '{"sub":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"}';
 select is(
   public.replay_dead_jobs('11111111-1111-1111-1111-111111111111', null),

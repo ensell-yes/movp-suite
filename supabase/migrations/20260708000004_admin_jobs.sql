@@ -7,7 +7,7 @@ security definer
 set search_path = ''
 as $$
 begin
-  if coalesce(auth.role(), '') <> 'service_role' and not public.is_workspace_member(ws) then
+  if auth.uid() is null or not public.is_workspace_member(ws) then
     raise exception 'not_workspace_member' using errcode = '42501';
   end if;
 
@@ -30,7 +30,7 @@ security definer
 set search_path = ''
 as $$
 begin
-  if coalesce(auth.role(), '') <> 'service_role' and not public.is_workspace_member(ws) then
+  if auth.uid() is null or not public.is_workspace_member(ws) then
     raise exception 'not_workspace_member' using errcode = '42501';
   end if;
 
@@ -69,7 +69,7 @@ as $$
 declare
   n int;
 begin
-  if coalesce(auth.role(), '') <> 'service_role' and not public.is_workspace_member(ws) then
+  if auth.uid() is null or not public.is_workspace_member(ws) then
     raise exception 'not_workspace_member' using errcode = '42501';
   end if;
 
@@ -93,6 +93,6 @@ revoke all on function public.workspace_job_counts(uuid) from public, anon, auth
 revoke all on function public.workspace_dead_jobs(uuid, int) from public, anon, authenticated;
 revoke all on function public.replay_dead_jobs(uuid, text) from public, anon, authenticated;
 
-grant execute on function public.workspace_job_counts(uuid) to authenticated, service_role;
-grant execute on function public.workspace_dead_jobs(uuid, int) to authenticated, service_role;
-grant execute on function public.replay_dead_jobs(uuid, text) to authenticated, service_role;
+grant execute on function public.workspace_job_counts(uuid) to authenticated;
+grant execute on function public.workspace_dead_jobs(uuid, int) to authenticated;
+grant execute on function public.replay_dead_jobs(uuid, text) to authenticated;

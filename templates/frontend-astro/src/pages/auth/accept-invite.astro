@@ -7,6 +7,8 @@ import { gqlRequest } from '../../lib/graphql.ts'
 import { getSessionToken } from '../../lib/session.ts'
 import { ACCEPT_INVITE_MUTATION, type WorkspaceMemberRow } from '../../lib/admin-queries.ts'
 
+Astro.response.headers.set('Referrer-Policy', 'same-origin')
+
 const sessionToken = getSessionToken(Astro.cookies)
 const inviteToken =
   Astro.request.method === 'POST'
