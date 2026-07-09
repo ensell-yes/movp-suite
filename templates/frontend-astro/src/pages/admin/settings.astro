@@ -1,0 +1,51 @@
+---
+import Base from '../../layouts/Base.astro'
+import AuthFailure from '../../components/states/AuthFailure.astro'
+import ErrorRetry from '../../components/states/ErrorRetry.astro'
+import { readServerEnv } from '../../lib/env.ts'
+import { gqlRequest } from '../../lib/graphql.ts'
+import { getSessionToken } from '../../lib/session.ts'
+import { WORKSPACE_SETTINGS_QUERY, type WorkspaceSettings } from '../../lib/admin-queries.ts'
+
+type SettingsData = { workspaceSettings: WorkspaceSettings }
+
+const token = getSessionToken(Astro.cookies)
+let state: 'auth' | 'error' | 'ok' = 'auth'
+let settings: WorkspaceSettings | null = null
+
+if (token) {
+  const { graphqlEndpoint, workspaceId } = readServerEnv()
+  const result = await gqlRequest<SettingsData>(
+    { endpoint: graphqlEndpoint, token },
+    WORKSPACE_SETTINGS_QUERY,
+    { workspaceId },
+  )
+  if (!result.ok && result.code === 'auth_error') state = 'auth'
+  else if (!result.ok) state = 'error'
+  else {
+    settings = result.data.workspaceSettings
+    state = 'ok'
+  }
+}
+---
+<Base title="Admin Settings">
+  <h1 tabindex="-1" id="admin-settings-heading">Admin Settings</h1>
+  <p><a href="/admin">Admin</a> <a href="/admin/members">Members</a> <a href="/admin/jobs">Jobs</a></p>
+  {state === 'auth' && <AuthFailure resource="workspace settings" />}
+  {state === 'error' && <ErrorRetry message="Could not load workspace settings." retryHref={Astro.url.pathname} />}
+  {state === 'ok' && settings && (
+    <section data-testid="workspace-settings" aria-labelledby="workspace-settings-heading">
+      <h2 id="workspace-settings-heading">Workspace</h2>
+      <dl>
+        <dt>Name</dt>
+        <dd>{settings.name ?? 'Untitled workspace'}</dd>
+        <dt>Members</dt>
+        <dd>{settings.member_count}</dd>
+      </dl>
+      <p><a href="/workflows/rules">Event catalog and workflow rules</a></p>
+      <p data-testid="retention-advisory">
+        Retention prune is a deploy-time pg_cron schedule. See docs for the deployment checklist; it is not managed from this UI.
+      </p>
+    </section>
+  )}
+</Base>

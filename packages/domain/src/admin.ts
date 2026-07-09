@@ -7,6 +7,7 @@ import type {
   IngestKeySecret,
   WorkspaceMemberRow,
   WorkspaceRow,
+  WorkspaceSettings,
 } from './types.ts'
 
 function fail(op: string, code: string): never {
@@ -31,6 +32,15 @@ function mapIngestSecret(op: string, value: unknown): IngestKeySecret {
   return {
     keyId: String(row.key_id ?? row.keyId ?? ''),
     rawKey: String(row.raw_key ?? row.rawKey ?? ''),
+  }
+}
+
+function mapSettings(value: unknown): WorkspaceSettings {
+  const row = requireObject<Record<string, unknown>>('settings', value)
+  return {
+    workspace_id: String(row.workspace_id ?? ''),
+    name: row.name == null ? null : String(row.name),
+    member_count: Number(row.member_count ?? 0),
   }
 }
 
@@ -120,6 +130,12 @@ export function makeAdminService(ctx: DomainCtx): AdminService {
       const { data, error } = await ctx.db.rpc('replay_dead_jobs', { ws: workspaceId, job_kind: kind ?? null })
       if (error) fail('replayDeadJobs', error.code ?? 'unknown')
       return Number(data ?? 0)
+    },
+
+    async settings({ workspaceId }) {
+      const { data, error } = await ctx.db.rpc('workspace_settings', { ws: workspaceId })
+      if (error) fail('settings', error.code ?? 'unknown')
+      return mapSettings(data)
     },
   }
 }

@@ -291,6 +291,11 @@ const deadJobs = [
     payload_keys: ['secret_url'],
   },
 ]
+const workspaceSettings = {
+  workspace_id: 'w',
+  name: 'Acme',
+  member_count: 2,
+}
 const collectionsMeta = [
   {
     name: 'note',
@@ -606,6 +611,9 @@ createServer(async (req, res) => {
   }
   if (query.includes('mutation ReplayDeadJobs')) {
     return json(res, 200, { data: { replayDeadJobs: { replayed: 1 } } })
+  }
+  if (query.includes('query WorkspaceSettings')) {
+    return json(res, 200, { data: { workspaceSettings } })
   }
   if (query.includes('query CollectionsMeta')) {
     return json(res, 200, { data: { collectionsMeta: scenario === 'empty' ? [] : collectionsMeta } })

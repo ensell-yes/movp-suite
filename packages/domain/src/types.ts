@@ -291,6 +291,12 @@ export interface DeadJobRow {
   payload_keys: string[]
 }
 
+export interface WorkspaceSettings {
+  workspace_id: string
+  name: string | null
+  member_count: number
+}
+
 export interface AdminService {
   createWorkspace(i: { name: string }): Promise<WorkspaceRow>
   inviteMember(i: { workspaceId: string; email: string; role: 'admin' | 'member' }): Promise<AdminInviteResult>
@@ -305,6 +311,7 @@ export interface AdminService {
   jobCounts(i: { workspaceId: string }): Promise<Record<string, number>>
   deadJobs(i: { workspaceId: string; first?: number }): Promise<DeadJobRow[]>
   replayDeadJobs(i: { workspaceId: string; kind?: string | null }): Promise<number>
+  settings(i: { workspaceId: string }): Promise<WorkspaceSettings>
 }
 
 export interface Domain {

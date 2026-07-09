@@ -45,6 +45,12 @@ export type CollectionMeta = {
   fields: CollectionFieldMeta[]
 }
 
+export type WorkspaceSettings = {
+  workspace_id: string
+  name: string | null
+  member_count: number
+}
+
 export const WORKSPACE_MEMBERS_QUERY = /* GraphQL */ `
   query WorkspaceMembers($workspaceId: ID!) {
     workspaceMembers(workspaceId: $workspaceId) { workspace_id user_id role created_at }
@@ -117,5 +123,11 @@ export const REPLAY_DEAD_JOBS_MUTATION = /* GraphQL */ `
 export const COLLECTIONS_META_QUERY = /* GraphQL */ `
   query CollectionsMeta {
     collectionsMeta { name label labelPlural fields { name type label required } }
+  }
+`
+
+export const WORKSPACE_SETTINGS_QUERY = /* GraphQL */ `
+  query WorkspaceSettings($workspaceId: ID!) {
+    workspaceSettings(workspaceId: $workspaceId) { workspace_id name member_count }
   }
 `

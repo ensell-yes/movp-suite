@@ -32,6 +32,7 @@ export type {
   WorkflowService,
   WorkspaceMemberRow,
   WorkspaceRow,
+  WorkspaceSettings,
 } from './types.ts'
 export type {
   AssetRow,

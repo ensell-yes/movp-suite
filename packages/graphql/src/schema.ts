@@ -17,6 +17,7 @@ import {
   type IngestKeyRow,
   type WorkspaceMemberRow,
   type WorkspaceRow,
+  type WorkspaceSettings,
 } from '@movp/domain'
 import { COMPLEXITY_BUDGET, DEPTH_LIMIT, clampPageSize } from './limits.ts'
 import { loadEdgeTargets } from './relations.ts'
@@ -119,6 +120,13 @@ export function buildSchema(schema: MovpSchema): GraphQLSchema {
       user_id: t.exposeID('user_id'),
       role: t.exposeString('role'),
       created_at: t.exposeString('created_at'),
+    }),
+  })
+  const workspaceSettingsRef = builder.objectRef<WorkspaceSettings>('WorkspaceSettings').implement({
+    fields: (t) => ({
+      workspace_id: t.exposeID('workspace_id'),
+      name: t.string({ nullable: true, resolve: (r) => r.name }),
+      member_count: t.exposeInt('member_count'),
     }),
   })
   const adminInviteRef = builder.objectRef<{ inviteId: string; token: string }>('AdminInvite').implement({
@@ -531,6 +539,16 @@ export function buildSchema(schema: MovpSchema): GraphQLSchema {
           workspaceId: String(args.workspaceId),
           first: clampPageSize(args.first),
         }),
+    }),
+  )
+
+  builder.queryField('workspaceSettings', (t: any) =>
+    t.field({
+      type: workspaceSettingsRef,
+      complexity: 5,
+      args: { workspaceId: t.arg.id({ required: true }) },
+      resolve: (_r: unknown, args: any, ctx: GraphQLContext) =>
+        domainFrom(ctx).admin.settings({ workspaceId: String(args.workspaceId) }),
     }),
   )
 

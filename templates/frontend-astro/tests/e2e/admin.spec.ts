@@ -137,7 +137,20 @@ test('admin collection browser lists public collections and edits a row', async 
   await expect(page.getByTestId('admin-notice')).toContainText('Row updated')
 })
 
-for (const path of ['/admin/members', '/admin/api-keys', '/admin/jobs', '/admin/collections', '/admin/collections/note', '/auth/accept-invite?token=invite-token-1234567890']) {
+test('admin settings render workspace and retention advisory', async ({ page, context }) => {
+  await context.clearCookies()
+  await page.goto('/admin/settings')
+  await expect(page.getByTestId('auth-failure')).toBeVisible()
+
+  await seedSession(context)
+  await page.goto('/admin/settings')
+  await expect(page.getByTestId('workspace-settings')).toContainText('Acme')
+  await expect(page.getByTestId('workspace-settings')).toContainText('2')
+  await expect(page.getByTestId('retention-advisory')).toContainText('deploy-time pg_cron')
+  await expect(page.getByRole('link', { name: 'Event catalog and workflow rules' })).toHaveAttribute('href', '/workflows/rules')
+})
+
+for (const path of ['/admin', '/admin/members', '/admin/api-keys', '/admin/jobs', '/admin/collections', '/admin/collections/note', '/admin/settings', '/auth/accept-invite?token=invite-token-1234567890']) {
   test(`admin a11y smoke: ${path}`, async ({ page }) => {
     await page.goto(path)
     const results = await new AxeBuilder({ page }).analyze()

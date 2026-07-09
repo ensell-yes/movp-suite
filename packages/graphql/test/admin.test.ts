@@ -32,6 +32,7 @@ const mocks = vi.hoisted(() => {
       payload_keys: ['secret_url'],
     }]),
     replayDeadJobs: vi.fn(async () => 1),
+    settings: vi.fn(async () => ({ workspace_id: 'w-admin', name: 'Acme', member_count: 2 })),
   }
 })
 
@@ -51,6 +52,7 @@ vi.mock('@movp/domain', () => ({
       jobCounts: mocks.jobCounts,
       deadJobs: mocks.deadJobs,
       replayDeadJobs: mocks.replayDeadJobs,
+      settings: mocks.settings,
     },
   }),
 }))
@@ -134,5 +136,15 @@ describe('admin GraphQL surface', () => {
     expect(replay.errors).toBeUndefined()
     expect(mocks.replayDeadJobs).toHaveBeenCalledWith({ workspaceId: 'w-admin', kind: 'webhook' })
     expect((replay.data as { replayDeadJobs: { replayed: number } }).replayDeadJobs.replayed).toBe(1)
+  })
+
+  it('routes workspace settings through the admin domain service', async () => {
+    const settings = await run('query { workspaceSettings(workspaceId: "w-admin") { workspace_id name member_count } }')
+    expect(settings.errors).toBeUndefined()
+    expect(mocks.settings).toHaveBeenCalledWith({ workspaceId: 'w-admin' })
+    expect((settings.data as { workspaceSettings: { name: string; member_count: number } }).workspaceSettings).toMatchObject({
+      name: 'Acme',
+      member_count: 2,
+    })
   })
 })
