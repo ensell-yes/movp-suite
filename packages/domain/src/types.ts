@@ -282,6 +282,15 @@ export interface IngestKeySecret {
   rawKey: string
 }
 
+export interface DeadJobRow {
+  id: string
+  kind: string
+  attempts: number
+  last_error_code: string | null
+  updated_at: string
+  payload_keys: string[]
+}
+
 export interface AdminService {
   createWorkspace(i: { name: string }): Promise<WorkspaceRow>
   inviteMember(i: { workspaceId: string; email: string; role: 'admin' | 'member' }): Promise<AdminInviteResult>
@@ -293,6 +302,9 @@ export interface AdminService {
   rotateIngestKey(i: { workspaceId: string; keyId: string }): Promise<IngestKeySecret>
   revokeIngestKey(i: { workspaceId: string; keyId: string }): Promise<void>
   listIngestKeys(i: { workspaceId: string }): Promise<IngestKeyRow[]>
+  jobCounts(i: { workspaceId: string }): Promise<Record<string, number>>
+  deadJobs(i: { workspaceId: string; first?: number }): Promise<DeadJobRow[]>
+  replayDeadJobs(i: { workspaceId: string; kind?: string | null }): Promise<number>
 }
 
 export interface Domain {

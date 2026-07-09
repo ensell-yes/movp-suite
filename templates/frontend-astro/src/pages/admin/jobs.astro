@@ -1,0 +1,105 @@
+---
+import Base from '../../layouts/Base.astro'
+import AuthFailure from '../../components/states/AuthFailure.astro'
+import ErrorRetry from '../../components/states/ErrorRetry.astro'
+import EmptyState from '../../components/states/EmptyState.astro'
+import { readServerEnv } from '../../lib/env.ts'
+import { gqlRequest } from '../../lib/graphql.ts'
+import { getSessionToken } from '../../lib/session.ts'
+import { ADMIN_JOBS_QUERY, REPLAY_DEAD_JOBS_MUTATION, type DeadJobRow } from '../../lib/admin-queries.ts'
+
+type JobsData = { jobCounts: string; deadJobs: DeadJobRow[] }
+
+function parseCounts(raw: string): Record<string, number> {
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>
+    return Object.fromEntries(Object.entries(parsed).map(([k, v]) => [k, Number(v)]))
+  } catch {
+    return {}
+  }
+}
+
+const token = getSessionToken(Astro.cookies)
+let state: 'auth' | 'error' | 'empty' | 'ok' = 'auth'
+let counts: Record<string, number> = {}
+let deadJobs: DeadJobRow[] = []
+let notice = ''
+
+if (token) {
+  state = 'ok'
+  const { graphqlEndpoint, workspaceId } = readServerEnv()
+
+  if (Astro.request.method === 'POST') {
+    const form = await Astro.request.formData()
+    const kind = String(form.get('kind') ?? '').trim()
+    const result = await gqlRequest<{ replayDeadJobs: { replayed: number } }>(
+      { endpoint: graphqlEndpoint, token },
+      REPLAY_DEAD_JOBS_MUTATION,
+      { workspaceId, kind: kind || undefined },
+    )
+    if (!result.ok && result.code === 'auth_error') state = 'auth'
+    else if (!result.ok) state = 'error'
+    else notice = `Replayed ${result.data.replayDeadJobs.replayed} dead jobs.`
+  }
+
+  if (state !== 'auth') {
+    const result = await gqlRequest<JobsData>({ endpoint: graphqlEndpoint, token }, ADMIN_JOBS_QUERY, { workspaceId, first: 50 })
+    if (!result.ok && result.code === 'auth_error') state = 'auth'
+    else if (!result.ok) state = 'error'
+    else {
+      counts = parseCounts(result.data.jobCounts)
+      deadJobs = result.data.deadJobs
+      state = deadJobs.length === 0 ? 'empty' : 'ok'
+    }
+  }
+}
+---
+<Base title="Admin Jobs">
+  <h1 tabindex="-1" id="admin-jobs-heading">Admin Jobs</h1>
+  <p><a href="/admin/members">Members</a> <a href="/admin/api-keys">API keys</a></p>
+  {state === 'auth' && <AuthFailure resource="admin jobs" />}
+  {state === 'error' && <ErrorRetry message="Could not load admin jobs." retryHref={Astro.url.pathname} />}
+  {notice && <p role="status" data-testid="admin-notice">{notice}</p>}
+
+  {(state === 'ok' || state === 'empty') && (
+    <section aria-labelledby="job-counts-heading" data-testid="job-counts">
+      <h2 id="job-counts-heading">Job counts</h2>
+      <dl>
+        {['pending', 'running', 'done', 'failed', 'dead'].map((status) => (
+          <>
+            <dt>{status}</dt>
+            <dd>{counts[status] ?? 0}</dd>
+          </>
+        ))}
+      </dl>
+      <form method="post">
+        <label>
+          Kind
+          <input name="kind" placeholder="optional" />
+        </label>
+        <button type="submit">Replay dead jobs</button>
+      </form>
+    </section>
+  )}
+
+  {state === 'empty' && <EmptyState message="No dead jobs." />}
+
+  {state === 'ok' && (
+    <table data-testid="dead-jobs">
+      <thead>
+        <tr><th>Kind</th><th>Attempts</th><th>Error</th><th>Payload keys</th><th>Updated</th></tr>
+      </thead>
+      <tbody>
+        {deadJobs.map((job) => (
+          <tr>
+            <td>{job.kind}</td>
+            <td>{job.attempts}</td>
+            <td>{job.last_error_code ?? ''}</td>
+            <td>{job.payload_keys.join(', ')}</td>
+            <td>{job.updated_at}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  )}
+</Base>

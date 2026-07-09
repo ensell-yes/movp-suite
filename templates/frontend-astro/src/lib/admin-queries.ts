@@ -22,6 +22,15 @@ export type IngestKeySecret = {
   rawKey: string
 }
 
+export type DeadJobRow = {
+  id: string
+  kind: string
+  attempts: number
+  last_error_code: string | null
+  updated_at: string
+  payload_keys: string[]
+}
+
 export const WORKSPACE_MEMBERS_QUERY = /* GraphQL */ `
   query WorkspaceMembers($workspaceId: ID!) {
     workspaceMembers(workspaceId: $workspaceId) { workspace_id user_id role created_at }
@@ -73,5 +82,20 @@ export const ROTATE_INGEST_KEY_MUTATION = /* GraphQL */ `
 export const REVOKE_INGEST_KEY_MUTATION = /* GraphQL */ `
   mutation RevokeIngestKey($workspaceId: ID!, $keyId: ID!) {
     revokeIngestKey(workspaceId: $workspaceId, keyId: $keyId)
+  }
+`
+
+export const ADMIN_JOBS_QUERY = /* GraphQL */ `
+  query AdminJobs($workspaceId: ID!, $first: Int!) {
+    jobCounts(workspaceId: $workspaceId)
+    deadJobs(workspaceId: $workspaceId, first: $first) {
+      id kind attempts last_error_code updated_at payload_keys
+    }
+  }
+`
+
+export const REPLAY_DEAD_JOBS_MUTATION = /* GraphQL */ `
+  mutation ReplayDeadJobs($workspaceId: ID!, $kind: String) {
+    replayDeadJobs(workspaceId: $workspaceId, kind: $kind) { replayed }
   }
 `

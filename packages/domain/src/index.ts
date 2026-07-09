@@ -15,6 +15,7 @@ export type {
   CollabService,
   CollectionService,
   ContentService,
+  DeadJobRow,
   Domain,
   DomainCtx,
   EmbeddingProvider,

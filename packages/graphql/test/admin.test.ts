@@ -22,6 +22,16 @@ const mocks = vi.hoisted(() => {
     createIngestKey: vi.fn(async () => ({ keyId: 'key-1', rawKey: 'a'.repeat(48) })),
     rotateIngestKey: vi.fn(async () => ({ keyId: 'key-1', rawKey: 'b'.repeat(48) })),
     revokeIngestKey: vi.fn(async () => undefined),
+    jobCounts: vi.fn(async () => ({ dead: 1, failed: 2 })),
+    deadJobs: vi.fn(async () => [{
+      id: 'job-1',
+      kind: 'webhook',
+      attempts: 8,
+      last_error_code: 'condition_invalid',
+      updated_at: '2026-07-08T00:00:00Z',
+      payload_keys: ['secret_url'],
+    }]),
+    replayDeadJobs: vi.fn(async () => 1),
   }
 })
 
@@ -38,6 +48,9 @@ vi.mock('@movp/domain', () => ({
       createIngestKey: mocks.createIngestKey,
       rotateIngestKey: mocks.rotateIngestKey,
       revokeIngestKey: mocks.revokeIngestKey,
+      jobCounts: mocks.jobCounts,
+      deadJobs: mocks.deadJobs,
+      replayDeadJobs: mocks.replayDeadJobs,
     },
   }),
 }))
@@ -103,5 +116,23 @@ describe('admin GraphQL surface', () => {
     expect(revoked.errors).toBeUndefined()
     expect(mocks.revokeIngestKey).toHaveBeenCalledWith({ workspaceId: 'w-admin', keyId: 'key-1' })
     expect((revoked.data as { revokeIngestKey: boolean }).revokeIngestKey).toBe(true)
+  })
+
+  it('routes job operations and exposes dead-job payload keys only', async () => {
+    const counts = await run('query { jobCounts(workspaceId: "w-admin") }')
+    expect(counts.errors).toBeUndefined()
+    expect(mocks.jobCounts).toHaveBeenCalledWith({ workspaceId: 'w-admin' })
+    expect(JSON.parse((counts.data as { jobCounts: string }).jobCounts)).toEqual({ dead: 1, failed: 2 })
+
+    const jobs = await run('query { deadJobs(workspaceId: "w-admin", first: 500) { id kind attempts last_error_code payload_keys } }')
+    expect(jobs.errors).toBeUndefined()
+    expect(mocks.deadJobs).toHaveBeenCalledWith({ workspaceId: 'w-admin', first: 100 })
+    expect(JSON.stringify(jobs.data)).toContain('secret_url')
+    expect(JSON.stringify(jobs.data)).not.toContain('evil.example')
+
+    const replay = await run('mutation { replayDeadJobs(workspaceId: "w-admin", kind: "webhook") { replayed } }')
+    expect(replay.errors).toBeUndefined()
+    expect(mocks.replayDeadJobs).toHaveBeenCalledWith({ workspaceId: 'w-admin', kind: 'webhook' })
+    expect((replay.data as { replayDeadJobs: { replayed: number } }).replayDeadJobs.replayed).toBe(1)
   })
 })

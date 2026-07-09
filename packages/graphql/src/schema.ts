@@ -8,6 +8,7 @@ import {
   resolveShareLink,
   type CollectionService,
   type Domain,
+  type DeadJobRow,
   type InboxItem,
   type Page,
   type SearchHit,
@@ -139,6 +140,19 @@ export function buildSchema(schema: MovpSchema): GraphQLSchema {
       keyId: t.exposeID('keyId'),
       rawKey: t.exposeString('rawKey'),
     }),
+  })
+  const deadJobRef = builder.objectRef<DeadJobRow>('DeadJob').implement({
+    fields: (t) => ({
+      id: t.exposeID('id'),
+      kind: t.exposeString('kind'),
+      attempts: t.exposeInt('attempts'),
+      last_error_code: t.string({ nullable: true, resolve: (r) => r.last_error_code }),
+      updated_at: t.exposeString('updated_at'),
+      payload_keys: t.stringList({ resolve: (r) => r.payload_keys }),
+    }),
+  })
+  const replayDeadJobsRef = builder.objectRef<{ replayed: number }>('ReplayDeadJobsResult').implement({
+    fields: (t) => ({ replayed: t.exposeInt('replayed') }),
   })
   const resolvedShareLink = builder
     .objectRef<{ entity_type: string; entity_id: string; workspace_id: string }>('ResolvedShareLink')
@@ -433,6 +447,32 @@ export function buildSchema(schema: MovpSchema): GraphQLSchema {
     }),
   )
 
+  builder.queryField('jobCounts', (t: any) =>
+    t.field({
+      type: 'String',
+      complexity: 5,
+      args: { workspaceId: t.arg.id({ required: true }) },
+      resolve: async (_r: unknown, args: any, ctx: GraphQLContext) =>
+        JSON.stringify(await domainFrom(ctx).admin.jobCounts({ workspaceId: String(args.workspaceId) })),
+    }),
+  )
+
+  builder.queryField('deadJobs', (t: any) =>
+    t.field({
+      type: [deadJobRef],
+      complexity: (args: any) => ({ field: 5, multiplier: clampPageSize(args.first) }),
+      args: {
+        workspaceId: t.arg.id({ required: true }),
+        first: t.arg.int({ required: false }),
+      },
+      resolve: (_r: unknown, args: any, ctx: GraphQLContext) =>
+        domainFrom(ctx).admin.deadJobs({
+          workspaceId: String(args.workspaceId),
+          first: clampPageSize(args.first),
+        }),
+    }),
+  )
+
   builder.mutationField('createWorkspace', (t: any) =>
     t.field({
       type: workspaceRef,
@@ -554,6 +594,23 @@ export function buildSchema(schema: MovpSchema): GraphQLSchema {
         })
         return true
       },
+    }),
+  )
+
+  builder.mutationField('replayDeadJobs', (t: any) =>
+    t.field({
+      type: replayDeadJobsRef,
+      complexity: 10,
+      args: {
+        workspaceId: t.arg.id({ required: true }),
+        kind: t.arg.string({ required: false }),
+      },
+      resolve: async (_r: unknown, args: any, ctx: GraphQLContext) => ({
+        replayed: await domainFrom(ctx).admin.replayDeadJobs({
+          workspaceId: String(args.workspaceId),
+          kind: args.kind == null ? null : String(args.kind),
+        }),
+      }),
     }),
   )
 

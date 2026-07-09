@@ -1,5 +1,6 @@
 import type {
   AdminInviteResult,
+  DeadJobRow,
   AdminService,
   DomainCtx,
   IngestKeyRow,
@@ -99,6 +100,26 @@ export function makeAdminService(ctx: DomainCtx): AdminService {
       const { data, error } = await ctx.db.rpc('list_ingest_keys', { ws: workspaceId })
       if (error) fail('listIngestKeys', error.code ?? 'unknown')
       return Array.isArray(data) ? data as IngestKeyRow[] : []
+    },
+
+    async jobCounts({ workspaceId }) {
+      const { data, error } = await ctx.db.rpc('workspace_job_counts', { ws: workspaceId })
+      if (error) fail('jobCounts', error.code ?? 'unknown')
+      return data && typeof data === 'object' && !Array.isArray(data)
+        ? data as Record<string, number>
+        : {}
+    },
+
+    async deadJobs({ workspaceId, first }) {
+      const { data, error } = await ctx.db.rpc('workspace_dead_jobs', { ws: workspaceId, lim: first ?? 50 })
+      if (error) fail('deadJobs', error.code ?? 'unknown')
+      return Array.isArray(data) ? data as DeadJobRow[] : []
+    },
+
+    async replayDeadJobs({ workspaceId, kind }) {
+      const { data, error } = await ctx.db.rpc('replay_dead_jobs', { ws: workspaceId, job_kind: kind ?? null })
+      if (error) fail('replayDeadJobs', error.code ?? 'unknown')
+      return Number(data ?? 0)
     },
   }
 }

@@ -281,6 +281,16 @@ const workspaceMembers = [
 const ingestKeys = [
   { id: 'key-1', label: 'ci', active: true, created_at: '2026-07-08T00:02:00Z' },
 ]
+const deadJobs = [
+  {
+    id: 'job-1',
+    kind: 'webhook',
+    attempts: 8,
+    last_error_code: 'delivery_failed',
+    updated_at: '2026-07-08T00:03:00Z',
+    payload_keys: ['secret_url'],
+  },
+]
 
 createServer(async (req, res) => {
   const url = new URL(req.url ?? '/', `http://127.0.0.1:${port}`)
@@ -567,6 +577,17 @@ createServer(async (req, res) => {
   }
   if (query.includes('mutation RevokeIngestKey')) {
     return json(res, 200, { data: { revokeIngestKey: true } })
+  }
+  if (query.includes('query AdminJobs')) {
+    return json(res, 200, {
+      data: {
+        jobCounts: JSON.stringify({ dead: scenario === 'empty' ? 0 : 1, failed: 1, pending: 2 }),
+        deadJobs: scenario === 'empty' ? [] : deadJobs,
+      },
+    })
+  }
+  if (query.includes('mutation ReplayDeadJobs')) {
+    return json(res, 200, { data: { replayDeadJobs: { replayed: 1 } } })
   }
   return json(res, 200, { data: {} })
 }).listen(port, '127.0.0.1')
