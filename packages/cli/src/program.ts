@@ -489,6 +489,41 @@ export function buildProgram(opts: BuildProgramOpts = {}): Command {
       await jobs.replay({ kind: 'automate', dead: !!o.dead, workspaceId: o.workspace })
     })
 
+  const adminCmd = program.command('admin').description('Workspace administration')
+  const ingestKeyCmd = adminCmd.command('ingest-key').description('Ingest API key management')
+  ingestKeyCmd
+    .command('list')
+    .requiredOption('--workspace <id>', 'workspace id')
+    .action(async (o: { workspace: string }) => {
+      const domain = createDomain(resolveCtx())
+      out(JSON.stringify(await domain.admin.listIngestKeys({ workspaceId: o.workspace })))
+    })
+  ingestKeyCmd
+    .command('create')
+    .requiredOption('--workspace <id>', 'workspace id')
+    .requiredOption('--label <label>', 'key label')
+    .action(async (o: { workspace: string; label: string }) => {
+      const domain = createDomain(resolveCtx())
+      out(JSON.stringify(await domain.admin.createIngestKey({ workspaceId: o.workspace, label: o.label })))
+    })
+  ingestKeyCmd
+    .command('rotate')
+    .requiredOption('--workspace <id>', 'workspace id')
+    .requiredOption('--key <id>', 'key id')
+    .action(async (o: { workspace: string; key: string }) => {
+      const domain = createDomain(resolveCtx())
+      out(JSON.stringify(await domain.admin.rotateIngestKey({ workspaceId: o.workspace, keyId: o.key })))
+    })
+  ingestKeyCmd
+    .command('revoke')
+    .requiredOption('--workspace <id>', 'workspace id')
+    .requiredOption('--key <id>', 'key id')
+    .action(async (o: { workspace: string; key: string }) => {
+      const domain = createDomain(resolveCtx())
+      await domain.admin.revokeIngestKey({ workspaceId: o.workspace, keyId: o.key })
+      out(JSON.stringify({ revoked: true }))
+    })
+
   program
     .command('search <query>')
     .requiredOption('--workspace <id>', 'workspace id')

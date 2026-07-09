@@ -135,7 +135,7 @@ describe('campaign GraphQL surface', () => {
     expect(res.errors?.[0]?.message).toMatch(/campaign_detail_metrics_failed/)
   })
 
-  it('surfaces the CUSTOM reads + the codegen generic CRUD, but Part C adds NO generic write for campaigns', () => {
+  it('surfaces custom reads plus generated campaign create/read/update but no delete', () => {
     const sdl = printSchema(buildSchema(movpSchema))
     // Part C's custom reads present
     expect(sdl).toMatch(/\bdeliverableSchedule\(/)
@@ -144,13 +144,12 @@ describe('campaign GraphQL surface', () => {
     expect(sdl).toMatch(/type DeliverableScheduleEntry\b/)
     expect(sdl).toMatch(/\bcampaignDetail\(/)
     expect(sdl).toMatch(/type CampaignDetail\b/)
-    // codegen's generic campaign surface (create + read) is present — NOT authored here
+    // Generic campaign surface is present; Stage C2 adds update for public collections.
     expect(sdl).toMatch(/type Campaign\b/)
     expect(sdl).toMatch(/\bcreateCampaign\(/)
     expect(sdl).toMatch(/\bcampaigns\(/)
     expect(sdl).toMatch(/\bcampaign_deliverables\(/)
-    // the builder emits create-only; Part C introduces no generic update/delete for campaigns
-    expect(sdl).not.toMatch(/\bupdateCampaign\(/)
+    expect(sdl).toMatch(/\bupdateCampaign\(/)
     expect(sdl).not.toMatch(/\bdeleteCampaign\(/)
   })
 })

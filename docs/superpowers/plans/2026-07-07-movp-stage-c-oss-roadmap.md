@@ -39,7 +39,7 @@ CMS feature parity is a supporting goal, not the headline.
 
 | Order | Phase | Depends on | Size | Outcome |
 |---|---|---|---|---|
-| **C1** | OSS Packaging & Onboarding | — | M | A stranger can clone, license-check, bootstrap, log in, and run the suite locally |
+| **C1** ✅ | OSS Packaging & Onboarding | — | M | A stranger can clone, license-check, bootstrap, log in, and run the suite locally — **MERGED (PR #8 `7f65eff`, reviewed 9.2)** |
 | **C2** | Admin Console & Operations | C1 (login) | M | Workspace/member/API-key/jobs administration in the UI, backed by RLS-safe RPCs |
 | **C3** | Agent Connectivity (MCP/CLI everywhere) | C1 (docs) | M | Claude Code, Codex, Cursor, Gemini CLI, Copilot each connect via documented, tested config; headless auth via PATs |
 | **C4** | Reporting Views & Dashboards | C2 | M | Codegen-emitted reporting views from `reporting.role` metadata + prebuilt admin dashboards |
@@ -55,7 +55,7 @@ exactly as Stage B.
 
 ---
 
-## C1 — OSS Packaging & Onboarding
+## C1 — OSS Packaging & Onboarding — ✅ EXECUTED + MERGED (PR #8 `7f65eff`, 2026-07-08, reviewed 9.2)
 
 **Goal:** the repo is legally and practically adoptable by an outsider.
 
@@ -104,9 +104,10 @@ Starlight site moves to C6 alongside templates), Discord/community infra.
 
 In scope:
 1. **Workspace & membership admin** — create workspace, invite (email → pending membership),
-   remove member, role management. Requires an **owner/admin role semantic** in RLS
-   (today `is_workspace_member` is flat) — this is the RBAC seed: add `role` enforcement to
-   admin-only RPCs, not a full permission matrix.
+   remove member, role management. The `workspace_membership.role` column **already exists**
+   (`owner`/`admin`/`member`, default `member`) — the RBAC seed is an **`is_workspace_admin()`
+   helper + its enforcement** on admin-only RPCs, NOT adding the column, and not a full
+   permission matrix. `is_workspace_member` stays the gate for non-admin paths.
 2. **Ingest API key management** — UI + member-gated RPCs to create/rotate/revoke hashed
    ingest keys (one-time secret display, same pattern as webhook secret rotation in 06c).
 3. **Jobs & DLQ operations page** — movp_jobs status counts, dead-job list (redacted

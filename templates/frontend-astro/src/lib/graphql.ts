@@ -28,6 +28,37 @@ export type GqlClientOpts = {
   fetchImpl?: typeof fetch
 }
 
+type GqlErrorPayload = {
+  message?: unknown
+  extensions?: {
+    code?: unknown
+    pgCode?: unknown
+    reason?: unknown
+  }
+}
+
+function friendlyAdminMessage(error: GqlErrorPayload): string | null {
+  const reason = typeof error.extensions?.reason === 'string' ? error.extensions.reason : ''
+  const code = typeof error.extensions?.code === 'string' ? error.extensions.code : ''
+  const message = typeof error.message === 'string' ? error.message : ''
+  if (!reason && !message.startsWith('domain.admin.')) return null
+
+  if (code === 'FORBIDDEN' || reason === 'not_workspace_admin') return "You're not an admin of this workspace."
+  if (reason === 'last_owner_guard') return 'At least one workspace owner must remain.'
+  if (reason === 'invite_email_mismatch') return 'This invite is for a different email address.'
+  if (reason === 'invite_expired') return 'This invite has expired. Ask an admin to send a new one.'
+  if (reason === 'invite_not_found') return 'This invite is no longer valid.'
+  if (reason === 'ingest_key_not_found') return 'That ingest key could not be found or is no longer active.'
+  if (reason === 'workspace_name_required') return 'Enter a workspace name.'
+  if (reason === 'invite_email_invalid') return 'Enter a valid email address.'
+  if (reason === 'invite_role_invalid' || reason === 'member_role_invalid') return 'Choose a valid role.'
+  if (reason === 'ingest_key_label_required') return 'Enter a label for the ingest key.'
+  if (code === 'BAD_USER_INPUT') return 'Check the form values and try again.'
+  if (code === 'NOT_FOUND') return 'The requested admin resource could not be found.'
+  if (code === 'CONFLICT') return 'The admin action conflicts with the current workspace state.'
+  return 'Could not complete the admin action.'
+}
+
 export const NOTES_PAGE_DEFAULT = 20
 export const NOTES_PAGE_MAX = 100
 
@@ -83,7 +114,12 @@ export async function gqlRequest<T>(
   }
   if (json.errors && json.errors.length > 0) {
     const message = json.errors
-      .map((error) => error && typeof error === 'object' && 'message' in error ? String((error as { message: unknown }).message) : '')
+      .map((error) => {
+        if (!error || typeof error !== 'object') return ''
+        const payload = error as GqlErrorPayload
+        return friendlyAdminMessage(payload)
+          ?? ('message' in payload ? String(payload.message) : '')
+      })
       .filter(Boolean)
       .join('; ')
     return { ok: false, code: 'graphql_error', message: message || undefined }

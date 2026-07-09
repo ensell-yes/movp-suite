@@ -1,18 +1,24 @@
 import SchemaBuilder from '@pothos/core'
 import ComplexityPlugin from '@pothos/plugin-complexity'
 import DataloaderPlugin from '@pothos/plugin-dataloader'
-import type { GraphQLSchema } from 'graphql'
+import { GraphQLError, type GraphQLSchema } from 'graphql'
 import type { CollectionDef, FieldDef, MovpSchema } from '@movp/core-schema'
 import {
   createDomain,
+  AdminDomainError,
   resolveShareLink,
   type CollectionService,
   type Domain,
+  type DeadJobRow,
   type InboxItem,
   type Page,
   type SearchHit,
   type TaskBoardColumn,
   type TaskRow,
+  type IngestKeyRow,
+  type WorkspaceMemberRow,
+  type WorkspaceRow,
+  type WorkspaceSettings,
 } from '@movp/domain'
 import { COMPLEXITY_BUDGET, DEPTH_LIMIT, clampPageSize } from './limits.ts'
 import { loadEdgeTargets } from './relations.ts'
@@ -44,6 +50,32 @@ function domainFrom(ctx: GraphQLContext): Domain {
     accessToken: ctx.accessToken,
     assetsFnUrl: ctx.assetsFnUrl,
   }, { embedder: ctx.embedder })
+}
+
+function adminGraphqlError(error: unknown): never {
+  const message = error instanceof Error ? error.message : 'domain.admin failed [unknown]'
+  const pgCode = error instanceof AdminDomainError
+    ? error.pgCode
+    : /\[([^\]]+)\]/.exec(message)?.[1] ?? 'unknown'
+  const reason = error instanceof AdminDomainError ? error.reason : undefined
+  const code = pgCode === '42501'
+    ? 'FORBIDDEN'
+    : pgCode === '22023'
+      ? 'BAD_USER_INPUT'
+      : pgCode === 'P0001' && reason?.includes('not_found')
+        ? 'NOT_FOUND'
+        : pgCode === 'P0001'
+          ? 'CONFLICT'
+          : 'INTERNAL_SERVER_ERROR'
+  throw new GraphQLError(message, { extensions: { code, pgCode, reason } })
+}
+
+async function adminCall<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn()
+  } catch (error) {
+    adminGraphqlError(error)
+  }
 }
 
 function workflowAuditEvent(event: Record<string, unknown>): Record<string, unknown> {
@@ -102,6 +134,81 @@ export function buildSchema(schema: MovpSchema): GraphQLSchema {
   const workflowReplayRef = builder.objectRef<{ replayed: number }>('WorkflowReplayResult').implement({
     fields: (t) => ({ replayed: t.exposeInt('replayed') }),
   })
+  const workspaceRef = builder.objectRef<WorkspaceRow>('Workspace').implement({
+    fields: (t) => ({
+      id: t.exposeID('id'),
+      name: t.exposeString('name'),
+      created_at: t.exposeString('created_at'),
+    }),
+  })
+  const workspaceMemberRef = builder.objectRef<WorkspaceMemberRow>('WorkspaceMember').implement({
+    fields: (t) => ({
+      workspace_id: t.exposeID('workspace_id'),
+      user_id: t.exposeID('user_id'),
+      role: t.exposeString('role'),
+      created_at: t.exposeString('created_at'),
+    }),
+  })
+  const workspaceSettingsRef = builder.objectRef<WorkspaceSettings>('WorkspaceSettings').implement({
+    fields: (t) => ({
+      workspace_id: t.exposeID('workspace_id'),
+      name: t.string({ nullable: true, resolve: (r) => r.name }),
+      member_count: t.exposeInt('member_count'),
+    }),
+  })
+  const adminInviteRef = builder.objectRef<{ inviteId: string; token: string }>('AdminInvite').implement({
+    fields: (t) => ({
+      inviteId: t.exposeID('inviteId'),
+      token: t.exposeString('token'),
+    }),
+  })
+  const ingestKeyRef = builder.objectRef<IngestKeyRow>('IngestKey').implement({
+    fields: (t) => ({
+      id: t.exposeID('id'),
+      label: t.string({ nullable: true, resolve: (r) => r.label }),
+      active: t.exposeBoolean('active'),
+      created_at: t.exposeString('created_at'),
+    }),
+  })
+  const ingestKeySecretRef = builder.objectRef<{ keyId: string; rawKey: string }>('IngestKeySecret').implement({
+    fields: (t) => ({
+      keyId: t.exposeID('keyId'),
+      rawKey: t.exposeString('rawKey'),
+    }),
+  })
+  const deadJobRef = builder.objectRef<DeadJobRow>('DeadJob').implement({
+    fields: (t) => ({
+      id: t.exposeID('id'),
+      kind: t.exposeString('kind'),
+      attempts: t.exposeInt('attempts'),
+      last_error_code: t.string({ nullable: true, resolve: (r) => r.last_error_code }),
+      updated_at: t.exposeString('updated_at'),
+      payload_keys: t.stringList({ resolve: (r) => r.payload_keys }),
+    }),
+  })
+  const replayDeadJobsRef = builder.objectRef<{ replayed: number }>('ReplayDeadJobsResult').implement({
+    fields: (t) => ({ replayed: t.exposeInt('replayed') }),
+  })
+  const collectionFieldMetaRef = builder
+    .objectRef<{ name: string; type: string; label: string; required: boolean }>('CollectionFieldMeta')
+    .implement({
+      fields: (t) => ({
+        name: t.exposeString('name'),
+        type: t.exposeString('type'),
+        label: t.exposeString('label'),
+        required: t.exposeBoolean('required'),
+      }),
+    })
+  const collectionMetaRef = builder
+    .objectRef<{ name: string; label: string; labelPlural: string; fields: Array<{ name: string; type: string; label: string; required: boolean }> }>('CollectionMeta')
+    .implement({
+      fields: (t) => ({
+        name: t.exposeString('name'),
+        label: t.exposeString('label'),
+        labelPlural: t.exposeString('labelPlural'),
+        fields: t.field({ type: [collectionFieldMetaRef], resolve: (c) => c.fields }),
+      }),
+    })
   const resolvedShareLink = builder
     .objectRef<{ entity_type: string; entity_id: string; workspace_id: string }>('ResolvedShareLink')
     .implement({
@@ -114,6 +221,7 @@ export function buildSchema(schema: MovpSchema): GraphQLSchema {
 
   const pages = new Map<string, any>()
   const inputs = new Map<string, any>()
+  const updateInputs = new Map<string, any>()
 
   for (const c of schema.collections as CollectionDef[]) {
     if (c.internal) continue
@@ -176,6 +284,23 @@ export function buildSchema(schema: MovpSchema): GraphQLSchema {
           for (const [name, def] of Object.entries(c.fields) as [string, FieldDef][]) {
             if (def.type === 'relation') continue
             f[name] = t.string({ required: !!def.required })
+          }
+          return f
+        },
+      }),
+    )
+
+    updateInputs.set(
+      c.name,
+      builder.inputRef<Record<string, unknown>>(`${pascal(c.name)}UpdateInput`).implement({
+        fields: (t: any) => {
+          const f: Record<string, any> = {
+            id: t.id({ required: false }),
+            workspace_id: t.id({ required: false }),
+          }
+          for (const [name, def] of Object.entries(c.fields) as [string, FieldDef][]) {
+            if (def.type === 'relation') continue
+            f[name] = t.string({ required: false })
           }
           return f
         },
@@ -375,11 +500,232 @@ export function buildSchema(schema: MovpSchema): GraphQLSchema {
     )
   }
 
+  builder.queryField('workspaceMembers', (t: any) =>
+    t.field({
+      type: [workspaceMemberRef],
+      complexity: 10,
+      args: { workspaceId: t.arg.id({ required: true }) },
+      resolve: (_r: unknown, args: any, ctx: GraphQLContext) =>
+        adminCall(() => domainFrom(ctx).admin.listMembers({ workspaceId: String(args.workspaceId) })),
+    }),
+  )
+
+  builder.queryField('collectionsMeta', (t: any) =>
+    t.field({
+      type: [collectionMetaRef],
+      complexity: 5,
+      resolve: () =>
+        (schema.collections as CollectionDef[])
+          .filter((c) => !c.internal)
+          .map((c) => ({
+            name: c.name,
+            label: c.label,
+            labelPlural: c.labelPlural,
+            fields: Object.entries(c.fields)
+              .filter((entry): entry is [string, FieldDef] => entry[1].type !== 'relation')
+              .map(([name, def]) => ({
+                name,
+                type: def.type,
+                label: def.label,
+                required: !!def.required,
+              })),
+          })),
+    }),
+  )
+
+  builder.queryField('ingestKeys', (t: any) =>
+    t.field({
+      type: [ingestKeyRef],
+      complexity: 10,
+      args: { workspaceId: t.arg.id({ required: true }) },
+      resolve: (_r: unknown, args: any, ctx: GraphQLContext) =>
+        adminCall(() => domainFrom(ctx).admin.listIngestKeys({ workspaceId: String(args.workspaceId) })),
+    }),
+  )
+
+  builder.queryField('jobCounts', (t: any) =>
+    t.field({
+      type: 'String',
+      complexity: 5,
+      args: { workspaceId: t.arg.id({ required: true }) },
+      resolve: async (_r: unknown, args: any, ctx: GraphQLContext) =>
+        JSON.stringify(await adminCall(() => domainFrom(ctx).admin.jobCounts({ workspaceId: String(args.workspaceId) }))),
+    }),
+  )
+
+  builder.queryField('deadJobs', (t: any) =>
+    t.field({
+      type: [deadJobRef],
+      complexity: (args: any) => ({ field: 5, multiplier: clampPageSize(args.first) }),
+      args: {
+        workspaceId: t.arg.id({ required: true }),
+        first: t.arg.int({ required: false }),
+      },
+      resolve: (_r: unknown, args: any, ctx: GraphQLContext) =>
+        adminCall(() => domainFrom(ctx).admin.deadJobs({
+          workspaceId: String(args.workspaceId),
+          first: clampPageSize(args.first),
+        })),
+    }),
+  )
+
+  builder.queryField('workspaceSettings', (t: any) =>
+    t.field({
+      type: workspaceSettingsRef,
+      complexity: 5,
+      args: { workspaceId: t.arg.id({ required: true }) },
+      resolve: (_r: unknown, args: any, ctx: GraphQLContext) =>
+        adminCall(() => domainFrom(ctx).admin.settings({ workspaceId: String(args.workspaceId) })),
+    }),
+  )
+
+  builder.mutationField('createWorkspace', (t: any) =>
+    t.field({
+      type: workspaceRef,
+      complexity: 10,
+      args: { name: t.arg.string({ required: true }) },
+      resolve: (_r: unknown, args: any, ctx: GraphQLContext) =>
+        adminCall(() => domainFrom(ctx).admin.createWorkspace({ name: String(args.name) })),
+    }),
+  )
+
+  builder.mutationField('inviteMember', (t: any) =>
+    t.field({
+      type: adminInviteRef,
+      complexity: 10,
+      args: {
+        workspaceId: t.arg.id({ required: true }),
+        email: t.arg.string({ required: true }),
+        role: t.arg.string({ required: true }),
+      },
+      resolve: (_r: unknown, args: any, ctx: GraphQLContext) =>
+        adminCall(() => domainFrom(ctx).admin.inviteMember({
+          workspaceId: String(args.workspaceId),
+          email: String(args.email),
+          role: String(args.role) as 'admin' | 'member',
+        })),
+    }),
+  )
+
+  builder.mutationField('acceptInvite', (t: any) =>
+    t.field({
+      type: workspaceMemberRef,
+      complexity: 10,
+      args: { token: t.arg.string({ required: true }) },
+      resolve: (_r: unknown, args: any, ctx: GraphQLContext) =>
+        adminCall(() => domainFrom(ctx).admin.acceptInvite({ token: String(args.token) })),
+    }),
+  )
+
+  builder.mutationField('setMemberRole', (t: any) =>
+    t.field({
+      type: workspaceMemberRef,
+      complexity: 10,
+      args: {
+        workspaceId: t.arg.id({ required: true }),
+        userId: t.arg.id({ required: true }),
+        role: t.arg.string({ required: true }),
+      },
+      resolve: (_r: unknown, args: any, ctx: GraphQLContext) =>
+        adminCall(() => domainFrom(ctx).admin.setMemberRole({
+          workspaceId: String(args.workspaceId),
+          userId: String(args.userId),
+          role: String(args.role) as 'owner' | 'admin' | 'member',
+        })),
+    }),
+  )
+
+  builder.mutationField('removeMember', (t: any) =>
+    t.field({
+      type: 'Boolean',
+      complexity: 10,
+      args: {
+        workspaceId: t.arg.id({ required: true }),
+        userId: t.arg.id({ required: true }),
+      },
+      resolve: async (_r: unknown, args: any, ctx: GraphQLContext) => {
+        await adminCall(() => domainFrom(ctx).admin.removeMember({
+          workspaceId: String(args.workspaceId),
+          userId: String(args.userId),
+        }))
+        return true
+      },
+    }),
+  )
+
+  builder.mutationField('createIngestKey', (t: any) =>
+    t.field({
+      type: ingestKeySecretRef,
+      complexity: 10,
+      args: {
+        workspaceId: t.arg.id({ required: true }),
+        label: t.arg.string({ required: true }),
+      },
+      resolve: (_r: unknown, args: any, ctx: GraphQLContext) =>
+        adminCall(() => domainFrom(ctx).admin.createIngestKey({
+          workspaceId: String(args.workspaceId),
+          label: String(args.label),
+        })),
+    }),
+  )
+
+  builder.mutationField('rotateIngestKey', (t: any) =>
+    t.field({
+      type: ingestKeySecretRef,
+      complexity: 10,
+      args: {
+        workspaceId: t.arg.id({ required: true }),
+        keyId: t.arg.id({ required: true }),
+      },
+      resolve: (_r: unknown, args: any, ctx: GraphQLContext) =>
+        adminCall(() => domainFrom(ctx).admin.rotateIngestKey({
+          workspaceId: String(args.workspaceId),
+          keyId: String(args.keyId),
+        })),
+    }),
+  )
+
+  builder.mutationField('revokeIngestKey', (t: any) =>
+    t.field({
+      type: 'Boolean',
+      complexity: 10,
+      args: {
+        workspaceId: t.arg.id({ required: true }),
+        keyId: t.arg.id({ required: true }),
+      },
+      resolve: async (_r: unknown, args: any, ctx: GraphQLContext) => {
+        await adminCall(() => domainFrom(ctx).admin.revokeIngestKey({
+          workspaceId: String(args.workspaceId),
+          keyId: String(args.keyId),
+        }))
+        return true
+      },
+    }),
+  )
+
+  builder.mutationField('replayDeadJobs', (t: any) =>
+    t.field({
+      type: replayDeadJobsRef,
+      complexity: 10,
+      args: {
+        workspaceId: t.arg.id({ required: true }),
+        kind: t.arg.string({ required: false }),
+      },
+      resolve: async (_r: unknown, args: any, ctx: GraphQLContext) => ({
+        replayed: await adminCall(() => domainFrom(ctx).admin.replayDeadJobs({
+          workspaceId: String(args.workspaceId),
+          kind: args.kind == null ? null : String(args.kind),
+        })),
+      }),
+    }),
+  )
+
   for (const c of schema.collections as CollectionDef[]) {
     if (c.internal) continue
     const ref = refs.get(c.name)
     const page = pages.get(c.name)
     const input = inputs.get(c.name)
+    const updateInput = updateInputs.get(c.name)
 
     builder.queryField(c.name, (t: any) =>
       t.field({
@@ -415,6 +761,20 @@ export function buildSchema(schema: MovpSchema): GraphQLSchema {
         complexity: 10,
         args: { input: t.arg({ type: input, required: true }) },
         resolve: (_r: unknown, args: any, ctx: GraphQLContext) => service(domainFrom(ctx), c.name).create(args.input),
+      }),
+    )
+
+    builder.mutationField(`update${pascal(c.name)}`, (t: any) =>
+      t.field({
+        type: ref,
+        complexity: 10,
+        args: { id: t.arg.id({ required: true }), input: t.arg({ type: updateInput, required: true }) },
+        resolve: (_r: unknown, args: any, ctx: GraphQLContext) => {
+          const patch = { ...(args.input as Record<string, unknown>) }
+          delete patch.id
+          delete patch.workspace_id
+          return service(domainFrom(ctx), c.name).update(String(args.id), patch)
+        },
       }),
     )
   }

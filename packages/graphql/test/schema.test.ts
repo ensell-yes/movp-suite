@@ -6,6 +6,7 @@ import { buildSchema } from '../src/schema.ts'
 
 const mocks = vi.hoisted(() => ({
   noteList: vi.fn(async (_args: { first?: number }) => ({ items: [{ id: 'n1' }], nextCursor: null })),
+  noteUpdate: vi.fn(async (id: string, patch: Record<string, unknown>) => ({ id, ...patch })),
 }))
 
 vi.mock('@movp/domain', () => {
@@ -13,7 +14,7 @@ vi.mock('@movp/domain', () => {
     create: vi.fn(async (i: Record<string, unknown>) => ({ id: 'n1', ...i })),
     get: vi.fn(async () => ({ id: 'n1', title: 'Hello' })),
     list: mocks.noteList,
-    update: vi.fn(),
+    update: mocks.noteUpdate,
     delete: vi.fn(),
   }
   const tag = { create: vi.fn(), get: vi.fn(), list: vi.fn(), update: vi.fn(), delete: vi.fn() }
@@ -54,8 +55,22 @@ describe('buildSchema', () => {
     expect(sdl).toMatch(/note\(id: ID!\): Note/)
     expect(sdl).toMatch(/notes\(/)
     expect(sdl).toContain('createNote(')
+    expect(sdl).toContain('collectionsMeta')
+    expect(sdl).toContain('updateNote(')
+    expect(sdl).not.toContain('updateTask(')
     expect(sdl).toContain('search(')
     expect(sdl).toContain('tags: [Tag!]!')
+  })
+
+  it('strips id and workspace_id from generic update patches', async () => {
+    mocks.noteUpdate.mockClear()
+    const result = await graphql({
+      schema: buildSchema(movpSchema),
+      source: 'mutation { updateNote(id: "n1", input: { id: "n2", workspace_id: "w2", title: "Edited" }) { id title } }',
+      contextValue: ctx,
+    })
+    expect(result.errors).toBeUndefined()
+    expect(mocks.noteUpdate).toHaveBeenCalledWith('n1', { title: 'Edited' })
   })
 
   it('clamps an over-large page request to MAX_PAGE_SIZE and runs', async () => {

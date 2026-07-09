@@ -526,5 +526,54 @@ export function buildMcpServer(schema: MovpSchema, ctx: McpCtx): McpServer {
     },
   )
 
+  server.registerTool(
+    'admin.ingest_key.list',
+    {
+      title: 'List ingest API keys',
+      description: 'List ingest API key metadata in a workspace without exposing hashes or raw keys',
+      inputSchema: { workspaceId: z.string() },
+    },
+    async ({ workspaceId }) => text(await domain.admin.listIngestKeys({ workspaceId })),
+  )
+
+  server.registerTool(
+    'admin.ingest_key.create',
+    {
+      title: 'Create ingest API key',
+      description: 'Create an ingest API key and return only its handle; raw secrets are not exposed to MCP clients',
+      inputSchema: { workspaceId: z.string(), label: z.string() },
+    },
+    async ({ workspaceId, label }) => {
+      const created = await domain.admin.createIngestKey({ workspaceId, label })
+      return text({ keyId: created.keyId })
+    },
+  )
+
+  server.registerTool(
+    'admin.ingest_key.rotate',
+    {
+      title: 'Rotate ingest API key',
+      description: 'Rotate an ingest API key and return only its handle; raw secrets are not exposed to MCP clients',
+      inputSchema: { workspaceId: z.string(), keyId: z.string() },
+    },
+    async ({ workspaceId, keyId }) => {
+      const rotated = await domain.admin.rotateIngestKey({ workspaceId, keyId })
+      return text({ keyId: rotated.keyId })
+    },
+  )
+
+  server.registerTool(
+    'admin.ingest_key.revoke',
+    {
+      title: 'Revoke ingest API key',
+      description: 'Deactivate an ingest API key without deleting it',
+      inputSchema: { workspaceId: z.string(), keyId: z.string() },
+    },
+    async ({ workspaceId, keyId }) => {
+      await domain.admin.revokeIngestKey({ workspaceId, keyId })
+      return text({ revoked: true })
+    },
+  )
+
   return server
 }

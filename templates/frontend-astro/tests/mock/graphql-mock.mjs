@@ -264,6 +264,56 @@ const workflowEvent = {
   payload_keys: ['body', 'email', 'task_id'],
   trace_id: 'trace-workflow-1',
 }
+const workspaceMembers = [
+  {
+    workspace_id: '00000000-0000-0000-0000-000000000001',
+    user_id: 'owner-1',
+    role: 'owner',
+    created_at: '2026-07-08T00:00:00Z',
+  },
+  {
+    workspace_id: '00000000-0000-0000-0000-000000000001',
+    user_id: 'member-1',
+    role: 'member',
+    created_at: '2026-07-08T00:01:00Z',
+  },
+]
+const ingestKeys = [
+  { id: 'key-1', label: 'ci', active: true, created_at: '2026-07-08T00:02:00Z' },
+]
+const deadJobs = [
+  {
+    id: 'job-1',
+    kind: 'webhook',
+    attempts: 8,
+    last_error_code: 'delivery_failed',
+    updated_at: '2026-07-08T00:03:00Z',
+    payload_keys: ['secret_url'],
+  },
+]
+const workspaceSettings = {
+  workspace_id: 'w',
+  name: 'Acme',
+  member_count: 2,
+}
+const collectionsMeta = [
+  {
+    name: 'note',
+    label: 'Note',
+    labelPlural: 'Notes',
+    fields: [
+      { name: 'title', type: 'text', label: 'Title', required: true },
+      { name: 'body', type: 'longtext', label: 'Body', required: false },
+      { name: 'status', type: 'enum', label: 'Status', required: true },
+    ],
+  },
+  {
+    name: 'tag',
+    label: 'Tag',
+    labelPlural: 'Tags',
+    fields: [{ name: 'label', type: 'text', label: 'Label', required: true }],
+  },
+]
 
 createServer(async (req, res) => {
   const url = new URL(req.url ?? '/', `http://127.0.0.1:${port}`)
@@ -520,6 +570,64 @@ createServer(async (req, res) => {
   }
   if (query.includes('mutation ReplayDeadWorkflowJobs')) {
     return json(res, 200, { data: { replayDeadWorkflowJobs: { replayed: 2 } } })
+  }
+  if (query.includes('query WorkspaceMembers')) {
+    return json(res, 200, { data: { workspaceMembers: scenario === 'empty' ? [] : workspaceMembers } })
+  }
+  if (query.includes('mutation InviteMember')) {
+    return json(res, 200, { data: { inviteMember: { inviteId: 'invite-1', token: 'invite-token-1234567890' } } })
+  }
+  if (query.includes('mutation AcceptInvite')) {
+    if (parsed.variables?.token === 'bad-token') {
+      return json(res, 200, {
+        errors: [{
+          message: 'domain.admin.acceptInvite failed [P0001]: invite_not_found',
+          extensions: { code: 'NOT_FOUND', pgCode: 'P0001', reason: 'invite_not_found' },
+        }],
+      })
+    }
+    return json(res, 200, { data: { acceptInvite: { ...workspaceMembers[1], role: 'member' } } })
+  }
+  if (query.includes('mutation SetMemberRole')) {
+    return json(res, 200, { data: { setMemberRole: { ...workspaceMembers[1], role: parsed.variables?.role } } })
+  }
+  if (query.includes('mutation RemoveMember')) {
+    return json(res, 200, { data: { removeMember: true } })
+  }
+  if (query.includes('query IngestKeys')) {
+    return json(res, 200, { data: { ingestKeys: scenario === 'empty' ? [] : ingestKeys } })
+  }
+  if (query.includes('mutation CreateIngestKey')) {
+    return json(res, 200, { data: { createIngestKey: { keyId: 'key-new', rawKey: 'a'.repeat(48) } } })
+  }
+  if (query.includes('mutation RotateIngestKey')) {
+    return json(res, 200, { data: { rotateIngestKey: { keyId: parsed.variables?.keyId, rawKey: 'b'.repeat(48) } } })
+  }
+  if (query.includes('mutation RevokeIngestKey')) {
+    return json(res, 200, { data: { revokeIngestKey: true } })
+  }
+  if (query.includes('query AdminJobs')) {
+    return json(res, 200, {
+      data: {
+        jobCounts: JSON.stringify({ dead: scenario === 'empty' ? 0 : 1, failed: 1, pending: 2 }),
+        deadJobs: scenario === 'empty' ? [] : deadJobs,
+      },
+    })
+  }
+  if (query.includes('mutation ReplayDeadJobs')) {
+    return json(res, 200, { data: { replayDeadJobs: { replayed: 1 } } })
+  }
+  if (query.includes('query WorkspaceSettings')) {
+    return json(res, 200, { data: { workspaceSettings } })
+  }
+  if (query.includes('query CollectionsMeta')) {
+    return json(res, 200, { data: { collectionsMeta: scenario === 'empty' ? [] : collectionsMeta } })
+  }
+  if (query.includes('query CollectionRows')) {
+    return json(res, 200, { data: { notes: { items: scenario === 'empty' ? [] : notes, nextCursor: null } } })
+  }
+  if (query.includes('mutation UpdateCollectionRow')) {
+    return json(res, 200, { data: { updateNote: { id: parsed.variables?.id } } })
   }
   return json(res, 200, { data: {} })
 }).listen(port, '127.0.0.1')

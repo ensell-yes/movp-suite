@@ -8,12 +8,26 @@ function run(cmd, cmdArgs, opts = {}) {
   if (res.status !== 0) process.exit(res.status ?? 1)
 }
 
+function sleep(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
+}
+
+function runWithRetry(cmd, cmdArgs, { attempts = 2, delayMs = 5000, ...opts } = {}) {
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const res = spawnSync(cmd, cmdArgs, { stdio: 'inherit', shell: false, ...opts })
+    if (res.status === 0) return
+    if (attempt === attempts) process.exit(res.status ?? 1)
+    console.warn(`${cmd} ${cmdArgs.join(' ')} failed; retrying in ${Math.round(delayMs / 1000)}s`)
+    sleep(delayMs)
+  }
+}
+
 for (const cmd of ['node', 'pnpm', 'supabase']) {
   run(cmd, ['--version'], { stdio: 'ignore' })
 }
 
 if (!args.has('--skip-start')) run('supabase', ['start'])
-run('supabase', ['db', 'reset'])
+runWithRetry('supabase', ['db', 'reset'])
 run('pnpm', ['seed:demo'])
 run('node', ['scripts/check-supabase-port-strategy.mjs'])
 

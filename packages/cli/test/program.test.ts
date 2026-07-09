@@ -24,6 +24,10 @@ const workflowRegisterWebhook = vi.fn(async () => ({ subscriptionId: 'sub1', sec
 const workflowRotateWebhook = vi.fn(async () => ({ subscriptionId: 'sub1', secret: 'r'.repeat(64) }))
 const workflowSetWebhookActive = vi.fn(async () => ({ id: 'sub1', active: false, secret_set: true }))
 const workflowRunList = vi.fn(async () => ({ items: [{ id: 'run1', outcome: 'failed' }], nextCursor: null }))
+const adminListIngestKeys = vi.fn(async () => [{ id: 'key1', label: 'ci', active: true, created_at: 't' }])
+const adminCreateIngestKey = vi.fn(async () => ({ keyId: 'key1', rawKey: 'a'.repeat(48) }))
+const adminRotateIngestKey = vi.fn(async () => ({ keyId: 'key1', rawKey: 'b'.repeat(48) }))
+const adminRevokeIngestKey = vi.fn(async () => undefined)
 
 function crud() {
   return {
@@ -67,6 +71,12 @@ vi.mock('@movp/domain', () => ({
       setWebhookFilter: vi.fn(),
     },
     workflow_run: { ...crud(), list: workflowRunList },
+    admin: {
+      listIngestKeys: adminListIngestKeys,
+      createIngestKey: adminCreateIngestKey,
+      rotateIngestKey: adminRotateIngestKey,
+      revokeIngestKey: adminRevokeIngestKey,
+    },
     search,
     graph: { link: vi.fn(), traverse: vi.fn() },
     collab: {
@@ -393,5 +403,27 @@ describe('movp CLI', () => {
 
     await cmd.parseAsync(['node', 'movp', 'workflows', 'replay', '--workspace', 'w', '--dead'])
     expect(replay).toHaveBeenCalledWith({ kind: 'automate', dead: true, workspaceId: 'w' })
+  })
+
+  it('admin ingest-key commands route through admin services and keep list secret-free', async () => {
+    const { cmd, out } = program()
+
+    await cmd.parseAsync(['node', 'movp', 'admin', 'ingest-key', 'list', '--workspace', 'w'])
+    expect(adminListIngestKeys).toHaveBeenCalledWith({ workspaceId: 'w' })
+    expect(out.at(-1)).toContain('ci')
+    expect(out.at(-1)).not.toContain('rawKey')
+    expect(out.at(-1)).not.toContain('key_hash')
+
+    await cmd.parseAsync(['node', 'movp', 'admin', 'ingest-key', 'create', '--workspace', 'w', '--label', 'ci'])
+    expect(adminCreateIngestKey).toHaveBeenCalledWith({ workspaceId: 'w', label: 'ci' })
+    expect(out.at(-1)).toContain('a'.repeat(48))
+
+    await cmd.parseAsync(['node', 'movp', 'admin', 'ingest-key', 'rotate', '--workspace', 'w', '--key', 'key1'])
+    expect(adminRotateIngestKey).toHaveBeenCalledWith({ workspaceId: 'w', keyId: 'key1' })
+    expect(out.at(-1)).toContain('b'.repeat(48))
+
+    await cmd.parseAsync(['node', 'movp', 'admin', 'ingest-key', 'revoke', '--workspace', 'w', '--key', 'key1'])
+    expect(adminRevokeIngestKey).toHaveBeenCalledWith({ workspaceId: 'w', keyId: 'key1' })
+    expect(out.at(-1)).toContain('revoked')
   })
 })

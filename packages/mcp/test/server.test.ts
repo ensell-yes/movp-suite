@@ -24,6 +24,10 @@ const workflowUpsertRule = vi.fn(async () => ({ id: 'rule1', action_type: 'notif
 const workflowRegisterWebhook = vi.fn(async () => ({ subscriptionId: 'sub1', secret: 's'.repeat(64) }))
 const workflowRotateWebhook = vi.fn(async () => ({ subscriptionId: 'sub1', secret: 'r'.repeat(64) }))
 const workflowSetWebhookActive = vi.fn(async () => ({ id: 'sub1', active: false, secret_set: true }))
+const adminListIngestKeys = vi.fn(async () => [{ id: 'key1', label: 'ci', active: true, created_at: 't' }])
+const adminCreateIngestKey = vi.fn(async () => ({ keyId: 'key1', rawKey: 'a'.repeat(48) }))
+const adminRotateIngestKey = vi.fn(async () => ({ keyId: 'key1', rawKey: 'b'.repeat(48) }))
+const adminRevokeIngestKey = vi.fn(async () => undefined)
 
 function crud() {
   return {
@@ -67,6 +71,12 @@ vi.mock('@movp/domain', () => ({
       rotateWebhook: workflowRotateWebhook,
       setWebhookActive: workflowSetWebhookActive,
       setWebhookFilter: vi.fn(),
+    },
+    admin: {
+      listIngestKeys: adminListIngestKeys,
+      createIngestKey: adminCreateIngestKey,
+      rotateIngestKey: adminRotateIngestKey,
+      revokeIngestKey: adminRevokeIngestKey,
     },
     search,
     graph: { link: vi.fn(async () => undefined), traverse: vi.fn() },
@@ -295,6 +305,10 @@ describe('buildMcpServer', () => {
       'workflow.webhook.rotate',
       'workflow.webhook.active',
       'workflow.jobs.replay_dead',
+      'admin.ingest_key.list',
+      'admin.ingest_key.create',
+      'admin.ingest_key.rotate',
+      'admin.ingest_key.revoke',
     ]))
 
     await client.callTool({ name: 'workflow.event_types', arguments: { first: 5 } })
@@ -336,5 +350,35 @@ describe('buildMcpServer', () => {
     const replayContent = replay.content as Array<{ type: 'text'; text: string }>
     expect(JSON.parse(replayContent[0]!.text)).toEqual({ replayed: 2 })
     expect(rpc).toHaveBeenCalledWith('replay_workflow_jobs', { ws: 'w', only_dead: true })
+
+    const listed = await client.callTool({ name: 'admin.ingest_key.list', arguments: { workspaceId: 'w' } })
+    expect(adminListIngestKeys).toHaveBeenCalledWith({ workspaceId: 'w' })
+    expect(JSON.stringify(listed.content)).not.toContain('rawKey')
+    expect(JSON.stringify(listed.content)).not.toContain('key_hash')
+
+    const created = await client.callTool({
+      name: 'admin.ingest_key.create',
+      arguments: { workspaceId: 'w', label: 'ci' },
+    })
+    expect(adminCreateIngestKey).toHaveBeenCalledWith({ workspaceId: 'w', label: 'ci' })
+    expect(JSON.stringify(created.content)).toContain('key1')
+    expect(JSON.stringify(created.content)).not.toContain('a'.repeat(48))
+    expect(JSON.stringify(created.content)).not.toContain('rawKey')
+
+    const rotated = await client.callTool({
+      name: 'admin.ingest_key.rotate',
+      arguments: { workspaceId: 'w', keyId: 'key1' },
+    })
+    expect(adminRotateIngestKey).toHaveBeenCalledWith({ workspaceId: 'w', keyId: 'key1' })
+    expect(JSON.stringify(rotated.content)).toContain('key1')
+    expect(JSON.stringify(rotated.content)).not.toContain('b'.repeat(48))
+    expect(JSON.stringify(rotated.content)).not.toContain('rawKey')
+
+    const revoked = await client.callTool({
+      name: 'admin.ingest_key.revoke',
+      arguments: { workspaceId: 'w', keyId: 'key1' },
+    })
+    expect(adminRevokeIngestKey).toHaveBeenCalledWith({ workspaceId: 'w', keyId: 'key1' })
+    expect(JSON.stringify(revoked.content)).toContain('revoked')
   })
 })

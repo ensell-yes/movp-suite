@@ -252,6 +252,68 @@ export interface WorkflowService {
   setWebhookFilter(i: { workspaceId: string; subscriptionId: string; filter: unknown }): Promise<WebhookSubscriptionRow>
 }
 
+export interface WorkspaceRow {
+  id: string
+  name: string
+  created_at: string
+}
+
+export interface WorkspaceMemberRow {
+  workspace_id: string
+  user_id: string
+  role: 'owner' | 'admin' | 'member'
+  created_at: string
+}
+
+export interface AdminInviteResult {
+  inviteId: string
+  token: string
+}
+
+export interface IngestKeyRow {
+  id: string
+  label: string | null
+  active: boolean
+  created_at: string
+}
+
+export interface IngestKeySecret {
+  keyId: string
+  rawKey: string
+}
+
+export interface DeadJobRow {
+  id: string
+  kind: string
+  attempts: number
+  last_error_code: string | null
+  updated_at: string
+  payload_keys: string[]
+}
+
+export interface WorkspaceSettings {
+  workspace_id: string
+  name: string | null
+  member_count: number
+}
+
+export interface AdminService {
+  createWorkspace(i: { name: string }): Promise<WorkspaceRow>
+  inviteMember(i: { workspaceId: string; email: string; role: 'admin' | 'member' }): Promise<AdminInviteResult>
+  acceptInvite(i: { token: string }): Promise<WorkspaceMemberRow>
+  listMembers(i: { workspaceId: string }): Promise<WorkspaceMemberRow[]>
+  setMemberRole(i: { workspaceId: string; userId: string; role: 'owner' | 'admin' | 'member' }): Promise<WorkspaceMemberRow>
+  removeMember(i: { workspaceId: string; userId: string }): Promise<void>
+  createIngestKey(i: { workspaceId: string; label: string }): Promise<IngestKeySecret>
+  rotateIngestKey(i: { workspaceId: string; keyId: string }): Promise<IngestKeySecret>
+  revokeIngestKey(i: { workspaceId: string; keyId: string }): Promise<void>
+  listIngestKeys(i: { workspaceId: string }): Promise<IngestKeyRow[]>
+  jobCounts(i: { workspaceId: string }): Promise<Record<string, number>>
+  deadJobs(i: { workspaceId: string; first?: number }): Promise<DeadJobRow[]>
+  replayDeadJobs(i: { workspaceId: string; kind?: string | null }): Promise<number>
+  settings(i: { workspaceId: string }): Promise<WorkspaceSettings>
+}
+
 export interface Domain {
   event_type: CollectionService<EventTypeRow, EventTypeCreate, EventTypeUpdate>
   note: CollectionService<NoteRow, NoteCreate, NoteUpdate>
@@ -281,4 +343,5 @@ export interface Domain {
   collab: CollabService
   campaign: CampaignService
   workflows: WorkflowService
+  admin: AdminService
 }

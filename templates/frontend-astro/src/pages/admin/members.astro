@@ -1,0 +1,176 @@
+---
+import Base from '../../layouts/Base.astro'
+import AuthFailure from '../../components/states/AuthFailure.astro'
+import ErrorRetry from '../../components/states/ErrorRetry.astro'
+import EmptyState from '../../components/states/EmptyState.astro'
+import { readServerEnv } from '../../lib/env.ts'
+import { gqlRequest } from '../../lib/graphql.ts'
+import { getSessionToken } from '../../lib/session.ts'
+import {
+  INVITE_MEMBER_MUTATION,
+  REMOVE_MEMBER_MUTATION,
+  SET_MEMBER_ROLE_MUTATION,
+  WORKSPACE_MEMBERS_QUERY,
+  type AdminInvite,
+  type WorkspaceMemberRow,
+} from '../../lib/admin-queries.ts'
+
+type MembersData = { workspaceMembers: WorkspaceMemberRow[] }
+
+const token = getSessionToken(Astro.cookies)
+let state: 'auth' | 'error' | 'empty' | 'ok' = 'auth'
+let members: WorkspaceMemberRow[] = []
+let notice = ''
+let formError = ''
+let invite: AdminInvite | null = null
+
+if (token) {
+  state = 'ok'
+  const { graphqlEndpoint, workspaceId } = readServerEnv()
+
+  if (Astro.request.method === 'POST') {
+    const form = await Astro.request.formData()
+    const action = String(form.get('action') ?? '')
+    if (action === 'invite') {
+      const result = await gqlRequest<{ inviteMember: AdminInvite }>(
+        { endpoint: graphqlEndpoint, token },
+        INVITE_MEMBER_MUTATION,
+        {
+          workspaceId,
+          email: String(form.get('email') ?? ''),
+          role: String(form.get('role') ?? 'member'),
+        },
+      )
+      if (!result.ok && result.code === 'auth_error') state = 'auth'
+      else if (!result.ok) formError = result.message ?? 'Could not invite member.'
+      else {
+        invite = result.data.inviteMember
+        notice = 'Invite created.'
+      }
+    } else if (action === 'role') {
+      const result = await gqlRequest(
+        { endpoint: graphqlEndpoint, token },
+        SET_MEMBER_ROLE_MUTATION,
+        {
+          workspaceId,
+          userId: String(form.get('userId') ?? ''),
+          role: String(form.get('role') ?? 'member'),
+        },
+      )
+      if (!result.ok && result.code === 'auth_error') state = 'auth'
+      else if (!result.ok) formError = result.message ?? 'Could not update member role.'
+      else notice = 'Role updated.'
+    } else if (action === 'remove') {
+      if (form.get('confirm_remove') !== '1') {
+        formError = 'Confirm member removal before continuing.'
+      } else {
+        const result = await gqlRequest(
+          { endpoint: graphqlEndpoint, token },
+          REMOVE_MEMBER_MUTATION,
+          { workspaceId, userId: String(form.get('userId') ?? '') },
+        )
+        if (!result.ok && result.code === 'auth_error') state = 'auth'
+        else if (!result.ok) formError = result.message ?? 'Could not remove member.'
+        else notice = 'Member removed.'
+      }
+    }
+  }
+
+  if (state !== 'auth') {
+    const result = await gqlRequest<MembersData>({ endpoint: graphqlEndpoint, token }, WORKSPACE_MEMBERS_QUERY, { workspaceId })
+    if (!result.ok && result.code === 'auth_error') state = 'auth'
+    else if (!result.ok) state = 'error'
+    else {
+      members = result.data.workspaceMembers
+      state = members.length === 0 ? 'empty' : 'ok'
+    }
+  }
+}
+---
+<Base title="Workspace Members">
+  <h1 tabindex="-1" id="admin-members-heading">Workspace Members</h1>
+  {state === 'auth' && <AuthFailure resource="workspace members" />}
+  {state === 'error' && <ErrorRetry message="Could not load workspace members." retryHref={Astro.url.pathname} />}
+  {notice && <p role="status" data-testid="admin-notice">{notice}</p>}
+  {formError && <p role="alert" data-testid="admin-form-error">{formError}</p>}
+
+  {invite && (
+    <section data-testid="admin-invite-token" role="status" aria-labelledby="invite-token-heading">
+      <h2 id="invite-token-heading">One-time invite link</h2>
+      <p>Send this link to the invited member. It will not be shown again.</p>
+      <code>{`${Astro.url.origin}/auth/accept-invite?token=${encodeURIComponent(invite.token)}`}</code>
+      <script is:inline>
+        history.replaceState(null, '', location.pathname)
+      </script>
+    </section>
+  )}
+
+  {(state === 'ok' || state === 'empty') && (
+    <section aria-labelledby="invite-member-heading">
+      <h2 id="invite-member-heading">Invite member</h2>
+      <form method="post" data-testid="member-invite-form">
+        <input type="hidden" name="action" value="invite" />
+        <label>
+          Email
+          <input name="email" type="email" required autocomplete="email" />
+        </label>
+        <label>
+          Role
+          <select name="role" required>
+            <option value="member">member</option>
+            <option value="admin">admin</option>
+          </select>
+        </label>
+        <button type="submit">Invite member</button>
+      </form>
+    </section>
+  )}
+
+  {state === 'empty' && <EmptyState message="No workspace members found." />}
+
+  {state === 'ok' && (
+    <table data-testid="workspace-members">
+      <thead>
+        <tr><th>User</th><th>Role</th><th>Joined</th><th>Actions</th></tr>
+      </thead>
+      <tbody>
+        {members.map((member) => (
+          <tr>
+            <td>{member.user_id}</td>
+            <td>{member.role}</td>
+            <td>{member.created_at}</td>
+            <td>
+              <form method="post">
+                <input type="hidden" name="action" value="role" />
+                <input type="hidden" name="userId" value={member.user_id} />
+                <label>
+                  Role
+                  <select name="role">
+                    {['owner', 'admin', 'member'].map((role) => (
+                      <option value={role} selected={member.role === role}>{role}</option>
+                    ))}
+                  </select>
+                </label>
+                <button type="submit">Set role</button>
+              </form>
+              <form method="post">
+                <input type="hidden" name="action" value="remove" />
+                <input type="hidden" name="userId" value={member.user_id} />
+                <label>
+                  <input
+                    type="checkbox"
+                    name="confirm_remove"
+                    value="1"
+                    aria-label={`Confirm removal of member ${member.user_id}`}
+                  />
+                  Confirm removal
+                </label>
+                <button type="submit" aria-label={`Remove member ${member.user_id}`}>Remove member</button>
+              </form>
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  )}
+</Base>
