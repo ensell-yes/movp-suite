@@ -1,0 +1,136 @@
+---
+import Base from '../../../layouts/Base.astro'
+import AuthFailure from '../../../components/states/AuthFailure.astro'
+import ErrorRetry from '../../../components/states/ErrorRetry.astro'
+import EmptyState from '../../../components/states/EmptyState.astro'
+import { readServerEnv } from '../../../lib/env.ts'
+import { gqlRequest } from '../../../lib/graphql.ts'
+import { getSessionToken } from '../../../lib/session.ts'
+import { COLLECTIONS_META_QUERY, type CollectionMeta } from '../../../lib/admin-queries.ts'
+
+type Row = Record<string, string | null>
+
+function pascal(s: string): string {
+  return s.split('_').map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join('')
+}
+
+function plural(s: string): string {
+  return `${s}s`
+}
+
+function listQuery(collection: CollectionMeta): string {
+  const fields = collection.fields.map((field) => field.name).join(' ')
+  return /* GraphQL */ `
+    query CollectionRows($workspaceId: ID!, $first: Int!) {
+      ${plural(collection.name)}(workspaceId: $workspaceId, first: $first) {
+        items { id workspace_id created_at updated_at ${fields} }
+        nextCursor
+      }
+    }
+  `
+}
+
+function updateMutation(collection: CollectionMeta): string {
+  return /* GraphQL */ `
+    mutation UpdateCollectionRow($id: ID!, $input: ${pascal(collection.name)}UpdateInput!) {
+      update${pascal(collection.name)}(id: $id, input: $input) { id }
+    }
+  `
+}
+
+const token = getSessionToken(Astro.cookies)
+const collectionName = String(Astro.params.name ?? '')
+let state: 'auth' | 'error' | 'missing' | 'empty' | 'ok' = 'auth'
+let collection: CollectionMeta | null = null
+let rows: Row[] = []
+let notice = ''
+let formError = ''
+
+if (token) {
+  const { graphqlEndpoint, workspaceId } = readServerEnv()
+  const metaResult = await gqlRequest<{ collectionsMeta: CollectionMeta[] }>({ endpoint: graphqlEndpoint, token }, COLLECTIONS_META_QUERY, {})
+  if (!metaResult.ok && metaResult.code === 'auth_error') state = 'auth'
+  else if (!metaResult.ok) state = 'error'
+  else {
+    collection = metaResult.data.collectionsMeta.find((item) => item.name === collectionName) ?? null
+    if (!collection) state = 'missing'
+    else {
+      let canLoadRows = true
+      if (Astro.request.method === 'POST') {
+        const form = await Astro.request.formData()
+        const id = String(form.get('id') ?? '')
+        const input: Record<string, string> = {}
+        for (const field of collection.fields) {
+          if (form.has(field.name)) input[field.name] = String(form.get(field.name) ?? '')
+        }
+        const updated = await gqlRequest(
+          { endpoint: graphqlEndpoint, token },
+          updateMutation(collection),
+          { id, input },
+        )
+        if (!updated.ok && updated.code === 'auth_error') {
+          state = 'auth'
+          canLoadRows = false
+        }
+        else if (!updated.ok) formError = updated.message ?? 'Could not update row.'
+        else notice = 'Row updated.'
+      }
+
+      if (canLoadRows) {
+        const rowsResult = await gqlRequest<Record<string, { items: Row[]; nextCursor: string | null }>>(
+          { endpoint: graphqlEndpoint, token },
+          listQuery(collection),
+          { workspaceId, first: 50 },
+        )
+        if (!rowsResult.ok && rowsResult.code === 'auth_error') state = 'auth'
+        else if (!rowsResult.ok) state = 'error'
+        else {
+          rows = rowsResult.data[plural(collection.name)]?.items ?? []
+          state = rows.length === 0 ? 'empty' : 'ok'
+        }
+      }
+    }
+  }
+}
+---
+<Base title={collection ? collection.labelPlural : 'Collection'}>
+  <h1 tabindex="-1" id="admin-collection-heading">{collection?.labelPlural ?? collectionName}</h1>
+  <p><a href="/admin/collections">Collections</a></p>
+  {state === 'auth' && <AuthFailure resource="collection rows" />}
+  {state === 'error' && <ErrorRetry message="Could not load collection rows." retryHref={Astro.url.pathname} />}
+  {state === 'missing' && <ErrorRetry message="Collection is not available." retryHref="/admin/collections" />}
+  {notice && <p role="status" data-testid="admin-notice">{notice}</p>}
+  {formError && <p role="alert" data-testid="admin-form-error">{formError}</p>}
+  {state === 'empty' && <EmptyState message="No rows found." />}
+  {state === 'ok' && collection && (
+    <table data-testid="collection-rows">
+      <thead>
+        <tr>
+          <th>ID</th>
+          {collection.fields.map((field) => <th>{field.label}</th>)}
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((row) => (
+          <tr>
+            <td>{row.id}</td>
+            {collection.fields.map((field) => <td>{row[field.name] ?? ''}</td>)}
+            <td>
+              <form method="post">
+                <input type="hidden" name="id" value={row.id ?? ''} />
+                {collection.fields.map((field) => (
+                  <label>
+                    {field.label}
+                    <input name={field.name} value={row[field.name] ?? ''} required={field.required} />
+                  </label>
+                ))}
+                <button type="submit">Save row</button>
+              </form>
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  )}
+</Base>

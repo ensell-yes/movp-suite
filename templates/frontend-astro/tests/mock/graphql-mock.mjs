@@ -291,6 +291,24 @@ const deadJobs = [
     payload_keys: ['secret_url'],
   },
 ]
+const collectionsMeta = [
+  {
+    name: 'note',
+    label: 'Note',
+    labelPlural: 'Notes',
+    fields: [
+      { name: 'title', type: 'text', label: 'Title', required: true },
+      { name: 'body', type: 'longtext', label: 'Body', required: false },
+      { name: 'status', type: 'enum', label: 'Status', required: true },
+    ],
+  },
+  {
+    name: 'tag',
+    label: 'Tag',
+    labelPlural: 'Tags',
+    fields: [{ name: 'label', type: 'text', label: 'Label', required: true }],
+  },
+]
 
 createServer(async (req, res) => {
   const url = new URL(req.url ?? '/', `http://127.0.0.1:${port}`)
@@ -588,6 +606,15 @@ createServer(async (req, res) => {
   }
   if (query.includes('mutation ReplayDeadJobs')) {
     return json(res, 200, { data: { replayDeadJobs: { replayed: 1 } } })
+  }
+  if (query.includes('query CollectionsMeta')) {
+    return json(res, 200, { data: { collectionsMeta: scenario === 'empty' ? [] : collectionsMeta } })
+  }
+  if (query.includes('query CollectionRows')) {
+    return json(res, 200, { data: { notes: { items: scenario === 'empty' ? [] : notes, nextCursor: null } } })
+  }
+  if (query.includes('mutation UpdateCollectionRow')) {
+    return json(res, 200, { data: { updateNote: { id: parsed.variables?.id } } })
   }
   return json(res, 200, { data: {} })
 }).listen(port, '127.0.0.1')

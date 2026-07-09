@@ -31,6 +31,20 @@ export type DeadJobRow = {
   payload_keys: string[]
 }
 
+export type CollectionFieldMeta = {
+  name: string
+  type: string
+  label: string
+  required: boolean
+}
+
+export type CollectionMeta = {
+  name: string
+  label: string
+  labelPlural: string
+  fields: CollectionFieldMeta[]
+}
+
 export const WORKSPACE_MEMBERS_QUERY = /* GraphQL */ `
   query WorkspaceMembers($workspaceId: ID!) {
     workspaceMembers(workspaceId: $workspaceId) { workspace_id user_id role created_at }
@@ -97,5 +111,11 @@ export const ADMIN_JOBS_QUERY = /* GraphQL */ `
 export const REPLAY_DEAD_JOBS_MUTATION = /* GraphQL */ `
   mutation ReplayDeadJobs($workspaceId: ID!, $kind: String) {
     replayDeadJobs(workspaceId: $workspaceId, kind: $kind) { replayed }
+  }
+`
+
+export const COLLECTIONS_META_QUERY = /* GraphQL */ `
+  query CollectionsMeta {
+    collectionsMeta { name label labelPlural fields { name type label required } }
   }
 `

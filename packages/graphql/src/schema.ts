@@ -154,6 +154,26 @@ export function buildSchema(schema: MovpSchema): GraphQLSchema {
   const replayDeadJobsRef = builder.objectRef<{ replayed: number }>('ReplayDeadJobsResult').implement({
     fields: (t) => ({ replayed: t.exposeInt('replayed') }),
   })
+  const collectionFieldMetaRef = builder
+    .objectRef<{ name: string; type: string; label: string; required: boolean }>('CollectionFieldMeta')
+    .implement({
+      fields: (t) => ({
+        name: t.exposeString('name'),
+        type: t.exposeString('type'),
+        label: t.exposeString('label'),
+        required: t.exposeBoolean('required'),
+      }),
+    })
+  const collectionMetaRef = builder
+    .objectRef<{ name: string; label: string; labelPlural: string; fields: Array<{ name: string; type: string; label: string; required: boolean }> }>('CollectionMeta')
+    .implement({
+      fields: (t) => ({
+        name: t.exposeString('name'),
+        label: t.exposeString('label'),
+        labelPlural: t.exposeString('labelPlural'),
+        fields: t.field({ type: [collectionFieldMetaRef], resolve: (c) => c.fields }),
+      }),
+    })
   const resolvedShareLink = builder
     .objectRef<{ entity_type: string; entity_id: string; workspace_id: string }>('ResolvedShareLink')
     .implement({
@@ -166,6 +186,7 @@ export function buildSchema(schema: MovpSchema): GraphQLSchema {
 
   const pages = new Map<string, any>()
   const inputs = new Map<string, any>()
+  const updateInputs = new Map<string, any>()
 
   for (const c of schema.collections as CollectionDef[]) {
     if (c.internal) continue
@@ -228,6 +249,23 @@ export function buildSchema(schema: MovpSchema): GraphQLSchema {
           for (const [name, def] of Object.entries(c.fields) as [string, FieldDef][]) {
             if (def.type === 'relation') continue
             f[name] = t.string({ required: !!def.required })
+          }
+          return f
+        },
+      }),
+    )
+
+    updateInputs.set(
+      c.name,
+      builder.inputRef<Record<string, unknown>>(`${pascal(c.name)}UpdateInput`).implement({
+        fields: (t: any) => {
+          const f: Record<string, any> = {
+            id: t.id({ required: false }),
+            workspace_id: t.id({ required: false }),
+          }
+          for (const [name, def] of Object.entries(c.fields) as [string, FieldDef][]) {
+            if (def.type === 'relation') continue
+            f[name] = t.string({ required: false })
           }
           return f
         },
@@ -437,6 +475,29 @@ export function buildSchema(schema: MovpSchema): GraphQLSchema {
     }),
   )
 
+  builder.queryField('collectionsMeta', (t: any) =>
+    t.field({
+      type: [collectionMetaRef],
+      complexity: 5,
+      resolve: () =>
+        (schema.collections as CollectionDef[])
+          .filter((c) => !c.internal)
+          .map((c) => ({
+            name: c.name,
+            label: c.label,
+            labelPlural: c.labelPlural,
+            fields: Object.entries(c.fields)
+              .filter((entry): entry is [string, FieldDef] => entry[1].type !== 'relation')
+              .map(([name, def]) => ({
+                name,
+                type: def.type,
+                label: def.label,
+                required: !!def.required,
+              })),
+          })),
+    }),
+  )
+
   builder.queryField('ingestKeys', (t: any) =>
     t.field({
       type: [ingestKeyRef],
@@ -619,6 +680,7 @@ export function buildSchema(schema: MovpSchema): GraphQLSchema {
     const ref = refs.get(c.name)
     const page = pages.get(c.name)
     const input = inputs.get(c.name)
+    const updateInput = updateInputs.get(c.name)
 
     builder.queryField(c.name, (t: any) =>
       t.field({
@@ -654,6 +716,20 @@ export function buildSchema(schema: MovpSchema): GraphQLSchema {
         complexity: 10,
         args: { input: t.arg({ type: input, required: true }) },
         resolve: (_r: unknown, args: any, ctx: GraphQLContext) => service(domainFrom(ctx), c.name).create(args.input),
+      }),
+    )
+
+    builder.mutationField(`update${pascal(c.name)}`, (t: any) =>
+      t.field({
+        type: ref,
+        complexity: 10,
+        args: { id: t.arg.id({ required: true }), input: t.arg({ type: updateInput, required: true }) },
+        resolve: (_r: unknown, args: any, ctx: GraphQLContext) => {
+          const patch = { ...(args.input as Record<string, unknown>) }
+          delete patch.id
+          delete patch.workspace_id
+          return service(domainFrom(ctx), c.name).update(String(args.id), patch)
+        },
       }),
     )
   }

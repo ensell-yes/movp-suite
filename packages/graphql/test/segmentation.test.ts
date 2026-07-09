@@ -198,17 +198,17 @@ describe('segmentation GraphQL surface', () => {
     expect(snaps.errors).toBeUndefined()
   })
 
-  it('surfaces the CUSTOM reads + createSegmentRuleVersion + codegen generic CRUD; NO generic segment write, NO campaignAudience', () => {
+  it('surfaces custom reads plus generated segment create/read/update; no delete or campaignAudience', () => {
     const sdl = printSchema(buildSchema(movpSchema))
     for (const q of ['previewMatchingCount(', 'segmentMembershipExplained(', 'snapshotDiff(',
                      'segmentSummaries(', 'segmentMembers(', 'segmentSnapshots(', 'createSegmentRuleVersion(']) {
       expect(sdl).toContain(q)
     }
-    expect(sdl).toMatch(/type Segment\b/)          // codegen generic surface (create + read) — NOT authored here
+    expect(sdl).toMatch(/type Segment\b/)          // generic public collection surface
     expect(sdl).toMatch(/\bcreateSegment\(/)
     expect(sdl).toMatch(/\bsegments\(/)
     expect(sdl).toMatch(/\bsegment_memberships\(/)
-    expect(sdl).not.toMatch(/\bupdateSegment\(/)   // builder is create-only; Part D adds no generic write
+    expect(sdl).toMatch(/\bupdateSegment\(/)
     expect(sdl).not.toMatch(/\bdeleteSegment\(/)
     expect(sdl).not.toContain('campaignAudience')  // deferred out of Part D (no edge producer/consumer yet)
   })

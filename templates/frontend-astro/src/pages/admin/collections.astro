@@ -1,0 +1,45 @@
+---
+import Base from '../../layouts/Base.astro'
+import AuthFailure from '../../components/states/AuthFailure.astro'
+import ErrorRetry from '../../components/states/ErrorRetry.astro'
+import EmptyState from '../../components/states/EmptyState.astro'
+import { readServerEnv } from '../../lib/env.ts'
+import { gqlRequest } from '../../lib/graphql.ts'
+import { getSessionToken } from '../../lib/session.ts'
+import { COLLECTIONS_META_QUERY, type CollectionMeta } from '../../lib/admin-queries.ts'
+
+const token = getSessionToken(Astro.cookies)
+let state: 'auth' | 'error' | 'empty' | 'ok' = 'auth'
+let collections: CollectionMeta[] = []
+
+if (token) {
+  const { graphqlEndpoint } = readServerEnv()
+  const result = await gqlRequest<{ collectionsMeta: CollectionMeta[] }>({ endpoint: graphqlEndpoint, token }, COLLECTIONS_META_QUERY, {})
+  if (!result.ok && result.code === 'auth_error') state = 'auth'
+  else if (!result.ok) state = 'error'
+  else {
+    collections = result.data.collectionsMeta
+    state = collections.length === 0 ? 'empty' : 'ok'
+  }
+}
+---
+<Base title="Collections">
+  <h1 tabindex="-1" id="admin-collections-heading">Collections</h1>
+  <p><a href="/admin/members">Members</a> <a href="/admin/jobs">Jobs</a></p>
+  {state === 'auth' && <AuthFailure resource="collections" />}
+  {state === 'error' && <ErrorRetry message="Could not load collections." retryHref={Astro.url.pathname} />}
+  {state === 'empty' && <EmptyState message="No collections available." />}
+  {state === 'ok' && (
+    <table data-testid="collections-meta">
+      <thead><tr><th>Collection</th><th>Fields</th></tr></thead>
+      <tbody>
+        {collections.map((collection) => (
+          <tr>
+            <td><a href={`/admin/collections/${collection.name}`}>{collection.labelPlural}</a></td>
+            <td>{collection.fields.map((field) => field.name).join(', ')}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  )}
+</Base>

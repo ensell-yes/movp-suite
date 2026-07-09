@@ -115,7 +115,29 @@ test('admin jobs render counts, payload keys only, and replay dead jobs', async 
   await expect(page.getByTestId('admin-notice')).toContainText('Replayed 1 dead jobs')
 })
 
-for (const path of ['/admin/members', '/admin/api-keys', '/admin/jobs', '/auth/accept-invite?token=invite-token-1234567890']) {
+test('admin collection browser lists public collections and edits a row', async ({ page, context }) => {
+  await context.clearCookies()
+  await page.goto('/admin/collections')
+  await expect(page.getByTestId('auth-failure')).toBeVisible()
+
+  await seedSession(context)
+  await scenario('empty')
+  await page.goto('/admin/collections')
+  await expect(page.getByTestId('empty')).toBeVisible()
+
+  await scenario('ok')
+  await page.goto('/admin/collections')
+  await expect(page.getByTestId('collections-meta')).toContainText('Notes')
+  await expect(page.getByTestId('collections-meta')).not.toContainText('Task')
+
+  await page.goto('/admin/collections/note')
+  await expect(page.getByTestId('collection-rows')).toContainText('First note')
+  await page.getByLabel('Title').fill('Edited note')
+  await page.getByRole('button', { name: 'Save row' }).click()
+  await expect(page.getByTestId('admin-notice')).toContainText('Row updated')
+})
+
+for (const path of ['/admin/members', '/admin/api-keys', '/admin/jobs', '/admin/collections', '/admin/collections/note', '/auth/accept-invite?token=invite-token-1234567890']) {
   test(`admin a11y smoke: ${path}`, async ({ page }) => {
     await page.goto(path)
     const results = await new AxeBuilder({ page }).analyze()
