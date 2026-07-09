@@ -19,6 +19,8 @@ export type {
   DomainCtx,
   EmbeddingProvider,
   GraphService,
+  IngestKeyRow,
+  IngestKeySecret,
   InboxItem,
   ListArgs,
   Page,

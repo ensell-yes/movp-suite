@@ -278,6 +278,9 @@ const workspaceMembers = [
     created_at: '2026-07-08T00:01:00Z',
   },
 ]
+const ingestKeys = [
+  { id: 'key-1', label: 'ci', active: true, created_at: '2026-07-08T00:02:00Z' },
+]
 
 createServer(async (req, res) => {
   const url = new URL(req.url ?? '/', `http://127.0.0.1:${port}`)
@@ -552,6 +555,18 @@ createServer(async (req, res) => {
   }
   if (query.includes('mutation RemoveMember')) {
     return json(res, 200, { data: { removeMember: true } })
+  }
+  if (query.includes('query IngestKeys')) {
+    return json(res, 200, { data: { ingestKeys: scenario === 'empty' ? [] : ingestKeys } })
+  }
+  if (query.includes('mutation CreateIngestKey')) {
+    return json(res, 200, { data: { createIngestKey: { keyId: 'key-new', rawKey: 'a'.repeat(48) } } })
+  }
+  if (query.includes('mutation RotateIngestKey')) {
+    return json(res, 200, { data: { rotateIngestKey: { keyId: parsed.variables?.keyId, rawKey: 'b'.repeat(48) } } })
+  }
+  if (query.includes('mutation RevokeIngestKey')) {
+    return json(res, 200, { data: { revokeIngestKey: true } })
   }
   return json(res, 200, { data: {} })
 }).listen(port, '127.0.0.1')

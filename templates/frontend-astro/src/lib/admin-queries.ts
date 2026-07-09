@@ -10,6 +10,18 @@ export type AdminInvite = {
   token: string
 }
 
+export type IngestKeyRow = {
+  id: string
+  label: string | null
+  active: boolean
+  created_at: string
+}
+
+export type IngestKeySecret = {
+  keyId: string
+  rawKey: string
+}
+
 export const WORKSPACE_MEMBERS_QUERY = /* GraphQL */ `
   query WorkspaceMembers($workspaceId: ID!) {
     workspaceMembers(workspaceId: $workspaceId) { workspace_id user_id role created_at }
@@ -37,5 +49,29 @@ export const REMOVE_MEMBER_MUTATION = /* GraphQL */ `
 export const ACCEPT_INVITE_MUTATION = /* GraphQL */ `
   mutation AcceptInvite($token: String!) {
     acceptInvite(token: $token) { workspace_id user_id role created_at }
+  }
+`
+
+export const INGEST_KEYS_QUERY = /* GraphQL */ `
+  query IngestKeys($workspaceId: ID!) {
+    ingestKeys(workspaceId: $workspaceId) { id label active created_at }
+  }
+`
+
+export const CREATE_INGEST_KEY_MUTATION = /* GraphQL */ `
+  mutation CreateIngestKey($workspaceId: ID!, $label: String!) {
+    createIngestKey(workspaceId: $workspaceId, label: $label) { keyId rawKey }
+  }
+`
+
+export const ROTATE_INGEST_KEY_MUTATION = /* GraphQL */ `
+  mutation RotateIngestKey($workspaceId: ID!, $keyId: ID!) {
+    rotateIngestKey(workspaceId: $workspaceId, keyId: $keyId) { keyId rawKey }
+  }
+`
+
+export const REVOKE_INGEST_KEY_MUTATION = /* GraphQL */ `
+  mutation RevokeIngestKey($workspaceId: ID!, $keyId: ID!) {
+    revokeIngestKey(workspaceId: $workspaceId, keyId: $keyId)
   }
 `

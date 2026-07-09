@@ -61,7 +61,39 @@ test('accept invite requires auth and handles success and invalid tokens', async
   await expect(page.getByTestId('invite-error')).toContainText('P0001')
 })
 
-for (const path of ['/admin/members', '/auth/accept-invite?token=invite-token-1234567890']) {
+test('admin ingest API keys show raw keys only for create and rotate responses', async ({ page, context }) => {
+  await context.clearCookies()
+  await page.goto('/admin/api-keys')
+  await expect(page.getByTestId('auth-failure')).toBeVisible()
+
+  await seedSession(context)
+  await scenario('empty')
+  await page.goto('/admin/api-keys')
+  await expect(page.getByTestId('empty')).toBeVisible()
+  await expect(page.getByTestId('ingest-key-create-form')).toBeVisible()
+
+  await scenario('ok')
+  await page.goto('/admin/api-keys')
+  await expect(page.getByTestId('ingest-keys')).toContainText('ci')
+  await expect(page.locator('body')).not.toContainText('key_hash')
+  await expect(page.locator('body')).not.toContainText('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')
+
+  await page.getByTestId('ingest-key-create-form').getByLabel('Label').fill('ci browser')
+  await page.getByRole('button', { name: 'Create ingest key' }).click()
+  await expect(page.getByTestId('ingest-key-secret')).toContainText('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')
+
+  await page.reload()
+  await expect(page.getByTestId('ingest-key-secret')).toHaveCount(0)
+  await expect(page.locator('body')).not.toContainText('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')
+
+  await page.getByRole('button', { name: 'Rotate key' }).click()
+  await expect(page.getByTestId('ingest-key-secret')).toContainText('bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb')
+
+  await page.getByRole('button', { name: 'Revoke key' }).click()
+  await expect(page.getByTestId('admin-notice')).toContainText('Ingest key revoked')
+})
+
+for (const path of ['/admin/members', '/admin/api-keys', '/auth/accept-invite?token=invite-token-1234567890']) {
   test(`admin a11y smoke: ${path}`, async ({ page }) => {
     await page.goto(path)
     const results = await new AxeBuilder({ page }).analyze()

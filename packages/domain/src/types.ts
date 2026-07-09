@@ -270,6 +270,18 @@ export interface AdminInviteResult {
   token: string
 }
 
+export interface IngestKeyRow {
+  id: string
+  label: string | null
+  active: boolean
+  created_at: string
+}
+
+export interface IngestKeySecret {
+  keyId: string
+  rawKey: string
+}
+
 export interface AdminService {
   createWorkspace(i: { name: string }): Promise<WorkspaceRow>
   inviteMember(i: { workspaceId: string; email: string; role: 'admin' | 'member' }): Promise<AdminInviteResult>
@@ -277,6 +289,10 @@ export interface AdminService {
   listMembers(i: { workspaceId: string }): Promise<WorkspaceMemberRow[]>
   setMemberRole(i: { workspaceId: string; userId: string; role: 'owner' | 'admin' | 'member' }): Promise<WorkspaceMemberRow>
   removeMember(i: { workspaceId: string; userId: string }): Promise<void>
+  createIngestKey(i: { workspaceId: string; label: string }): Promise<IngestKeySecret>
+  rotateIngestKey(i: { workspaceId: string; keyId: string }): Promise<IngestKeySecret>
+  revokeIngestKey(i: { workspaceId: string; keyId: string }): Promise<void>
+  listIngestKeys(i: { workspaceId: string }): Promise<IngestKeyRow[]>
 }
 
 export interface Domain {

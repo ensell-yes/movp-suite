@@ -526,5 +526,48 @@ export function buildMcpServer(schema: MovpSchema, ctx: McpCtx): McpServer {
     },
   )
 
+  server.registerTool(
+    'admin.ingest_key.list',
+    {
+      title: 'List ingest API keys',
+      description: 'List ingest API key metadata in a workspace without exposing hashes or raw keys',
+      inputSchema: { workspaceId: z.string() },
+    },
+    async ({ workspaceId }) => text(await domain.admin.listIngestKeys({ workspaceId })),
+  )
+
+  server.registerTool(
+    'admin.ingest_key.create',
+    {
+      title: 'Create ingest API key',
+      description: 'Create an ingest API key and return the raw key once',
+      inputSchema: { workspaceId: z.string(), label: z.string() },
+    },
+    async ({ workspaceId, label }) => text(await domain.admin.createIngestKey({ workspaceId, label })),
+  )
+
+  server.registerTool(
+    'admin.ingest_key.rotate',
+    {
+      title: 'Rotate ingest API key',
+      description: 'Rotate an ingest API key and return the raw key once',
+      inputSchema: { workspaceId: z.string(), keyId: z.string() },
+    },
+    async ({ workspaceId, keyId }) => text(await domain.admin.rotateIngestKey({ workspaceId, keyId })),
+  )
+
+  server.registerTool(
+    'admin.ingest_key.revoke',
+    {
+      title: 'Revoke ingest API key',
+      description: 'Deactivate an ingest API key without deleting it',
+      inputSchema: { workspaceId: z.string(), keyId: z.string() },
+    },
+    async ({ workspaceId, keyId }) => {
+      await domain.admin.revokeIngestKey({ workspaceId, keyId })
+      return text({ revoked: true })
+    },
+  )
+
   return server
 }

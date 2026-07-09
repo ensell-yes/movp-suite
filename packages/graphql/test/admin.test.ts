@@ -18,6 +18,10 @@ const mocks = vi.hoisted(() => {
     listMembers: vi.fn(async () => [owner]),
     setMemberRole: vi.fn(async () => ({ ...owner, user_id: 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', role: 'admin' })),
     removeMember: vi.fn(async () => undefined),
+    listIngestKeys: vi.fn(async () => [{ id: 'key-1', label: 'ci', active: true, created_at: '2026-07-08T00:00:00Z' }]),
+    createIngestKey: vi.fn(async () => ({ keyId: 'key-1', rawKey: 'a'.repeat(48) })),
+    rotateIngestKey: vi.fn(async () => ({ keyId: 'key-1', rawKey: 'b'.repeat(48) })),
+    revokeIngestKey: vi.fn(async () => undefined),
   }
 })
 
@@ -30,6 +34,10 @@ vi.mock('@movp/domain', () => ({
       listMembers: mocks.listMembers,
       setMemberRole: mocks.setMemberRole,
       removeMember: mocks.removeMember,
+      listIngestKeys: mocks.listIngestKeys,
+      createIngestKey: mocks.createIngestKey,
+      rotateIngestKey: mocks.rotateIngestKey,
+      revokeIngestKey: mocks.revokeIngestKey,
     },
   }),
 }))
@@ -72,5 +80,28 @@ describe('admin GraphQL surface', () => {
       userId: 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
     })
     expect((removed.data as { removeMember: boolean }).removeMember).toBe(true)
+  })
+
+  it('routes ingest key administration and exposes raw keys only on create/rotate', async () => {
+    const keys = await run('query { ingestKeys(workspaceId: "w-admin") { id label active created_at } }')
+    expect(keys.errors).toBeUndefined()
+    expect(mocks.listIngestKeys).toHaveBeenCalledWith({ workspaceId: 'w-admin' })
+    expect(JSON.stringify(keys.data)).not.toContain('rawKey')
+    expect(JSON.stringify(keys.data)).not.toContain('key_hash')
+
+    const created = await run('mutation { createIngestKey(workspaceId: "w-admin", label: "ci") { keyId rawKey } }')
+    expect(created.errors).toBeUndefined()
+    expect(mocks.createIngestKey).toHaveBeenCalledWith({ workspaceId: 'w-admin', label: 'ci' })
+    expect((created.data as { createIngestKey: { rawKey: string } }).createIngestKey.rawKey).toHaveLength(48)
+
+    const rotated = await run('mutation { rotateIngestKey(workspaceId: "w-admin", keyId: "key-1") { keyId rawKey } }')
+    expect(rotated.errors).toBeUndefined()
+    expect(mocks.rotateIngestKey).toHaveBeenCalledWith({ workspaceId: 'w-admin', keyId: 'key-1' })
+    expect((rotated.data as { rotateIngestKey: { rawKey: string } }).rotateIngestKey.rawKey).toHaveLength(48)
+
+    const revoked = await run('mutation { revokeIngestKey(workspaceId: "w-admin", keyId: "key-1") }')
+    expect(revoked.errors).toBeUndefined()
+    expect(mocks.revokeIngestKey).toHaveBeenCalledWith({ workspaceId: 'w-admin', keyId: 'key-1' })
+    expect((revoked.data as { revokeIngestKey: boolean }).revokeIngestKey).toBe(true)
   })
 })

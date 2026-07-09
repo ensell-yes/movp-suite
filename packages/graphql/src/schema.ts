@@ -13,6 +13,7 @@ import {
   type SearchHit,
   type TaskBoardColumn,
   type TaskRow,
+  type IngestKeyRow,
   type WorkspaceMemberRow,
   type WorkspaceRow,
 } from '@movp/domain'
@@ -123,6 +124,20 @@ export function buildSchema(schema: MovpSchema): GraphQLSchema {
     fields: (t) => ({
       inviteId: t.exposeID('inviteId'),
       token: t.exposeString('token'),
+    }),
+  })
+  const ingestKeyRef = builder.objectRef<IngestKeyRow>('IngestKey').implement({
+    fields: (t) => ({
+      id: t.exposeID('id'),
+      label: t.string({ nullable: true, resolve: (r) => r.label }),
+      active: t.exposeBoolean('active'),
+      created_at: t.exposeString('created_at'),
+    }),
+  })
+  const ingestKeySecretRef = builder.objectRef<{ keyId: string; rawKey: string }>('IngestKeySecret').implement({
+    fields: (t) => ({
+      keyId: t.exposeID('keyId'),
+      rawKey: t.exposeString('rawKey'),
     }),
   })
   const resolvedShareLink = builder
@@ -408,6 +423,16 @@ export function buildSchema(schema: MovpSchema): GraphQLSchema {
     }),
   )
 
+  builder.queryField('ingestKeys', (t: any) =>
+    t.field({
+      type: [ingestKeyRef],
+      complexity: 10,
+      args: { workspaceId: t.arg.id({ required: true }) },
+      resolve: (_r: unknown, args: any, ctx: GraphQLContext) =>
+        domainFrom(ctx).admin.listIngestKeys({ workspaceId: String(args.workspaceId) }),
+    }),
+  )
+
   builder.mutationField('createWorkspace', (t: any) =>
     t.field({
       type: workspaceRef,
@@ -476,6 +501,56 @@ export function buildSchema(schema: MovpSchema): GraphQLSchema {
         await domainFrom(ctx).admin.removeMember({
           workspaceId: String(args.workspaceId),
           userId: String(args.userId),
+        })
+        return true
+      },
+    }),
+  )
+
+  builder.mutationField('createIngestKey', (t: any) =>
+    t.field({
+      type: ingestKeySecretRef,
+      complexity: 10,
+      args: {
+        workspaceId: t.arg.id({ required: true }),
+        label: t.arg.string({ required: true }),
+      },
+      resolve: (_r: unknown, args: any, ctx: GraphQLContext) =>
+        domainFrom(ctx).admin.createIngestKey({
+          workspaceId: String(args.workspaceId),
+          label: String(args.label),
+        }),
+    }),
+  )
+
+  builder.mutationField('rotateIngestKey', (t: any) =>
+    t.field({
+      type: ingestKeySecretRef,
+      complexity: 10,
+      args: {
+        workspaceId: t.arg.id({ required: true }),
+        keyId: t.arg.id({ required: true }),
+      },
+      resolve: (_r: unknown, args: any, ctx: GraphQLContext) =>
+        domainFrom(ctx).admin.rotateIngestKey({
+          workspaceId: String(args.workspaceId),
+          keyId: String(args.keyId),
+        }),
+    }),
+  )
+
+  builder.mutationField('revokeIngestKey', (t: any) =>
+    t.field({
+      type: 'Boolean',
+      complexity: 10,
+      args: {
+        workspaceId: t.arg.id({ required: true }),
+        keyId: t.arg.id({ required: true }),
+      },
+      resolve: async (_r: unknown, args: any, ctx: GraphQLContext) => {
+        await domainFrom(ctx).admin.revokeIngestKey({
+          workspaceId: String(args.workspaceId),
+          keyId: String(args.keyId),
         })
         return true
       },

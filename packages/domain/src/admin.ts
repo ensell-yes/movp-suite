@@ -1,4 +1,12 @@
-import type { AdminInviteResult, AdminService, DomainCtx, WorkspaceMemberRow, WorkspaceRow } from './types.ts'
+import type {
+  AdminInviteResult,
+  AdminService,
+  DomainCtx,
+  IngestKeyRow,
+  IngestKeySecret,
+  WorkspaceMemberRow,
+  WorkspaceRow,
+} from './types.ts'
 
 function fail(op: string, code: string): never {
   throw new Error(`domain.admin.${op} failed [${code}]`)
@@ -14,6 +22,14 @@ function mapInvite(value: unknown): AdminInviteResult {
   return {
     inviteId: String(row.invite_id ?? row.inviteId ?? ''),
     token: String(row.token ?? ''),
+  }
+}
+
+function mapIngestSecret(op: string, value: unknown): IngestKeySecret {
+  const row = requireObject<Record<string, unknown>>(op, value)
+  return {
+    keyId: String(row.key_id ?? row.keyId ?? ''),
+    rawKey: String(row.raw_key ?? row.rawKey ?? ''),
   }
 }
 
@@ -60,6 +76,29 @@ export function makeAdminService(ctx: DomainCtx): AdminService {
     async removeMember({ workspaceId, userId }) {
       const { error } = await ctx.db.rpc('remove_member', { ws: workspaceId, target_user: userId })
       if (error) fail('removeMember', error.code ?? 'unknown')
+    },
+
+    async createIngestKey({ workspaceId, label }) {
+      const { data, error } = await ctx.db.rpc('create_ingest_key', { ws: workspaceId, label })
+      if (error) fail('createIngestKey', error.code ?? 'unknown')
+      return mapIngestSecret('createIngestKey', data)
+    },
+
+    async rotateIngestKey({ workspaceId, keyId }) {
+      const { data, error } = await ctx.db.rpc('rotate_ingest_key', { key_id: keyId, ws: workspaceId })
+      if (error) fail('rotateIngestKey', error.code ?? 'unknown')
+      return mapIngestSecret('rotateIngestKey', data)
+    },
+
+    async revokeIngestKey({ workspaceId, keyId }) {
+      const { error } = await ctx.db.rpc('revoke_ingest_key', { key_id: keyId, ws: workspaceId })
+      if (error) fail('revokeIngestKey', error.code ?? 'unknown')
+    },
+
+    async listIngestKeys({ workspaceId }) {
+      const { data, error } = await ctx.db.rpc('list_ingest_keys', { ws: workspaceId })
+      if (error) fail('listIngestKeys', error.code ?? 'unknown')
+      return Array.isArray(data) ? data as IngestKeyRow[] : []
     },
   }
 }
