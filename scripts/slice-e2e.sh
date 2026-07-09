@@ -753,6 +753,57 @@ WF_LEAK="$(psql "$DB_URL" -tAc "select count(*) from public.workflow_run where t
 grep -q "$WF_OLD_SECRET" /tmp/movp-functions.log && { echo "function log leaked old webhook secret"; exit 1; } || true
 grep -q "$WF_NEW_SECRET" /tmp/movp-functions.log && { echo "function log leaked new webhook secret"; exit 1; } || true
 
+echo "== [admin] (a) create workspace, invite, and accept membership =="
+ADMIN_WS_CREATE="$(post_graphql '{"query":"mutation{createWorkspace(name:\"Admin Slice\"){id name}}"}')"
+ADMIN_WS="$(echo "$ADMIN_WS_CREATE" | json_get data.createWorkspace.id)"
+[ -n "$ADMIN_WS" ] || { echo "createWorkspace failed: $ADMIN_WS_CREATE"; exit 1; }
+echo "$ADMIN_WS_CREATE" | grep -q 'Admin Slice' || { echo "createWorkspace did not return the workspace name: $ADMIN_WS_CREATE"; exit 1; }
+curl -sS "$API_URL/auth/v1/admin/users" \
+  -H "Authorization: Bearer $SERVICE_ROLE_KEY" -H "apikey: $SERVICE_ROLE_KEY" \
+  -H "content-type: application/json" \
+  -d '{"email":"e2e-admin-invitee@example.com","password":"Passw0rd!1","email_confirm":true}' >/dev/null
+ADMIN_INVITEE_TOKEN="$(curl -sS "$API_URL/auth/v1/token?grant_type=password" \
+  -H "apikey: $ANON_KEY" -H "content-type: application/json" \
+  -d '{"email":"e2e-admin-invitee@example.com","password":"Passw0rd!1"}' | json_get access_token)"
+[ -n "$ADMIN_INVITEE_TOKEN" ] || { echo "failed to mint admin invitee token"; exit 1; }
+ADMIN_INVITE="$(post_graphql "{\"query\":\"mutation{inviteMember(workspaceId:\\\"$ADMIN_WS\\\", email:\\\"e2e-admin-invitee@example.com\\\", role:\\\"member\\\"){inviteId token}}\"}")"
+ADMIN_INVITE_TOKEN="$(echo "$ADMIN_INVITE" | json_get data.inviteMember.token)"
+[ -n "$ADMIN_INVITE_TOKEN" ] || { echo "inviteMember failed: $ADMIN_INVITE"; exit 1; }
+ADMIN_ACCEPT="$(post_graphql_as "$ADMIN_INVITEE_TOKEN" "{\"query\":\"mutation{acceptInvite(token:\\\"$ADMIN_INVITE_TOKEN\\\"){workspace_id role}}\"}")"
+echo "$ADMIN_ACCEPT" | grep -q "$ADMIN_WS" || { echo "acceptInvite did not join the new workspace: $ADMIN_ACCEPT"; exit 1; }
+echo "$ADMIN_ACCEPT" | grep -q 'member' || { echo "acceptInvite did not return member role: $ADMIN_ACCEPT"; exit 1; }
+
+echo "== [admin] (b) create ingest key returns raw key once; settings reports member count =="
+ADMIN_KEY="$(post_graphql "{\"query\":\"mutation{createIngestKey(workspaceId:\\\"$ADMIN_WS\\\", label:\\\"slice\\\"){keyId rawKey}}\"}")"
+ADMIN_RAW_KEY="$(echo "$ADMIN_KEY" | json_get data.createIngestKey.rawKey)"
+node -e 'const k=process.argv[1]; if (!/^[0-9a-f]{48}$/.test(k)) { console.error(`raw ingest key was not 48 hex chars: ${k}`); process.exit(1) }' "$ADMIN_RAW_KEY"
+ADMIN_KEYS="$(post_graphql "{\"query\":\"query{ingestKeys(workspaceId:\\\"$ADMIN_WS\\\"){id label active created_at}}\"}")"
+echo "$ADMIN_KEYS" | grep -q 'slice' || { echo "ingestKeys did not list the created key: $ADMIN_KEYS"; exit 1; }
+echo "$ADMIN_KEYS" | grep -q "$ADMIN_RAW_KEY" && { echo "ingestKeys leaked the raw key: $ADMIN_KEYS"; exit 1; }
+ADMIN_SETTINGS="$(post_graphql "{\"query\":\"query{workspaceSettings(workspaceId:\\\"$ADMIN_WS\\\"){name member_count}}\"}")"
+echo "$ADMIN_SETTINGS" | grep -q 'Admin Slice' || { echo "workspaceSettings missing workspace name: $ADMIN_SETTINGS"; exit 1; }
+echo "$ADMIN_SETTINGS" | grep -q '"member_count":2' || { echo "workspaceSettings missing member_count=2: $ADMIN_SETTINGS"; exit 1; }
+
+echo "== [admin] (c) dead-job counts, keys-only list, and scoped replay =="
+psql "$DB_URL" -v ON_ERROR_STOP=1 \
+  -c "select public.enqueue_job('notify','admin-slice-dead', jsonb_build_object('secret_url','https://evil.example/admin','event','admin.slice'), '$ADMIN_WS');" \
+  -c "update movp_internal.movp_jobs set status='dead', attempts=8, last_error_code='admin_slice_dead' where kind='notify' and idempotency_key='admin-slice-dead';" >/dev/null
+ADMIN_JOBS="$(post_graphql "{\"query\":\"query{jobCounts(workspaceId:\\\"$ADMIN_WS\\\") deadJobs(workspaceId:\\\"$ADMIN_WS\\\", first:20){id kind last_error_code payload_keys}}\"}")"
+echo "$ADMIN_JOBS" | grep -q 'admin_slice_dead' || { echo "deadJobs did not include the seeded dead job: $ADMIN_JOBS"; exit 1; }
+echo "$ADMIN_JOBS" | grep -q 'secret_url' || { echo "deadJobs did not expose payload keys: $ADMIN_JOBS"; exit 1; }
+echo "$ADMIN_JOBS" | grep -q 'evil.example' && { echo "deadJobs leaked payload values: $ADMIN_JOBS"; exit 1; }
+ADMIN_REPLAY="$(post_graphql "{\"query\":\"mutation{replayDeadJobs(workspaceId:\\\"$ADMIN_WS\\\", kind:\\\"notify\\\"){replayed}}\"}")"
+echo "$ADMIN_REPLAY" | grep -q '"replayed":1' || { echo "replayDeadJobs did not replay exactly one dead job: $ADMIN_REPLAY"; exit 1; }
+
+echo "== [admin] (d) generic collection create + update strip unsafe fields =="
+ADMIN_NOTE="$(post_graphql "{\"query\":\"mutation{createNote(input:{workspace_id:\\\"$ADMIN_WS\\\", title:\\\"Admin slice note\\\", body:\\\"admin slice body\\\"}){id title}}\"}")"
+ADMIN_NOTE_ID="$(echo "$ADMIN_NOTE" | json_get data.createNote.id)"
+[ -n "$ADMIN_NOTE_ID" ] || { echo "createNote for admin generic browser failed: $ADMIN_NOTE"; exit 1; }
+ADMIN_UPDATE="$(post_graphql "{\"query\":\"mutation{updateNote(id:\\\"$ADMIN_NOTE_ID\\\", input:{id:\\\"00000000-0000-0000-0000-000000000000\\\", workspace_id:\\\"$WS\\\", title:\\\"Admin slice edited\\\"}){id title workspace_id}}\"}")"
+echo "$ADMIN_UPDATE" | grep -q 'Admin slice edited' || { echo "generic updateNote failed: $ADMIN_UPDATE"; exit 1; }
+ADMIN_NOTE_WS="$(echo "$ADMIN_UPDATE" | json_get data.updateNote.workspace_id)"
+[ "$ADMIN_NOTE_WS" = "$ADMIN_WS" ] || { echo "generic updateNote moved workspace_id ($ADMIN_NOTE_WS != $ADMIN_WS): $ADMIN_UPDATE"; exit 1; }
+
 echo "== [8] internal not exposed via PostgREST API =="
 REST="$(curl -sS -o /dev/null -w '%{http_code}' "$API_URL/rest/v1/movp_jobs" -H "apikey: $ANON_KEY")"
 [ "$REST" = "404" ] || [ "$REST" = "401" ] || { echo "movp_jobs reachable via REST ($REST)"; exit 1; }
