@@ -66,6 +66,7 @@ import type {
   WorkflowRunRow,
   WorkflowRunUpdate,
 } from './generated/types.ts'
+import { makeAdminService } from './admin.ts'
 import { makeCampaignService } from './campaign.ts'
 import { makeCollabService } from './collab.ts'
 import { makeCollectionService } from './collection.ts'
@@ -106,5 +107,6 @@ export function createDomain(ctx: DomainCtx, opts: { embedder?: EmbeddingProvide
     collab: makeCollabService(ctx),
     campaign: Object.assign(makeCollectionService<CampaignRow, CampaignCreate, CampaignUpdate>(ctx, { table: 'campaign' }), makeCampaignService(ctx)),
     workflows: makeWorkflowService(ctx),
+    admin: makeAdminService(ctx),
   }
 }

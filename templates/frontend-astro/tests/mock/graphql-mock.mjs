@@ -264,6 +264,20 @@ const workflowEvent = {
   payload_keys: ['body', 'email', 'task_id'],
   trace_id: 'trace-workflow-1',
 }
+const workspaceMembers = [
+  {
+    workspace_id: '00000000-0000-0000-0000-000000000001',
+    user_id: 'owner-1',
+    role: 'owner',
+    created_at: '2026-07-08T00:00:00Z',
+  },
+  {
+    workspace_id: '00000000-0000-0000-0000-000000000001',
+    user_id: 'member-1',
+    role: 'member',
+    created_at: '2026-07-08T00:01:00Z',
+  },
+]
 
 createServer(async (req, res) => {
   const url = new URL(req.url ?? '/', `http://127.0.0.1:${port}`)
@@ -520,6 +534,24 @@ createServer(async (req, res) => {
   }
   if (query.includes('mutation ReplayDeadWorkflowJobs')) {
     return json(res, 200, { data: { replayDeadWorkflowJobs: { replayed: 2 } } })
+  }
+  if (query.includes('query WorkspaceMembers')) {
+    return json(res, 200, { data: { workspaceMembers: scenario === 'empty' ? [] : workspaceMembers } })
+  }
+  if (query.includes('mutation InviteMember')) {
+    return json(res, 200, { data: { inviteMember: { inviteId: 'invite-1', token: 'invite-token-1234567890' } } })
+  }
+  if (query.includes('mutation AcceptInvite')) {
+    if (parsed.variables?.token === 'bad-token') {
+      return json(res, 200, { errors: [{ message: 'domain.admin.acceptInvite failed [P0001]' }] })
+    }
+    return json(res, 200, { data: { acceptInvite: { ...workspaceMembers[1], role: 'member' } } })
+  }
+  if (query.includes('mutation SetMemberRole')) {
+    return json(res, 200, { data: { setMemberRole: { ...workspaceMembers[1], role: parsed.variables?.role } } })
+  }
+  if (query.includes('mutation RemoveMember')) {
+    return json(res, 200, { data: { removeMember: true } })
   }
   return json(res, 200, { data: {} })
 }).listen(port, '127.0.0.1')

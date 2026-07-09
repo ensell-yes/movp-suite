@@ -1,0 +1,57 @@
+---
+import Base from '../../layouts/Base.astro'
+import AuthFailure from '../../components/states/AuthFailure.astro'
+import ErrorRetry from '../../components/states/ErrorRetry.astro'
+import { readServerEnv } from '../../lib/env.ts'
+import { gqlRequest } from '../../lib/graphql.ts'
+import { getSessionToken } from '../../lib/session.ts'
+import { ACCEPT_INVITE_MUTATION, type WorkspaceMemberRow } from '../../lib/admin-queries.ts'
+
+const sessionToken = getSessionToken(Astro.cookies)
+const inviteToken =
+  Astro.request.method === 'POST'
+    ? String((await Astro.request.clone().formData()).get('token') ?? '')
+    : Astro.url.searchParams.get('token') ?? ''
+
+let state: 'auth' | 'missing' | 'ready' | 'accepted' | 'error' = inviteToken ? 'ready' : 'missing'
+let membership: WorkspaceMemberRow | null = null
+let formError = ''
+
+if (!sessionToken && state !== 'missing') {
+  state = 'auth'
+} else if (sessionToken && inviteToken && Astro.request.method === 'POST') {
+  const { graphqlEndpoint } = readServerEnv()
+  const result = await gqlRequest<{ acceptInvite: WorkspaceMemberRow }>(
+    { endpoint: graphqlEndpoint, token: sessionToken },
+    ACCEPT_INVITE_MUTATION,
+    { token: inviteToken },
+  )
+  if (!result.ok && result.code === 'auth_error') state = 'auth'
+  else if (!result.ok) {
+    state = 'error'
+    formError = result.message ?? 'Could not accept invite.'
+  } else {
+    membership = result.data.acceptInvite
+    state = 'accepted'
+  }
+}
+---
+<Base title="Accept Invite">
+  <h1 tabindex="-1" id="accept-invite-heading">Accept Invite</h1>
+  {state === 'auth' && <AuthFailure resource="invite" />}
+  {state === 'missing' && <ErrorRetry message="Invite token is missing." retryHref="/login" />}
+  {state === 'error' && <p role="alert" data-testid="invite-error">{formError}</p>}
+  {state === 'accepted' && membership && (
+    <section data-testid="invite-accepted" role="status">
+      <h2>Invite accepted</h2>
+      <p>You joined the workspace as {membership.role}.</p>
+      <p><a href="/">Go to your workspace</a></p>
+    </section>
+  )}
+  {state === 'ready' && (
+    <form method="post" data-testid="accept-invite-form">
+      <input type="hidden" name="token" value={inviteToken} />
+      <button type="submit">Accept invite</button>
+    </form>
+  )}
+</Base>

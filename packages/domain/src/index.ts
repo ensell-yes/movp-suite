@@ -1,4 +1,5 @@
 export { makeCollectionService } from './collection.ts'
+export { makeAdminService } from './admin.ts'
 export { makeCampaignService } from './campaign.ts'
 export { makeCollabService, resolveShareLink } from './collab.ts'
 export { makeContentService } from './content.ts'
@@ -9,6 +10,8 @@ export { makeTaskService } from './task.ts'
 export { makeWorkflowService } from './workflows.ts'
 export type {
   CampaignService,
+  AdminInviteResult,
+  AdminService,
   CollabService,
   CollectionService,
   ContentService,
@@ -24,6 +27,8 @@ export type {
   TaskBoardColumn,
   TaskService,
   WorkflowService,
+  WorkspaceMemberRow,
+  WorkspaceRow,
 } from './types.ts'
 export type {
   AssetRow,

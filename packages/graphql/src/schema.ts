@@ -13,6 +13,8 @@ import {
   type SearchHit,
   type TaskBoardColumn,
   type TaskRow,
+  type WorkspaceMemberRow,
+  type WorkspaceRow,
 } from '@movp/domain'
 import { COMPLEXITY_BUDGET, DEPTH_LIMIT, clampPageSize } from './limits.ts'
 import { loadEdgeTargets } from './relations.ts'
@@ -101,6 +103,27 @@ export function buildSchema(schema: MovpSchema): GraphQLSchema {
   })
   const workflowReplayRef = builder.objectRef<{ replayed: number }>('WorkflowReplayResult').implement({
     fields: (t) => ({ replayed: t.exposeInt('replayed') }),
+  })
+  const workspaceRef = builder.objectRef<WorkspaceRow>('Workspace').implement({
+    fields: (t) => ({
+      id: t.exposeID('id'),
+      name: t.exposeString('name'),
+      created_at: t.exposeString('created_at'),
+    }),
+  })
+  const workspaceMemberRef = builder.objectRef<WorkspaceMemberRow>('WorkspaceMember').implement({
+    fields: (t) => ({
+      workspace_id: t.exposeID('workspace_id'),
+      user_id: t.exposeID('user_id'),
+      role: t.exposeString('role'),
+      created_at: t.exposeString('created_at'),
+    }),
+  })
+  const adminInviteRef = builder.objectRef<{ inviteId: string; token: string }>('AdminInvite').implement({
+    fields: (t) => ({
+      inviteId: t.exposeID('inviteId'),
+      token: t.exposeString('token'),
+    }),
   })
   const resolvedShareLink = builder
     .objectRef<{ entity_type: string; entity_id: string; workspace_id: string }>('ResolvedShareLink')
@@ -374,6 +397,90 @@ export function buildSchema(schema: MovpSchema): GraphQLSchema {
       }),
     )
   }
+
+  builder.queryField('workspaceMembers', (t: any) =>
+    t.field({
+      type: [workspaceMemberRef],
+      complexity: 10,
+      args: { workspaceId: t.arg.id({ required: true }) },
+      resolve: (_r: unknown, args: any, ctx: GraphQLContext) =>
+        domainFrom(ctx).admin.listMembers({ workspaceId: String(args.workspaceId) }),
+    }),
+  )
+
+  builder.mutationField('createWorkspace', (t: any) =>
+    t.field({
+      type: workspaceRef,
+      complexity: 10,
+      args: { name: t.arg.string({ required: true }) },
+      resolve: (_r: unknown, args: any, ctx: GraphQLContext) =>
+        domainFrom(ctx).admin.createWorkspace({ name: String(args.name) }),
+    }),
+  )
+
+  builder.mutationField('inviteMember', (t: any) =>
+    t.field({
+      type: adminInviteRef,
+      complexity: 10,
+      args: {
+        workspaceId: t.arg.id({ required: true }),
+        email: t.arg.string({ required: true }),
+        role: t.arg.string({ required: true }),
+      },
+      resolve: (_r: unknown, args: any, ctx: GraphQLContext) =>
+        domainFrom(ctx).admin.inviteMember({
+          workspaceId: String(args.workspaceId),
+          email: String(args.email),
+          role: String(args.role) as 'admin' | 'member',
+        }),
+    }),
+  )
+
+  builder.mutationField('acceptInvite', (t: any) =>
+    t.field({
+      type: workspaceMemberRef,
+      complexity: 10,
+      args: { token: t.arg.string({ required: true }) },
+      resolve: (_r: unknown, args: any, ctx: GraphQLContext) =>
+        domainFrom(ctx).admin.acceptInvite({ token: String(args.token) }),
+    }),
+  )
+
+  builder.mutationField('setMemberRole', (t: any) =>
+    t.field({
+      type: workspaceMemberRef,
+      complexity: 10,
+      args: {
+        workspaceId: t.arg.id({ required: true }),
+        userId: t.arg.id({ required: true }),
+        role: t.arg.string({ required: true }),
+      },
+      resolve: (_r: unknown, args: any, ctx: GraphQLContext) =>
+        domainFrom(ctx).admin.setMemberRole({
+          workspaceId: String(args.workspaceId),
+          userId: String(args.userId),
+          role: String(args.role) as 'owner' | 'admin' | 'member',
+        }),
+    }),
+  )
+
+  builder.mutationField('removeMember', (t: any) =>
+    t.field({
+      type: 'Boolean',
+      complexity: 10,
+      args: {
+        workspaceId: t.arg.id({ required: true }),
+        userId: t.arg.id({ required: true }),
+      },
+      resolve: async (_r: unknown, args: any, ctx: GraphQLContext) => {
+        await domainFrom(ctx).admin.removeMember({
+          workspaceId: String(args.workspaceId),
+          userId: String(args.userId),
+        })
+        return true
+      },
+    }),
+  )
 
   for (const c of schema.collections as CollectionDef[]) {
     if (c.internal) continue
