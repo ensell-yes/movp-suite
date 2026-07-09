@@ -79,8 +79,8 @@ if (token) {
   if (state !== 'auth') {
     const result = await gqlRequest<MembersData>({ endpoint: graphqlEndpoint, token }, WORKSPACE_MEMBERS_QUERY, { workspaceId })
     if (!result.ok && result.code === 'auth_error') state = 'auth'
-    else if (!result.ok) state = 'error'
-    else {
+    else if (!result.ok && !formError) state = 'error'
+    else if (result.ok) {
       members = result.data.workspaceMembers
       state = members.length === 0 ? 'empty' : 'ok'
     }
