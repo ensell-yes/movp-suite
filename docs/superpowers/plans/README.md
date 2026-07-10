@@ -56,8 +56,8 @@ bite-sized TDD plan (as C1 was) before building.
 > | Phase | Plan | Status |
 > |---|---|---|
 > | C1 OSS Packaging & Onboarding | `2026-07-07-movp-stage-c-01-oss-packaging-onboarding.md` | ✅ MERGED (PR #8 `7f65eff`, reviewed 9.2) |
-> | C2 Admin Console & Operations | `2026-07-08-movp-stage-c-02-admin-console.md` | 🟢 EXPANDED — ready for Codex (precondition: C1 ✅) |
-> | C3 Agent Connectivity (PATs/MCP/CLI) | breakdown only | ⬜ expand before build (unblocked by C1) |
+> | C2 Admin Console & Operations | `2026-07-08-movp-stage-c-02-admin-console.md` | ✅ MERGED (PR #9 `004326b` + follow-up `7b51e28`, reviewed 9.26) |
+> | C3 Agent Connectivity (PATs/MCP/CLI) | `2026-07-09-movp-stage-c-03{a,b,c,d}-*.md` (+ design spec) | 🟢 EXPANDED — ready for Codex (precondition: C1 ✅) |
 > | C4 Reporting Views & Dashboards | breakdown only | ⬜ expand before build (needs C2) |
 > | C5 Integration Fabric | breakdown only | ⬜ expand before build (needs C3) |
 > | C6 Templates & Scaffolding | breakdown only | ⬜ expand before build (needs C1) |
@@ -70,6 +70,24 @@ one commit per task, TDD (failing test first), all repo gates + the `[admin]` sl
 review ≥9.2 per part. Key correction vs the breakdown prose: `workspace_membership.role`
 (`owner`/`admin`/`member`) already exists — C2.1 adds an `is_workspace_admin()` helper +
 enforcement, not the column.
+
+**Phase C3 — Agent Connectivity is EXPANDED and EXECUTABLE** (bite-sized TDD, four parts;
+precondition: C1 merged ✅). Design spec:
+`docs/superpowers/specs/2026-07-09-movp-stage-c-03-agent-connectivity-design.md` (reviewed 9.26).
+Execute **in order** C3a→C3b→C3c→C3d: **C3a** PAT foundation — spike-first RLS proof, the
+`movp_internal.personal_access_token` table + lifecycle RPCs, the `packages/auth` GoTrue
+`generateLink`→`verifyOtp({type:'email'})` exchange, the `resolvePrincipal` `movp_pat_` branch,
+the `auth-exchange` edge fn, GraphQL PAT surfaces, and the self-service web `/settings/tokens`
+page → **C3b** CLI `init`/`login`/`logout` + PAT credential mode + keychain/`0600` secure store
+(`MOVP_SECURE_STORE=file` override) + `--mode hybrid` via the GraphQL edge → **C3c** MCP HTTP
+client matrix (Claude Code/Codex/Cursor/Gemini CLI/Copilot) + config-lint + `mcp-remote@0.1.38`
+stdio bridge + agent docs → **C3d** the `[agents]` end-to-end slice + CI. One commit per task,
+TDD (failing test first), all repo gates + the new `[agents]` slice green, review ≥9.2 per part.
+**Key design decision (vs the breakdown prose): PATs are USER-SCOPED** — a PAT resolves to an
+ordinary GoTrue user session so every RLS policy/RPC is reused unchanged; `default_workspace_id`
+is a CLI home hint, **not** an access boundary. The C3.1 gate was amended accordingly (see the
+spec's F1 resolution), and C3.1 stays a real fail-first spike that proves the exchange
+end-to-end before C3b–C3d rely on it.
 
 **Phase 2 — Collaboration is EXPANDED and EXECUTABLE** (bite-sized TDD, committed
 `31cceed`/`09a75a5`; passed adversarial review at 9.31). Execute **in order**:
