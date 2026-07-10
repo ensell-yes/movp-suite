@@ -1153,16 +1153,21 @@ export { makePatService } from './pat.ts'
   (c) Add the query + two mutations immediately after the `replayDeadJobs` mutation block
   (~line 721), before the `for (const c of schema.collections …)` loop:
 ```ts
-  builder.queryField('personalAccessTokens', (t: any) =>
+  // NO `any`. Pothos infers the field builder (`t`) and the resolver `args` from each field's
+  // `args:` config — this typechecks under `strict: true` (verified: both a no-args query field
+  // and an args-bearing mutation compile with `(t)` / bare `args`). Do NOT write `(t: any)` or
+  // `args: any`: that re-introduces `any` against the repo's NEVER-`any` rule and is unnecessary
+  // here. The pre-existing `(t: any)` on sibling admin fields is legacy debt, NOT a pattern to copy.
+  builder.queryField('personalAccessTokens', (t) =>
     t.field({
       type: [personalAccessTokenRef],
       complexity: 10,
-      resolve: (_r: unknown, _args: any, ctx: GraphQLContext) =>
+      resolve: (_r: unknown, _args, ctx: GraphQLContext) =>
         adminCall(() => domainFrom(ctx).pat.listTokens()),
     }),
   )
 
-  builder.mutationField('createPersonalAccessToken', (t: any) =>
+  builder.mutationField('createPersonalAccessToken', (t) =>
     t.field({
       type: createdPatRef,
       complexity: 10,
@@ -1171,7 +1176,7 @@ export { makePatService } from './pat.ts'
         name: t.arg.string({ required: true }),
         ttlDays: t.arg.int({ required: false }),
       },
-      resolve: (_r: unknown, args: any, ctx: GraphQLContext) =>
+      resolve: (_r: unknown, args, ctx: GraphQLContext) =>
         adminCall(() => domainFrom(ctx).pat.createToken({
           defaultWorkspaceId: String(args.defaultWorkspaceId),
           name: String(args.name),
@@ -1180,12 +1185,12 @@ export { makePatService } from './pat.ts'
     }),
   )
 
-  builder.mutationField('revokePersonalAccessToken', (t: any) =>
+  builder.mutationField('revokePersonalAccessToken', (t) =>
     t.field({
       type: 'Boolean',
       complexity: 10,
       args: { tokenId: t.arg.id({ required: true }) },
-      resolve: async (_r: unknown, args: any, ctx: GraphQLContext) => {
+      resolve: async (_r: unknown, args, ctx: GraphQLContext) => {
         await adminCall(() => domainFrom(ctx).pat.revokeToken({ tokenId: String(args.tokenId) }))
         return true
       },
@@ -1195,9 +1200,14 @@ export { makePatService } from './pat.ts'
   ⚠ Note: `personalAccessTokens` takes NO `workspaceId` arg — PATs are the caller's, not a
   workspace's (the RPC filters on `auth.uid()`).
 
-- [ ] **Step 6 — run, expect PASS**:
-Run: `pnpm --filter @movp/graphql exec vitest run schema && pnpm --filter @movp/domain exec vitest run && pnpm --filter @movp/graphql typecheck && pnpm --filter @movp/domain typecheck`
-Expected: the new PAT SDL assertions PASS; domain + graphql suites green; typecheck clean.
+- [ ] **Step 6 — run, expect PASS** (incl. a no-`any` gate scoped to the whole PAT field block):
+Run: `pnpm --filter @movp/graphql exec vitest run schema && pnpm --filter @movp/domain exec vitest run && pnpm --filter @movp/graphql typecheck && pnpm --filter @movp/domain typecheck && ! sed -n "/builder\.queryField('personalAccessTokens'/,/for (const c of schema\.collections/p" packages/graphql/src/schema.ts | grep -nE ': any\b'`
+Expected: the new PAT SDL assertions PASS; domain + graphql suites green; typecheck clean; the
+`sed` slice extracts exactly the three PAT fields (from the query field down to the collections
+loop that immediately follows them) and `grep` finds NO `: any` anywhere in that slice — catching
+BOTH `(t: any)` and `args: any`. grep exits non-zero, so the leading `!` makes the gate PASS; if
+any PAT field reintroduced `any` in either position, the grep matches and the gate fails loudly.
+(The preceding no-`any` comment sits above the slice's start anchor, so it never trips the grep.)
 
 - [ ] **Step 7 — gate + commit**:
 Run: `pnpm --filter @movp/graphql exec vitest run && pnpm --filter @movp/domain exec vitest run && bash scripts/check-boundary.sh`
@@ -1215,6 +1225,7 @@ git commit -m "feat(pat): GraphQL PAT surfaces + @movp/domain pat service"
 - Create: `templates/frontend-astro/src/lib/pat-queries.ts`,
   `templates/frontend-astro/src/pages/settings/tokens.astro`
 - Modify: `templates/frontend-astro/src/lib/graphql.ts` (friendly-copy reasons)
+- Test: `templates/frontend-astro/tests/client.test.ts` (PAT friendly-copy reason cases)
 
 **Interfaces (consumed):** the 3 GraphQL PAT surfaces (C3a.6) via `gqlRequest` with the C1
 session token. Self-service for **any member** — NOT admin-gated. Mirrors
@@ -1223,14 +1234,53 @@ one-time token display, confirm-to-revoke, per-row `aria-label`, friendly errors
 
 **TDD steps**
 
-- [ ] **Step 1 — add the failing boundary/friendly-copy expectations.** First extend
-  `friendlyAdminMessage` in `templates/frontend-astro/src/lib/graphql.ts` — add these three
-  reason mappings BEFORE the trailing `if (code === 'BAD_USER_INPUT')` line (~line 56):
+- [ ] **Step 1 — friendly copy: failing test first, then the mappings.**
+
+  (a) Add a **production-shaped** failing assertion to `templates/frontend-astro/tests/client.test.ts`
+  (reuse the existing `mockFetch` + `gqlRequest` seam the `last_owner_guard` test uses — insert
+  after that test). The PAT RPCs raise `42501 not_workspace_member` / `22023 pat_name_required` /
+  `P0001 pat_not_found`, which `adminGraphqlError` (`packages/graphql/src/schema.ts`) maps to codes
+  `FORBIDDEN` / `BAD_USER_INPUT` / `NOT_FOUND`. So the error the frontend actually receives carries
+  **both** a `code` and a `reason` — the test MUST send both (a reason-only fixture would pass even
+  with the bug, because production always attaches the code):
+```ts
+  it('maps PAT reason codes to member-facing copy (reason wins over generic code)', async () => {
+    const cases: Array<[string, string, string, string]> = [
+      ['42501', 'FORBIDDEN', 'not_workspace_member', "You're not a member of this workspace."],
+      ['22023', 'BAD_USER_INPUT', 'pat_name_required', 'Enter a name for the access token.'],
+      ['P0001', 'NOT_FOUND', 'pat_not_found', 'That access token could not be found or is already revoked.'],
+    ]
+    for (const [pgCode, code, reason, copy] of cases) {
+      const r = await gqlRequest(
+        {
+          endpoint: 'https://x',
+          token: 't',
+          fetchImpl: mockFetch(200, {
+            errors: [{ message: `domain.pat failed [${pgCode}]: ${reason}`, extensions: { code, pgCode, reason } }],
+          }),
+        },
+        NOTES_QUERY,
+        { workspaceId: 'w', first: 20 },
+      )
+      expect(r).toEqual({ ok: false, code: 'graphql_error', message: copy })
+    }
+  })
+```
+  Run: `pnpm --filter @movp/frontend-astro exec vitest run client`
+  Expected: FAIL — the `not_workspace_member` case returns "You're not an admin of this workspace."
+
+  (b) Make it pass by extending `friendlyAdminMessage` in
+  `templates/frontend-astro/src/lib/graphql.ts`. Add these three reason mappings **BEFORE the
+  `if (code === 'FORBIDDEN' || reason === 'not_workspace_admin')` line (~line 46)** — NOT before the
+  `BAD_USER_INPUT` line. ⚠ Reason-specific copy must precede the generic code branches:
+  `not_workspace_member` arrives with `code === 'FORBIDDEN'`, so a mapping placed after line 46 is
+  dead code and the user wrongly sees the admin-only message for a self-service action.
 ```ts
   if (reason === 'not_workspace_member') return "You're not a member of this workspace."
   if (reason === 'pat_name_required') return 'Enter a name for the access token.'
   if (reason === 'pat_not_found') return 'That access token could not be found or is already revoked.'
 ```
+  Run: `pnpm --filter @movp/frontend-astro exec vitest run client` → Expected: PASS.
 
 - [ ] **Step 2 — write** `templates/frontend-astro/src/lib/pat-queries.ts` (pure strings +
   types; **no `@movp/*` runtime import** — the boundary grep must stay clean):
@@ -1419,13 +1469,14 @@ if (token) {
   and never reference `service_role`.
 
 - [ ] **Step 4 — run the gate, expect PASS**:
-Run: `bash scripts/check-boundary.sh && pnpm --filter @movp/frontend-astro typecheck`
-Expected: `boundary: clean` (the grep walks `templates/` and finds no forbidden import/token in
-the two new files or the edited `graphql.ts`); frontend typecheck clean.
+Run: `pnpm --filter @movp/frontend-astro exec vitest run client && bash scripts/check-boundary.sh && pnpm --filter @movp/frontend-astro typecheck`
+Expected: the friendly-copy reason cases (Step 1) PASS; `boundary: clean` (the grep walks
+`templates/` and finds no forbidden import/token in the two new files or the edited `graphql.ts`);
+frontend typecheck clean.
 
 - [ ] **Step 5 — commit**:
 ```bash
-git add templates/frontend-astro/src/lib/pat-queries.ts templates/frontend-astro/src/pages/settings/tokens.astro templates/frontend-astro/src/lib/graphql.ts
+git add templates/frontend-astro/src/lib/pat-queries.ts templates/frontend-astro/src/pages/settings/tokens.astro templates/frontend-astro/src/lib/graphql.ts templates/frontend-astro/tests/client.test.ts
 git commit -m "feat(pat): self-service /settings/tokens page + friendly PAT copy"
 ```
 

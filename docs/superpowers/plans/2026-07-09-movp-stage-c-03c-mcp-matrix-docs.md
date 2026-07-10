@@ -655,7 +655,9 @@ export async function seedPat({ apiUrl, anonKey, serviceRoleKey }) {
   await restJson(apiUrl, '/auth/v1/admin/users', anonKey, { token: serviceRoleKey, body: { email, password, email_confirm: true } })
   const session = await restJson(apiUrl, '/auth/v1/token?grant_type=password', anonKey, { token: anonKey, body: { email, password } })
   assert(session?.access_token, 'password grant returned no access_token')
-  const ws = await restJson(apiUrl, '/rest/v1/rpc/create_workspace', anonKey, { token: session.access_token, body: { name: 'MCP Smoke WS' } })
+  // create_workspace's SQL param is `p_name` (migration 20260708000002); PostgREST binds RPC
+  // args by parameter name, so the body key MUST be `p_name`, not `name`, or resolution 404s.
+  const ws = await restJson(apiUrl, '/rest/v1/rpc/create_workspace', anonKey, { token: session.access_token, body: { p_name: 'MCP Smoke WS' } })
   assert(ws?.id, 'create_workspace returned no id')
   const pat = await restJson(apiUrl, '/rest/v1/rpc/create_personal_access_token', anonKey, { token: session.access_token, body: { default_ws: ws.id, name: 'mcp-smoke', ttl_days: 1 } })
   assert(typeof pat?.token === 'string' && pat.token.startsWith('movp_pat_'), 'create_personal_access_token did not return a movp_pat_ token')

@@ -49,7 +49,7 @@ new dependency** (node builtins `fs`/`os`/`path`/`crypto`/`child_process` + the 
 - **Baselines on this branch (verified 2026-07-09):** `@movp/cli` vitest suite = **16 tests**
   (all in `packages/cli/test/program.test.ts`); workspace `pnpm typecheck` = **12/12 packages**.
   C3b adds no package, so `pnpm typecheck` **stays 12/12**. The CLI suite grows
-  16 → 21 → 27 → 33 → 35 → 35 → 36 across the six tasks.
+  16 → 26 → 38 → 44 → 46 → 46 → 47 across the six tasks.
 - **No new dependency.** Everything is a node builtin or an existing dep. Do **not** add a
   keytar/keychain npm package — shell out to `security` (macOS) per the global keychain rule.
 - **Never print or log the PAT or the session.** `movp login` prints only non-secret metadata
@@ -84,7 +84,7 @@ new dependency** (node builtins `fs`/`os`/`path`/`crypto`/`child_process` + the 
   on a rejected token). `expires_at` is **unix seconds** (GoTrue convention); the code tolerates
   a millisecond value defensively.
 - **Per-task gate + one commit per task.** A task is done only when its gate passes.
-  Phase C3b done only when C3b.1–C3b.6 all land and the CLI suite is 36 green, typecheck 12/12.
+  Phase C3b done only when C3b.1–C3b.6 all land and the CLI suite is 47 green, typecheck 12/12.
 
 ## File Structure
 
@@ -97,8 +97,8 @@ packages/cli/src/
   graphql-client.ts    # NEW  C3b.5  searchViaGraphql (authenticated GraphQL client)
   index.ts             # MODIFY  re-export the new public helpers
 packages/cli/test/
-  config.test.ts       # NEW  C3b.1  (4 tests)
-  secure-store.test.ts # NEW  C3b.2  (6 tests)
+  config.test.ts       # NEW  C3b.1  (9 tests)
+  secure-store.test.ts # NEW  C3b.2  (12 tests)
   client.test.ts       # NEW  C3b.3  (6 tests)
   program.test.ts      # MODIFY C3b.1/.4/.5  (+init, +login, +logout, hybrid replaces reject)
   integration.test.ts  # NEW  C3b.6  (1 test: init→login→list→hybrid→revoke→auth-fail)
@@ -125,15 +125,19 @@ packages/cli/test/
   export function credentialsPath(env?: Record<string, string | undefined>): string
   export function writeCliConfig(cfg: CliConfig, env?: Record<string, string | undefined>): string
   export function loadCliConfig(env?: Record<string, string | undefined>): CliConfig | null
+  export function quarantineCorrupt(path: string): void  // rename <path> -> <path>.corrupt (best-effort)
+  export const MAX_PERSISTED_BYTES: number               // 64 KiB read cap for config/credentials
+  export function readPersisted(path: string):           // untrusted-io: lstat+symlink-refuse+size-bound read
+    { ok: true; raw: string } | { ok: false; reason: 'absent' | 'quarantined' }
   ```
 
 **TDD steps**
 
-- [ ] **Step 1 — failing test** `packages/cli/test/config.test.ts` (REAL, complete — 4 tests):
+- [ ] **Step 1 — failing test** `packages/cli/test/config.test.ts` (REAL, complete — 9 tests):
 
 ```ts
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { configDir, configPath, loadCliConfig, writeCliConfig } from '../src/config.ts'
@@ -163,10 +167,48 @@ describe('cli config', () => {
     expect(configDir({}).endsWith(join('.config', 'movp'))).toBe(true)
   })
 
-  it('returns null for a malformed or absent config', () => {
+  it('returns null for an absent config, and quarantines a malformed one to .corrupt', () => {
+    // Absent → null, nothing to quarantine.
     expect(loadCliConfig({ MOVP_CONFIG: join(dir, 'missing.json') })).toBeNull()
+    // Present but wrong-shape (parseable JSON, apiUrl is a number) → null + quarantine.
     writeFileSync(join(dir, 'bad.json'), '{"apiUrl":123}')
     expect(loadCliConfig({ MOVP_CONFIG: join(dir, 'bad.json') })).toBeNull()
+    expect(existsSync(join(dir, 'bad.json'))).toBe(false)
+    expect(existsSync(join(dir, 'bad.json.corrupt'))).toBe(true)
+  })
+
+  it('refuses to read a symlinked config file (untrusted-io)', () => {
+    symlinkSync('/etc/hosts', join(dir, 'linked.json'))
+    expect(() => loadCliConfig({ MOVP_CONFIG: join(dir, 'linked.json') })).toThrow(/symlink/)
+  })
+
+  it('quarantines an oversized config without reading it (untrusted-io)', () => {
+    const big = join(dir, 'big.json')
+    // > MAX_PERSISTED_BYTES (64 KiB): valid-shaped but padded — rejected on size, before parse.
+    writeFileSync(big, `{"apiUrl":"${'x'.repeat(70 * 1024)}","anonKey":"anon"}`)
+    expect(loadCliConfig({ MOVP_CONFIG: big })).toBeNull()
+    expect(existsSync(big)).toBe(false)
+    expect(existsSync(`${big}.corrupt`)).toBe(true)
+  })
+
+  it('refuses to write config THROUGH a symlink and leaves the target untouched (untrusted-io)', () => {
+    const target = join(dir, 'target.txt')
+    writeFileSync(target, 'original', 'utf8')
+    symlinkSync(target, join(dir, 'config.json'))
+    expect(() => writeCliConfig({ apiUrl: 'http://api', anonKey: 'anon' }, { MOVP_CONFIG: join(dir, 'config.json') })).toThrow(/symlink/)
+    expect(readFileSync(target, 'utf8')).toBe('original')
+  })
+
+  it('refuses a non-regular file at the config path (FIFO/device/dir — untrusted-io)', () => {
+    // A directory exercises the same `!st.isFile()` guard that refuses FIFOs and devices.
+    mkdirSync(join(dir, 'adir'))
+    expect(() => loadCliConfig({ MOVP_CONFIG: join(dir, 'adir') })).toThrow(/non-regular file/)
+  })
+
+  it('fails loud (not "absent") when the config path is unreadable (untrusted-io)', () => {
+    // A regular file where a parent directory is expected → ENOTDIR, not ENOENT.
+    writeFileSync(join(dir, 'afile'), 'x')
+    expect(() => loadCliConfig({ MOVP_CONFIG: join(dir, 'afile', 'config.json') })).toThrow(/persisted_state_unreadable/)
   })
 })
 ```
@@ -180,7 +222,7 @@ describe('cli config', () => {
 ```ts
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { lstatSync, mkdirSync, readFileSync, renameSync, writeFileSync, type Stats } from 'node:fs'
 
 export interface CliConfig {
   apiUrl: string
@@ -205,17 +247,80 @@ export function credentialsPath(env: Record<string, string | undefined> = proces
 export function writeCliConfig(cfg: CliConfig, env: Record<string, string | undefined> = process.env): string {
   const p = configPath(env)
   mkdirSync(dirname(p), { recursive: true })
+  // untrusted-io: refuse to write THROUGH a pre-planted symlink at the config path — it could
+  // redirect the write to (or clobber) another user-writable file. Mirror the credential save
+  // guard; a missing file (ENOENT) is the normal first write, so lstat failure falls through.
+  let existing: Stats | null = null
+  try {
+    existing = lstatSync(p)
+  } catch {
+    existing = null
+  }
+  if (existing?.isSymbolicLink()) throw new Error(`refusing to write config via symlink: ${p}`)
   writeFileSync(p, `${JSON.stringify(cfg, null, 2)}\n`, 'utf8')
   return p
 }
 
-export function loadCliConfig(env: Record<string, string | undefined> = process.env): CliConfig | null {
+// untrusted-io: a present-but-invalid persisted file (unparseable, or parseable-but-wrong-
+// shape) is renamed to `<path>.corrupt` and treated as absent — preserved for debugging,
+// never silently re-masked, never crashing downstream. Best-effort: a rename failure
+// (read-only dir, concurrent process) must not break the load. Never logs file contents
+// (config/credentials may hold a secret).
+export function quarantineCorrupt(path: string): void {
   try {
-    const parsed: unknown = JSON.parse(readFileSync(configPath(env), 'utf8'))
-    return isCliConfig(parsed) ? parsed : null
+    renameSync(path, `${path}.corrupt`)
   } catch {
-    return null
+    /* best-effort: leave the file in place if it can't be renamed */
   }
+}
+
+// untrusted-io: config/credentials are tiny JSON; cap the read so a huge (corrupt or hostile)
+// file can't be buffered into memory. 64 KiB is generous headroom over any real config/creds file.
+export const MAX_PERSISTED_BYTES = 64 * 1024
+
+export type PersistedRead =
+  | { ok: true; raw: string }
+  | { ok: false; reason: 'absent' | 'quarantined' }
+
+// Read a caller-controlled persisted file under the untrusted-io rules — shared by the config
+// AND credential loaders so the policy lives in one place: lstat BEFORE any read (refuse a
+// symlink — a MOVP_CONFIG / credentials path could redirect the read to ~/.ssh/id_rsa), then
+// bound BEFORE buffering (quarantine an oversized file without reading its bytes). Never logs
+// file contents. Throws on a symlink (loud refusal); returns a skip reason otherwise.
+export function readPersisted(path: string): PersistedRead {
+  let st: Stats
+  try {
+    st = lstatSync(path)
+  } catch (err) {
+    // Only a genuinely-missing file is "absent". A permission / ENOTDIR / I/O failure must fail
+    // LOUD — silently treating it as unconfigured masks a real problem (untrusted-io / fail-hard).
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return { ok: false, reason: 'absent' }
+    throw new Error(`persisted_state_unreadable: ${path}`, { cause: err })
+  }
+  if (st.isSymbolicLink()) throw new Error(`refusing to read a symlinked file: ${path}`)
+  // untrusted-io: only a regular file may be read. A FIFO would block readFileSync forever; a
+  // char device (e.g. /dev/zero) reports a tiny st.size but streams unbounded bytes → OOM. Refuse
+  // every non-regular file (FIFO, device, socket, directory) BEFORE the size check or read.
+  if (!st.isFile()) throw new Error(`refusing to read a non-regular file: ${path}`)
+  if (st.size > MAX_PERSISTED_BYTES) {
+    quarantineCorrupt(path)
+    return { ok: false, reason: 'quarantined' }
+  }
+  return { ok: true, raw: readFileSync(path, 'utf8') }
+}
+
+export function loadCliConfig(env: Record<string, string | undefined> = process.env): CliConfig | null {
+  const p = configPath(env)
+  const r = readPersisted(p) // lstat-before-read + bound-before-buffer (untrusted-io)
+  if (!r.ok) return null
+  try {
+    const parsed: unknown = JSON.parse(r.raw)
+    if (isCliConfig(parsed)) return parsed
+  } catch {
+    /* unparseable — fall through to quarantine */
+  }
+  quarantineCorrupt(p)
+  return null
 }
 
 // Structurally validate persisted state before use (untrusted-io); a parseable-but-wrong
@@ -231,9 +336,9 @@ function isCliConfig(v: unknown): v is CliConfig {
 }
 ```
 
-- [ ] **Step 4 — run it, expect PASS** (4 tests):
+- [ ] **Step 4 — run it, expect PASS** (9 tests):
   Run: `pnpm --filter @movp/cli exec vitest run config`
-  Expected: PASS — `config.test.ts (4 tests)`.
+  Expected: PASS — `config.test.ts (9 tests)`.
 
 - [ ] **Step 5 — add the `movp init` command.** In `packages/cli/src/program.ts` add the import
   near the top (after the `./client.ts` import on line 5):
@@ -295,9 +400,9 @@ import { loadCliConfig } from '../src/config.ts'
   })
 ```
 
-- [ ] **Step 7 — run the full CLI suite, expect PASS = 21:**
+- [ ] **Step 7 — run the full CLI suite, expect PASS = 26:**
   Run: `pnpm --filter @movp/cli test`
-  Expected: PASS — **21 tests** (program.test.ts 17 + config.test.ts 4).
+  Expected: PASS — **26 tests** (program.test.ts 17 + config.test.ts 9).
 
 - [ ] **Step 8 — gate + commit.**
   Run: `pnpm --filter @movp/cli typecheck` (Expected: clean) and
@@ -323,7 +428,7 @@ git commit -m "feat(cli): movp init writes ~/.config/movp/config.json + config-l
   export interface StoredSession { access_token: string; expires_at: number }
   export interface Credentials { pat?: string; session?: StoredSession }
   export interface SecureStore { load(): Credentials; save(next: Credentials): void; clear(): void }
-  export type KeychainRunner = (args: string[]) => { status: number | null; stdout: string; error?: Error }
+  export type KeychainRunner = (args: string[], input?: string) => { status: number | null; stdout: string; error?: Error }
   export function fileStore(apiUrl: string, env?: Record<string, string | undefined>): SecureStore
   export function keychainStore(apiUrl: string, opts?: { run?: KeychainRunner; account?: string }): SecureStore
   export function selectSecureStore(apiUrl: string, env?: Record<string, string | undefined>): SecureStore
@@ -338,11 +443,11 @@ git commit -m "feat(cli): movp init writes ~/.config/movp/config.json + config-l
 
 **TDD steps**
 
-- [ ] **Step 1 — failing test** `packages/cli/test/secure-store.test.ts` (REAL, complete — 6 tests):
+- [ ] **Step 1 — failing test** `packages/cli/test/secure-store.test.ts` (REAL, complete — 12 tests):
 
 ```ts
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mkdtempSync, rmSync, statSync, symlinkSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileStore, keychainStore, type KeychainRunner } from '../src/secure-store.ts'
@@ -382,6 +487,29 @@ describe('file secure store', () => {
     expect(() => fileStore('http://api', env).load()).toThrow(/symlink/)
   })
 
+  it('refuses to write credentials THROUGH a symlink and leaves the target untouched (untrusted-io)', () => {
+    const target = join(dir, 'target.txt')
+    writeFileSync(target, 'original', 'utf8')
+    symlinkSync(target, join(dir, 'credentials.json'))
+    expect(() => fileStore('http://api', env).save({ pat: PAT })).toThrow(/symlink/)
+    expect(readFileSync(target, 'utf8')).toBe('original')
+  })
+
+  it('quarantines a malformed credentials file to .corrupt and treats it as absent (untrusted-io)', () => {
+    writeFileSync(join(dir, 'credentials.json'), '{ not valid json', 'utf8')
+    expect(fileStore('http://api', env).load()).toEqual({})
+    expect(existsSync(join(dir, 'credentials.json'))).toBe(false)
+    expect(existsSync(join(dir, 'credentials.json.corrupt'))).toBe(true)
+  })
+
+  it('quarantines an oversized credentials file without reading it (untrusted-io)', () => {
+    // > MAX_PERSISTED_BYTES (64 KiB): rejected on size before any read/parse.
+    writeFileSync(join(dir, 'credentials.json'), `{"pat":"${'x'.repeat(70 * 1024)}"}`, 'utf8')
+    expect(fileStore('http://api', env).load()).toEqual({})
+    expect(existsSync(join(dir, 'credentials.json'))).toBe(false)
+    expect(existsSync(join(dir, 'credentials.json.corrupt'))).toBe(true)
+  })
+
   it('never writes the secret to the console', () => {
     const log = vi.spyOn(console, 'log').mockImplementation(() => {})
     const err = vi.spyOn(console, 'error').mockImplementation(() => {})
@@ -394,13 +522,14 @@ describe('file secure store', () => {
 })
 
 describe('keychain secure store', () => {
-  it('issues the exact security argv and never logs the PAT', () => {
-    const calls: string[][] = []
+  it('supplies the secret via stdin (bare -w, never argv) and never logs the PAT', () => {
+    const calls: Array<{ args: string[]; input?: string }> = []
     const kv: Record<string, string> = {}
-    const run: KeychainRunner = (args) => {
-      calls.push(args)
+    const run: KeychainRunner = (args, input) => {
+      calls.push({ args, input })
       if (args[0] === 'add-generic-password') {
-        kv[args[args.indexOf('-s') + 1]!] = args[args.indexOf('-w') + 1]!
+        // Real `security` prompts twice on a bare -w; the value is the first stdin line.
+        kv[args[args.indexOf('-s') + 1]!] = (input ?? '').split('\n')[0]!
         return { status: 0, stdout: '' }
       }
       if (args[0] === 'find-generic-password') {
@@ -413,12 +542,39 @@ describe('keychain secure store', () => {
     const kc = keychainStore('http://api', { run, account: 'tester' })
     kc.save({ pat: PAT })
     expect(kc.load().pat).toBe(PAT)
-    const add = calls.find((c) => c[0] === 'add-generic-password')!
-    expect(add).toContain('-U')
-    expect(add[add.indexOf('-a') + 1]).toBe('tester')
-    expect(add[add.indexOf('-s') + 1]).toMatch(/^movp:pat:[0-9a-f]{16}$/)
-    expect(add[add.indexOf('-w') + 1]).toBe(PAT)
+    const add = calls.find((c) => c.args[0] === 'add-generic-password')!
+    expect(add.args).toContain('-U')
+    expect(add.args[add.args.indexOf('-a') + 1]).toBe('tester')
+    expect(add.args[add.args.indexOf('-s') + 1]).toMatch(/^movp:pat:[0-9a-f]{16}$/)
+    // -w is the LAST arg (bare); the secret is NOT anywhere in argv, only in stdin, piped twice.
+    expect(add.args[add.args.length - 1]).toBe('-w')
+    expect(add.args).not.toContain(PAT)
+    expect(add.input).toBe(`${PAT}\n${PAT}\n`)
     for (const call of log.mock.calls) expect(JSON.stringify(call)).not.toContain(PAT)
+  })
+
+  it('throws (not silent success) when a keychain write fails, without exposing the PAT', () => {
+    const run: KeychainRunner = () => ({ status: 51, stdout: '' }) // e.g. keychain locked / denied
+    let message = ''
+    try {
+      keychainStore('http://api', { run, account: 'tester' }).save({ pat: PAT })
+    } catch (e) {
+      message = e instanceof Error ? e.message : String(e)
+    }
+    expect(message).toMatch(/keychain write failed/)
+    expect(message).not.toContain(PAT)
+  })
+
+  it('throws when a keychain delete fails — logout must not report success', () => {
+    const run: KeychainRunner = () => ({ status: 51, stdout: '' })
+    expect(() => keychainStore('http://api', { run, account: 'tester' }).clear()).toThrow(/keychain delete failed/)
+  })
+
+  it('distinguishes a not-found item (44) from a keychain read failure', () => {
+    const notFound: KeychainRunner = () => ({ status: 44, stdout: '' })
+    expect(keychainStore('http://api', { run: notFound, account: 'tester' }).load()).toEqual({ pat: undefined, session: undefined })
+    const failing: KeychainRunner = () => ({ status: 51, stdout: '' })
+    expect(() => keychainStore('http://api', { run: failing, account: 'tester' }).load()).toThrow(/keychain read failed/)
   })
 })
 ```
@@ -431,10 +587,10 @@ describe('keychain secure store', () => {
 
 ```ts
 import { createHash } from 'node:crypto'
-import { chmodSync, lstatSync, mkdirSync, readFileSync, rmSync, writeFileSync, type Stats } from 'node:fs'
+import { chmodSync, lstatSync, mkdirSync, rmSync, writeFileSync, type Stats } from 'node:fs'
 import { dirname } from 'node:path'
 import { spawnSync } from 'node:child_process'
-import { credentialsPath } from './config.ts'
+import { credentialsPath, quarantineCorrupt, readPersisted } from './config.ts'
 
 export interface StoredSession {
   access_token: string
@@ -474,25 +630,36 @@ export function fileStore(apiUrl: string, env: Record<string, string | undefined
   const path = credentialsPath(env)
   return {
     load(): Credentials {
-      let st: Stats
+      // untrusted-io: lstat-before-read (refuse symlinks) + bound-before-buffer (quarantine
+      // oversized) live in the shared readPersisted() (config.ts), so config and credentials
+      // enforce one identical read policy.
+      const r = readPersisted(path)
+      if (!r.ok) return {}
       try {
-        st = lstatSync(path)
+        const parsed: unknown = JSON.parse(r.raw)
+        if (isCredentials(parsed)) return parsed
       } catch {
-        return {}
+        /* unparseable — fall through to quarantine */
       }
-      // untrusted-io: lstat BEFORE any read. A symlink here could redirect the read to a
-      // file outside the config dir (e.g. ~/.ssh/id_rsa); refuse rather than follow it.
-      if (st.isSymbolicLink()) throw new Error(`refusing to read credentials via symlink: ${path}`)
-      let parsed: unknown
-      try {
-        parsed = JSON.parse(readFileSync(path, 'utf8'))
-      } catch {
-        return {}
-      }
-      return isCredentials(parsed) ? parsed : {}
+      // Present but unparseable or wrong-shape → quarantine to `<path>.corrupt` and treat as
+      // absent — preserved for debugging, never silently re-masked, never `as`-cast.
+      quarantineCorrupt(path)
+      return {}
     },
     save(next: Credentials): void {
       mkdirSync(dirname(path), { recursive: true })
+      // untrusted-io: refuse to write secrets THROUGH a symlink. A pre-planted
+      // credentials.json -> <attacker path> would otherwise redirect the PAT/session to a
+      // location the attacker chose (or clobber a sensitive target). Mirror load()'s lstat
+      // guard on the write path — a missing file is the normal first write, so lstat failure
+      // falls through to the write.
+      let existing: Stats | null = null
+      try {
+        existing = lstatSync(path)
+      } catch {
+        existing = null
+      }
+      if (existing?.isSymbolicLink()) throw new Error(`refusing to write credentials via symlink: ${path}`)
       // 0600: the PAT + session are user secrets; never group/world readable.
       writeFileSync(path, `${JSON.stringify(next)}\n`, { mode: 0o600 })
       // writeFileSync's create-mode is masked by umask; force 0600 explicitly.
@@ -505,10 +672,12 @@ export function fileStore(apiUrl: string, env: Record<string, string | undefined
 }
 
 // ---- keychain backend (macOS) ----
-export type KeychainRunner = (args: string[]) => { status: number | null; stdout: string; error?: Error }
+export type KeychainRunner = (args: string[], input?: string) => { status: number | null; stdout: string; error?: Error }
 
-const defaultRunner: KeychainRunner = (args) => {
-  const r = spawnSync('security', args, { encoding: 'utf8' })
+const defaultRunner: KeychainRunner = (args, input) => {
+  // `input` is piped to the child's stdin — the write path uses it to pass the secret to a bare
+  // `-w` prompt instead of putting it in argv.
+  const r = spawnSync('security', args, { encoding: 'utf8', input })
   return { status: r.status, stdout: r.stdout ?? '', error: r.error ?? undefined }
 }
 
@@ -518,9 +687,30 @@ export function keychainStore(apiUrl: string, opts: { run?: KeychainRunner; acco
   const h = instanceHash(apiUrl)
   const patSvc = `movp:pat:${h}`
   const sessSvc = `movp:session:${h}`
+  // `security` exits 44 (errSecItemNotFound) when an item is absent; any OTHER nonzero/null
+  // status is an OPERATIONAL failure (locked keychain, denied, spawn error) and must NOT be
+  // swallowed as "absent"/"ok". Error messages are content-free — the status number only,
+  // never the PAT/value.
+  const NOT_FOUND = 44
   const find = (svc: string): string | undefined => {
     const r = run(['find-generic-password', '-a', account, '-s', svc, '-w'])
-    return r.status === 0 ? r.stdout.replace(/\n$/, '') : undefined
+    if (r.status === 0) return r.stdout.replace(/\n$/, '')
+    if (r.status === NOT_FOUND) return undefined
+    throw new Error(`keychain read failed (status ${r.status ?? 'null'})`)
+  }
+  const put = (svc: string, value: string): void => {
+    // Secret via STDIN, never argv (argv is world-visible in `ps`; `add-generic-password -h`
+    // flags `-w <value>` as insecure). Bare `-w` MUST be last and prompts twice (enter + retype),
+    // so pipe the value TWICE — a single line silently stores an EMPTY password while `add` still
+    // exits 0. -U updates in place, preserving an already-stored PAT when only the session changes.
+    const r = run(['add-generic-password', '-U', '-a', account, '-s', svc, '-w'], `${value}\n${value}\n`)
+    if (r.status !== 0) throw new Error(`keychain write failed (status ${r.status ?? 'null'})`)
+  }
+  const remove = (svc: string): void => {
+    // 0 = deleted, 44 = already absent; anything else is a real failure — logout must not
+    // report success while the PAT is still stored.
+    const r = run(['delete-generic-password', '-a', account, '-s', svc])
+    if (r.status !== 0 && r.status !== NOT_FOUND) throw new Error(`keychain delete failed (status ${r.status ?? 'null'})`)
   }
   return {
     load(): Credentials {
@@ -538,15 +728,12 @@ export function keychainStore(apiUrl: string, opts: { run?: KeychainRunner; acco
       return { pat, session }
     },
     save(next: Credentials): void {
-      // -U updates an existing item; -w passes the value. Only fields present are written,
-      // so `save({ ...creds, session })` preserves an already-stored PAT.
-      if (next.pat !== undefined) run(['add-generic-password', '-U', '-a', account, '-s', patSvc, '-w', next.pat])
-      if (next.session !== undefined)
-        run(['add-generic-password', '-U', '-a', account, '-s', sessSvc, '-w', JSON.stringify(next.session)])
+      if (next.pat !== undefined) put(patSvc, next.pat)
+      if (next.session !== undefined) put(sessSvc, JSON.stringify(next.session))
     },
     clear(): void {
-      run(['delete-generic-password', '-a', account, '-s', patSvc])
-      run(['delete-generic-password', '-a', account, '-s', sessSvc])
+      remove(patSvc)
+      remove(sessSvc)
     },
   }
 }
@@ -566,14 +753,16 @@ export function selectSecureStore(apiUrl: string, env: Record<string, string | u
 }
 ```
 
-  ⚠ Residual (LOW, documented): `security add-generic-password -w <pat>` places the PAT in the
-  process argv, briefly visible in `ps`. This is the standard `security` write pattern (the
-  global keychain rule uses `-w`); the file fallback avoids it. Do **not** switch to a shell
-  string — that reintroduces injection risk.
+  ✅ Secret handling: the PAT/session go to `security` via **stdin**, never argv (argv is
+  world-visible in `ps`; `add-generic-password -h` itself flags `-w <value>` as insecure). Bare
+  `-w` is last and prompts twice (enter + retype), so `put()` pipes the value TWICE — a single
+  line silently stores an EMPTY password while `add` still exits 0 (verified against the installed
+  `security`). Still shell-free (argv array + `spawnSync` `input`), so no injection risk. The
+  read path (`find`/`delete`) passes no `input`.
 
-- [ ] **Step 4 — run it, expect PASS** (6 tests):
+- [ ] **Step 4 — run it, expect PASS** (12 tests):
   Run: `pnpm --filter @movp/cli exec vitest run secure-store`
-  Expected: PASS — `secure-store.test.ts (6 tests)`.
+  Expected: PASS — `secure-store.test.ts (12 tests)`.
 
 - [ ] **Step 5 — re-export** from `packages/cli/src/index.ts` (append):
 
@@ -581,8 +770,8 @@ export function selectSecureStore(apiUrl: string, env: Record<string, string | u
 export { selectSecureStore, fileStore, keychainStore, type SecureStore, type Credentials, type StoredSession } from './secure-store.ts'
 ```
 
-- [ ] **Step 6 — run the full CLI suite, expect PASS = 27:**
-  Run: `pnpm --filter @movp/cli test`  → Expected: **27 tests** (21 + 6).
+- [ ] **Step 6 — run the full CLI suite, expect PASS = 38:**
+  Run: `pnpm --filter @movp/cli test`  → Expected: **38 tests** (26 + 12).
 
 - [ ] **Step 7 — gate + commit.**
   Run: `pnpm --filter @movp/cli typecheck` (clean) and
@@ -875,8 +1064,8 @@ export async function resolveCliCtx(env: Record<string, string | undefined> = pr
 export { exchangePat, type ExchangeResult } from './client.ts'
 ```
 
-- [ ] **Step 7 — run the full CLI suite, expect PASS = 33:**
-  Run: `pnpm --filter @movp/cli test`  → Expected: **33 tests** (27 + client 6). All prior tests
+- [ ] **Step 7 — run the full CLI suite, expect PASS = 44:**
+  Run: `pnpm --filter @movp/cli test`  → Expected: **44 tests** (38 + client 6). All prior tests
   stay green — the sync `resolveCtx` injection in `program.test.ts` still satisfies the union.
 
 - [ ] **Step 8 — gates + commit.**
@@ -1026,8 +1215,8 @@ async function readTokenFromStdin(): Promise<string> {
     })
 ```
 
-- [ ] **Step 4 — run, expect PASS = 35:**
-  Run: `pnpm --filter @movp/cli test`  → Expected: **35 tests** (33 + login + logout).
+- [ ] **Step 4 — run, expect PASS = 46:**
+  Run: `pnpm --filter @movp/cli test`  → Expected: **46 tests** (44 + login + logout).
 
 - [ ] **Step 5 — gate + commit.**
   Run: `pnpm --filter @movp/cli typecheck` (clean) and
@@ -1212,8 +1401,8 @@ import { searchViaGraphql } from './graphql-client.ts'
 export { searchViaGraphql, type GraphqlSearchHit } from './graphql-client.ts'
 ```
 
-- [ ] **Step 6 — run the full CLI suite, expect PASS = 35:**
-  Run: `pnpm --filter @movp/cli test`  → Expected: **35 tests** (unchanged count — one test
+- [ ] **Step 6 — run the full CLI suite, expect PASS = 46:**
+  Run: `pnpm --filter @movp/cli test`  → Expected: **46 tests** (unchanged count — one test
   replaced). The `search uses fts mode` test still passes (fts → `domain.search`).
 
 - [ ] **Step 7 — gate + commit.**
@@ -1343,12 +1532,12 @@ describe('CLI PAT lifecycle', () => {
   Run (restored): `pnpm --filter @movp/cli exec vitest run integration`
   Expected: PASS — `integration.test.ts (1 test)`.
 
-- [ ] **Step 3 — run the full CLI suite, expect PASS = 36:**
-  Run: `pnpm --filter @movp/cli test`  → Expected: **36 tests** across 5 files
-  (program 19 + config 4 + secure-store 6 + client 6 + integration 1).
+- [ ] **Step 3 — run the full CLI suite, expect PASS = 47:**
+  Run: `pnpm --filter @movp/cli test`  → Expected: **47 tests** across 5 files
+  (program 19 + config 9 + secure-store 12 + client 6 + integration 1).
 
 - [ ] **Step 4 — full C3b gate.** All must hold:
-  - `pnpm --filter @movp/cli test` → **36 passed**.
+  - `pnpm --filter @movp/cli test` → **47 passed**.
   - `pnpm typecheck` → **12/12** packages clean (C3b added no package).
   - `grep -rnE "console\.[a-z]+\([^)]*(pat|session|token|secret)" packages/cli/src` → **empty**.
   - `grep -rn "console" packages/cli/src/secure-store.ts packages/cli/src/config.ts packages/cli/src/graphql-client.ts` → **empty**.
@@ -1395,7 +1584,7 @@ git commit -m "test(cli): PAT lifecycle integration (init→login→list→hybri
 
 ## Self-check (author, satisfied)
 1. Every task has exact file paths, exact commands, and an **expected test count**
-   (16→21→27→33→35→35→36) + typecheck 12/12. ✅
+   (16→26→38→44→46→46→47) + typecheck 12/12. ✅
 2. Every code sample is copy-paste-correct and consistent with the prose (async `resolveCtx`,
    `await` at 38+2 sites, byte-identical ACCESS_TOKEN/service-role blocks). ✅
 3. Platform gotchas commented **at the trigger site**: `0o600`+`chmod` and `lstat`-symlink-refuse
