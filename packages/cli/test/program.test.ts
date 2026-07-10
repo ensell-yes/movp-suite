@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createDomain } from '@movp/domain'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { buildProgram } from '../src/index.ts'
+import { loadCliConfig } from '../src/config.ts'
 
 const created = { id: 'n1', workspace_id: 'w', title: 'Hello' }
 const noteCreate = vi.fn(async () => created)
@@ -148,6 +152,22 @@ describe('movp CLI', () => {
     await cmd.parseAsync(['node', 'movp', 'note', 'create', '--workspace', 'w', '--title', 'Hello'])
     expect(noteCreate).toHaveBeenCalledWith(expect.objectContaining({ workspace_id: 'w', title: 'Hello' }))
     expect(out[0]).toContain('Hello')
+  })
+
+  it('init writes the CLI config file', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'movp-init-'))
+    const prev = process.env.MOVP_CONFIG
+    process.env.MOVP_CONFIG = join(dir, 'config.json')
+    try {
+      const { cmd, out } = program()
+      await cmd.parseAsync(['node', 'movp', 'init', '--api-url', 'http://api', '--anon-key', 'anon', '--workspace', 'w1'])
+      expect(out[0]).toContain(join(dir, 'config.json'))
+      expect(loadCliConfig({ MOVP_CONFIG: join(dir, 'config.json') })).toEqual({ apiUrl: 'http://api', anonKey: 'anon', defaultWorkspaceId: 'w1' })
+    } finally {
+      if (prev === undefined) delete process.env.MOVP_CONFIG
+      else process.env.MOVP_CONFIG = prev
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 
   it('search uses fts mode in the direct Node CLI', async () => {

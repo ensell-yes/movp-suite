@@ -3,6 +3,7 @@ import type { CollectionDef, FieldDef } from '@movp/core-schema'
 import { schema } from '@movp/core-schema'
 import { createDomain, type CollectionService, type Domain } from '@movp/domain'
 import { resolveCliCtx, type CliCtx } from './client.ts'
+import { writeCliConfig } from './config.ts'
 
 export interface JobsHandlers {
   replay: (o: { kind?: string; dead?: boolean; workspaceId?: string }) => Promise<void>
@@ -546,6 +547,17 @@ export function buildProgram(opts: BuildProgramOpts = {}): Command {
           }),
         ),
       )
+    })
+
+  program
+    .command('init')
+    .description('Write the CLI config (instance URL, anon key, default workspace)')
+    .requiredOption('--api-url <url>', 'instance API URL (SUPABASE_URL)')
+    .requiredOption('--anon-key <key>', 'anon/publishable key')
+    .option('--workspace <id>', 'default workspace id')
+    .action((o: { apiUrl: string; anonKey: string; workspace?: string }) => {
+      const path = writeCliConfig({ apiUrl: o.apiUrl, anonKey: o.anonKey, defaultWorkspaceId: o.workspace })
+      out(JSON.stringify({ ok: true, config: path }))
     })
 
   program.command('codegen').description('Run the codegen pipeline (Plan 2)').action(async () => {
