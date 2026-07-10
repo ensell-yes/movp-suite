@@ -68,6 +68,28 @@ describe('gqlRequest', () => {
     expect(r).toEqual({ ok: false, code: 'graphql_error', message: 'At least one workspace owner must remain.' })
   })
 
+  it('maps PAT reason codes to member-facing copy (reason wins over generic code)', async () => {
+    const cases: Array<[string, string, string, string]> = [
+      ['42501', 'FORBIDDEN', 'not_workspace_member', "You're not a member of this workspace."],
+      ['22023', 'BAD_USER_INPUT', 'pat_name_required', 'Enter a name for the access token.'],
+      ['P0001', 'NOT_FOUND', 'pat_not_found', 'That access token could not be found or is already revoked.'],
+    ]
+    for (const [pgCode, code, reason, copy] of cases) {
+      const r = await gqlRequest(
+        {
+          endpoint: 'https://x',
+          token: 't',
+          fetchImpl: mockFetch(200, {
+            errors: [{ message: `domain.pat failed [${pgCode}]: ${reason}`, extensions: { code, pgCode, reason } }],
+          }),
+        },
+        NOTES_QUERY,
+        { workspaceId: 'w', first: 20 },
+      )
+      expect(r).toEqual({ ok: false, code: 'graphql_error', message: copy })
+    }
+  })
+
   it('maps a 401 or 403 to auth_error', async () => {
     const r = await gqlRequest(
       { endpoint: 'https://x', token: 't', fetchImpl: mockFetch(401, {}) },
