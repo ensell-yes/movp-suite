@@ -57,7 +57,7 @@ bite-sized TDD plan (as C1 was) before building.
 > |---|---|---|
 > | C1 OSS Packaging & Onboarding | `2026-07-07-movp-stage-c-01-oss-packaging-onboarding.md` | ✅ MERGED (PR #8 `7f65eff`, reviewed 9.2) |
 > | C2 Admin Console & Operations | `2026-07-08-movp-stage-c-02-admin-console.md` | ✅ MERGED (PR #9 `004326b` + follow-up `7b51e28`, reviewed 9.26) |
-> | C3 Agent Connectivity (PATs/MCP/CLI) | `2026-07-09-movp-stage-c-03{a,b,c,d}-*.md` (+ design spec) | 🟢 EXPANDED — ready for Codex (precondition: C1 ✅) |
+> | C3 Agent Connectivity (PATs/MCP/CLI) | `2026-07-09-movp-stage-c-03{a,b,c,d}-*.md` (+ design spec) | 🟡 IN PROGRESS — C3a PAT foundation + C3b CLI executed; C3c–C3d pending |
 > | C4 Reporting Views & Dashboards | breakdown only | ⬜ expand before build (needs C2) |
 > | C5 Integration Fabric | breakdown only | ⬜ expand before build (needs C3) |
 > | C6 Templates & Scaffolding | breakdown only | ⬜ expand before build (needs C1) |
