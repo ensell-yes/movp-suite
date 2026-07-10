@@ -260,8 +260,12 @@ admin session issuance if it gives a true RLS-bound principal. Fallback is servi
 only through SECURITY DEFINER RPCs that take PAT-resolved `user_id`/`workspace_id`, never
 raw table access.
 
-**Gate:** positive and negative pgTAP/integration: PAT sees own workspace only; wrong
-workspace returns zero/denied; auth-rejection emits keys-only event.
+**Gate:** positive and negative pgTAP/integration: a PAT resolves to exactly the
+owning user's access (user-scoped — see the C3 design spec's F1 resolution; PATs are
+NOT workspace-confined, since the GoTrue exchange yields an ordinary user session and
+RLS is reused unchanged); a different user / revoked / expired PAT is denied;
+auth-rejection emits a keys-only event. `default_workspace_id` is a CLI home-workspace
+hint, not an access boundary.
 
 ### Task C3.2: PAT table and lifecycle
 

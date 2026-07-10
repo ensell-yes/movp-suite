@@ -12,9 +12,18 @@
 Named agent clients (Claude Code, Codex, Cursor, Gemini CLI, Copilot) and the
 `movp` CLI can connect to a MOVP instance over **MCP (streamable HTTP + stdio)**
 and the **CLI** with **headless, revocable auth via Personal Access Tokens
-(PATs)** — without a browser session cookie. A PAT is workspace-scoped and
-inherits the creating user's role in that workspace. Every existing RLS policy
-and SECURITY DEFINER RPC is reused **unchanged**.
+(PATs)** — without a browser session cookie. A PAT is **user-scoped**: it grants
+exactly the creating user's own access across their workspaces (a leaked PAT is as
+powerful as the user until revoked), so it is created least-privilege and
+short-lived. Its `default_workspace_id` is the PAT's **home workspace** — a CLI
+`init` convenience, **NOT a security boundary** (a user in W1 and W2 with a PAT
+minted "for W1" can still reach W2, exactly as their browser session can). Every
+existing RLS policy and SECURITY DEFINER RPC is reused **unchanged** — this is only
+possible *because* the PAT resolves to an ordinary user session. Fine-grained
+(per-workspace / RBAC-scoped) PATs are a deliberate deferred enhancement (see
+Risks); confining a PAT below the user's own access would require abandoning the
+direct-PostgREST path plus edge/RLS claim gates, which contradicts "reuse RLS
+unchanged."
 
 ## Inherited constraints & invariants (do not violate)
 
@@ -36,9 +45,10 @@ and SECURITY DEFINER RPC is reused **unchanged**.
   field names / codes, no token values, no raw email — salted hash if an email
   identifier is ever needed).
 - **Cloudflare Workers runtime rules** apply to the new Astro `/settings/tokens`
-  page: `readServerEnv(ctx.locals)` not `process.env`; resolve per-request deps at
-  call time; no server-only import from a client-importable path; boundary test
-  covers new files.
+  page: read env via the committed **no-arg `readServerEnv()`** (NOT `process.env`,
+  NOT `readServerEnv(ctx.locals)` — this repo's helper takes no argument); resolve
+  per-request deps at call time; no server-only import from a client-importable
+  path; boundary test covers new files.
 - **Deno edge rules** (the analog): the exchange resolves service-role clients and
   env **per request**, never captured at module init.
 - Full CI including `slice-e2e` stays green; C3 ships an `[agents]` slice.
@@ -46,8 +56,9 @@ and SECURITY DEFINER RPC is reused **unchanged**.
 ## Architecture — the linchpin: PAT → RLS principal
 
 A PAT is an **opaque, hashed, revocable secret** that resolves to a real GoTrue
-**session JWT** for the PAT's user, scoped to one workspace. The session is what
-every downstream consumer already understands.
+**session JWT** for the PAT's user — an ordinary, **user-scoped** session, the
+same identity a browser login yields. The session is what every downstream
+consumer already understands.
 
 ### The exchange (shared, server-side, service-role)
 
@@ -61,9 +72,15 @@ and a thin standalone edge endpoint (for the CLI). Steps:
    On any reject → keys-only auth event + `invalid_token`/`expired_token`.
 3. Resolve the PAT's `user_id` → email (service-role read of `auth.users`).
 4. **Mint a real session:** `auth.admin.generateLink({type:'magiclink', email})`
-   → `hashed_token`; then `auth.verifyOtp({type:'magiclink', token_hash})` →
-   `{ session: { access_token, expires_at, … } }`. No email is sent (generateLink
-   only *returns* the token; verifyOtp consumes it server-side). Service-role.
+   → `hashed_token`; then verify it with the **exact OTP type the committed C1
+   path uses**, which is `type: 'email'` (see `supabase/templates/magic_link.html`
+   → `&type=email`, `auth/callback.astro` default `'email'`, and the GoTrue e2e
+   asserting `type=email`) — i.e. `auth.verifyOtp({ type: 'email', token_hash })`
+   → `{ session: { access_token, expires_at, … } }`. No email is sent
+   (generateLink only *returns* the token; verifyOtp consumes it server-side).
+   Service-role. **C3a's spike MUST prove the exact `generateLink`→`verifyOtp`
+   type pairing end-to-end before C3b–C3d rely on it** (do not assume the type;
+   the plan pins it to the committed value and the spike confirms).
 5. Best-effort update `last_used_at` (throttled — at most once/5 min per PAT to
    avoid write amplification on hot agents).
 6. Return the `access_token` (a genuine ES256 GoTrue JWT, `sub = user_id`,
@@ -90,7 +107,9 @@ produces one artifact (a real session JWT) that serves the CLI **and** the edge.
 ### C3.1 is a real spike (fail-first), with a named fallback ladder
 
 C3a's first failing test drives an **end-to-end spike**: a PAT-authenticated
-request proves workspace-scoped RLS. The spike **empirically confirms** the
+request resolves to an RLS-bound principal equal to the user's own access (the
+PAT's owner sees exactly what that user sees; a different user / revoked / expired
+PAT is denied). The spike **empirically confirms** the
 GoTrue-exchange mechanism (availability of `generateLink`/`verifyOtp` in local +
 hosted GoTrue, latency, that the minted `access_token` is PostgREST-accepted)
 before C3b–C3d build on it. Fallback ladder if the exchange is unworkable:
@@ -112,27 +131,33 @@ fallback, C3a's plan is revised before C3b–C3d are executed.
 Each unit states purpose / interface / dependencies.
 
 ### 1. `movp_internal.personal_access_token` (C3a)
-- **Purpose:** hashed, workspace-scoped, revocable token records.
+- **Purpose:** hashed, **user-scoped**, revocable token records.
 - **Shape** (mirrors `movp_internal.workspace_invite`):
-  `id uuid pk`, `user_id uuid not null` (the principal),
-  `workspace_id uuid not null references public.workspace(id) on delete cascade`,
+  `id uuid pk`, `user_id uuid not null` (the principal — the security identity),
+  `default_workspace_id uuid not null references public.workspace(id) on delete
+  cascade` (the PAT's home workspace for CLI `init`; **NOT** an access boundary —
+  a `_default_` prefix name makes that explicit and prevents anyone reading the
+  column as a confinement control),
   `name text not null` (human label), `token_hash text not null unique`,
   `created_at`, `expires_at timestamptz` (nullable = no expiry; default e.g.
   `now() + interval '90 days'`), `last_used_at timestamptz`,
-  `revoked_at timestamptz`. Index `(user_id, workspace_id, created_at desc)`.
+  `revoked_at timestamptz`. Index `(user_id, created_at desc)`.
 - **Posture:** RLS enabled, no policies, revoke anon/authenticated, grant
   service_role.
 - **Deps:** `public.workspace`, `public.workspace_membership`.
 
 ### 2. PAT lifecycle RPCs (C3a) — mirror `ingest_key_admin`
-- `create_personal_access_token(ws uuid, name text, ttl_days int default 90)
-  returns jsonb` → `{ token_id, token }` **once**. Token =
+- `create_personal_access_token(default_ws uuid, name text, ttl_days int default
+  90) returns jsonb` → `{ token_id, token }` **once**. Token =
   `'movp_pat_' || encode(gen_random_bytes(32),'hex')`; stores
-  `sha256(token)`. Gate: `auth.uid() is null or not is_workspace_member(ws)`
-  (self-service; the PAT's `user_id = auth.uid()`).
-- `list_personal_access_tokens(ws uuid) returns jsonb` → own tokens, **metadata
-  only** (id, name, created_at, last_used_at, expires_at, revoked_at); never the
-  hash/token.
+  `sha256(token)`. Gate: `auth.uid() is null or not is_workspace_member(default_ws)`
+  (you must be a member of the workspace you name as home; the PAT's
+  `user_id = auth.uid()`). The gate confirms membership of the *home* workspace —
+  it does **not** confine the PAT's access to it (the PAT is user-scoped).
+- `list_personal_access_tokens() returns jsonb` → the caller's own tokens
+  (`user_id = auth.uid()`), **metadata only** (id, name, default_workspace_id,
+  created_at, last_used_at, expires_at, revoked_at); never the hash/token. (No
+  workspace arg — PATs are the user's, not a workspace's.)
 - `revoke_personal_access_token(token_id uuid) returns void` → own tokens only
   (`user_id = auth.uid()`), sets `revoked_at = now()`.
 - Grants: `authenticated` only; `revoke … from public, anon`.
@@ -141,8 +166,10 @@ Each unit states purpose / interface / dependencies.
 - **Purpose:** the shared exchange (above). New file
   `packages/auth/src/pat.ts`; re-exported from `index.ts`.
 - **Interface:** `resolvePatToken(token, env, admin): Promise<PatExchange>` where
-  `PatExchange = { ok:true; userId; workspaceId; accessToken; expiresAt } |
+  `PatExchange = { ok:true; userId; defaultWorkspaceId; accessToken; expiresAt } |
   { ok:false; code:'invalid_token'|'expired_token'|'revoked_token' }`.
+  (`defaultWorkspaceId` is a hint for the CLI's default `--workspace`; it does not
+  gate access.)
 - **Deps:** a service-role `SupabaseClient` (resolved **per request**, not
   captured); GoTrue admin API. **Gotcha to inline in the plan:** resolve the
   service-role client from request-bound env at call time (Deno edge analog of
@@ -169,7 +196,7 @@ Each unit states purpose / interface / dependencies.
   surfaces) with the caller's session. Not admin-gated — self-service for any
   member.
 - **Deps:** C1 session, GraphQL admin-error mapping (reuse `AdminDomainError` +
-  friendly copy). **Gotcha:** `readServerEnv(ctx.locals)`, boundary test covers
+  friendly copy). **Gotcha:** no-arg `readServerEnv()`, boundary test covers
   the new page.
 
 ### 6. CLI `init` / `login` / `logout` + PAT credential mode (C3b)
@@ -188,7 +215,7 @@ Each unit states purpose / interface / dependencies.
 
 ### 7. `auth-exchange` edge endpoint (C3a — consumed by the CLI in C3b) — for the CLI
 - Thin `supabase/functions/*` (or a route on an existing fn) taking
-  `Authorization: Bearer movp_pat_…` → `{ access_token, expires_at, workspace_id,
+  `Authorization: Bearer movp_pat_…` → `{ access_token, expires_at, default_workspace_id,
   user_id }` by calling the shared `resolvePatToken`. `verify_jwt = false`;
   fail-closed 401 + keys-only event, matching the graphql/mcp pattern.
 
@@ -236,10 +263,13 @@ Each unit states purpose / interface / dependencies.
 ## Security posture
 
 - Hashed at rest; one-time display; `movp_pat_` prefix (enables detection + secret
-  scanners). Workspace-scoped, role-inherited (a leaked PAT = the user's power in
-  that one workspace until revoked). Mitigations: expiry (default 90d), self-serve
-  revoke, `last_used_at` for anomaly review, one-time display, keys-only auth
-  events, secure client storage (`0600`/keychain).
+  scanners). **User-scoped** — a leaked PAT grants the *full* access of its owning
+  user (across all their workspaces) until revoked, so document it as an
+  account-level credential and steer users to create PATs from a least-privileged
+  account. Mitigations: expiry (default 90d), self-serve revoke, `last_used_at` for
+  anomaly review, one-time display, keys-only auth events, secure client storage
+  (`0600`/keychain). Narrowing blast radius below the user (per-workspace / RBAC
+  PATs) is the deferred fine-grained-PAT enhancement.
 - **Revocation is immediate at the exchange gate** — a revoked/expired PAT never
   mints a session; already-minted sessions are short-lived (`jwt_expiry`, 1h) and
   the CLI re-exchanges (which then fails). Document the ≤1h residual window.
@@ -267,10 +297,14 @@ MCP/HTTP returns 401 with the code.
 ## Testing strategy (fail-first per task)
 
 - **pgTAP matrix (C3a):** create → one-time secret shape; hash stored ≠ raw;
-  valid PAT resolves to own workspace only; wrong-workspace read returns
-  zero/denied; expired PAT rejected; revoked PAT rejected; list/revoke are
-  own-tokens-only; auth-reject event is keys-only. Role-switched, negative cases
-  explicit.
+  valid PAT resolves to the owning user's principal (`user_id`); **a PAT for user
+  U cannot read user V's private data** (identity boundary — the real security
+  test, replacing the false "own workspace only" confinement claim); expired PAT
+  rejected; revoked PAT rejected; list/revoke are own-tokens-only; auth-reject
+  event is keys-only. Role-switched, negative cases explicit. **Also assert the
+  documented non-confinement honestly:** a user in W1+W2 with any PAT resolves to a
+  principal that sees *both* (so no reviewer later mistakes the `default_workspace_id`
+  column for a boundary).
 - **Auth integration (C3a):** `resolvePrincipal` PAT branch, production-shaped
   (exchange dependency exercised, not stubbed away) — success builds an
   RLS-bound client; each reject maps to the right code + 401 + keys-only event.
@@ -301,25 +335,42 @@ all three). Precondition: C1 merged (session + seed). C5 and C8 depend on C3.
   measured in C3a. If unworkable → fallback ladder.
 - **RISK:** exchanged session at rest on the client — must be keychain/`0600`,
   same as the PAT.
-- **Deferred (explicit):** read-only / RBAC-scoped PATs (needs custom-claim
-  plumbing — out of scope per user decision + roadmap); interactive magic-link
-  `movp login` (web `/settings/tokens` covers minting); a bespoke
-  `@movp/mcp-bridge` (only if `mcp-remote` fails); PKCE for the magic-link login
-  (carry-forward from C1, fold into a later hardening pass).
+- **ROADMAP GATE AMENDED (C3.1):** the roadmap/breakdown gate "PAT sees own
+  workspace only; wrong workspace returns zero/denied" assumed workspace-confined
+  PATs, which the exchange cannot deliver with RLS unchanged. Per the user-scoped
+  decision, C3.1's gate becomes: **"a PAT resolves to exactly the owning user's
+  access; a different user / revoked / expired PAT is denied; the `[agents]` slice
+  proves revoke → all surfaces fail with the auth code."** The breakdown doc's
+  C3.1 gate line is updated to match in this same change.
+- **Deferred (explicit):** fine-grained (per-workspace / RBAC-scoped) PATs — the
+  narrower-than-user confinement, which needs abandoning direct-PostgREST + edge/RLS
+  claim gates (out of scope per the user-scoped decision + the roadmap's deferred
+  RBAC); read-only PATs (same custom-claim plumbing); interactive magic-link
+  `movp login` (web `/settings/tokens` covers minting); a bespoke `@movp/mcp-bridge`
+  (only if `mcp-remote` fails); PKCE for the magic-link login (carry-forward from
+  C1, fold into a later hardening pass).
 
 ## Eight-dimension self-check (author pass)
 
 - **Correctness:** one mechanism (real session) serves CLI + edge; RLS reused
-  unchanged; spike proves it before dependents build.
-- **Safety:** hashed/one-time/revocable; workspace-scoped role-inherited decision
-  is explicit; keys-only events; `0600`/keychain; immediate revocation at the
+  unchanged; the scope claim is now honest (**user-scoped**, not workspace-scoped)
+  and matches what the exchange actually delivers; spike proves it before
+  dependents build.
+- **Safety:** hashed/one-time/revocable; the **user-scoped** blast radius is stated
+  plainly (a leaked PAT = the user's full access) with mitigations and a deferred
+  fine-grained path; keys-only events; `0600`/keychain; immediate revocation at the
   exchange gate (≤1h residual documented).
-- **Reliability:** expired/revoked/wrong-ws all covered by pgTAP; exchange failure
-  fails closed; fallback ladder named.
+- **Reliability:** identity boundary (U cannot read V), expired, and revoked cases
+  all covered by pgTAP; exchange failure fails closed; fallback ladder named.
 - **Observability:** keys-only auth events on every reject; stable agent-facing
   codes; CLI machine output carries the code.
-- **Efficiency:** re-exchange only when the cached session is expired (CLI);
-  optional isolate-local cache (edge) — no live-JWT at-rest storage.
+- **Efficiency / session-at-rest policy (stated once, plainly):** the **CLI**
+  stores the short-lived exchanged session **at rest, in the same `0600`/keychain
+  store as the PAT**, and re-exchanges only when it has expired. The **edge never
+  persists a minted session** — it re-exchanges per request, with an optional
+  isolate-local *in-memory* cache (no DB/at-rest storage of live JWTs server-side).
+  These are two different layers; the CLI-at-rest choice is deliberate and does
+  not contradict the edge's no-persist rule.
 - **Performance:** per-request exchange cost called out + spike-measured; cache is
   the mitigation, not a correctness dependency.
 - **Simplicity:** reuses `workspace_invite`/`ingest_key_admin`/`api-keys.astro`
