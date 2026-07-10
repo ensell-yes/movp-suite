@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { buildProgram } from '../src/index.ts'
 import { loadCliConfig } from '../src/config.ts'
+import { fileStore } from '../src/secure-store.ts'
 
 const created = { id: 'n1', workspace_id: 'w', title: 'Hello' }
 const noteCreate = vi.fn(async () => created)
@@ -166,6 +167,49 @@ describe('movp CLI', () => {
     } finally {
       if (prev === undefined) delete process.env.MOVP_CONFIG
       else process.env.MOVP_CONFIG = prev
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('login validates the PAT via exchange and stores it (never printing it)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'movp-login-'))
+    const prev = { ...process.env }
+    try {
+      process.env.SUPABASE_URL = 'http://api'
+      process.env.SUPABASE_ANON_KEY = 'anon'
+      process.env.MOVP_SECURE_STORE = 'file'
+      process.env.MOVP_CONFIG = join(dir, 'config.json')
+      const fetchSpy = vi.fn(async () =>
+        new Response(JSON.stringify({ access_token: 'jwt', expires_at: Math.floor(Date.now() / 1000) + 3600, default_workspace_id: 'w1', user_id: 'u1' }), { status: 200 }),
+      )
+      vi.stubGlobal('fetch', fetchSpy)
+      const { cmd, out } = program()
+      await cmd.parseAsync(['node', 'movp', 'login', '--token', 'movp_pat_secret'])
+      expect(fetchSpy).toHaveBeenCalledTimes(1)
+      expect(out.join('\n')).toContain('u1')
+      expect(out.join('\n')).not.toContain('movp_pat_secret')
+      expect(fileStore('http://api', process.env).load().pat).toBe('movp_pat_secret')
+    } finally {
+      vi.unstubAllGlobals()
+      process.env = prev
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('logout clears the stored credentials', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'movp-logout-'))
+    const prev = { ...process.env }
+    try {
+      process.env.SUPABASE_URL = 'http://api'
+      process.env.MOVP_SECURE_STORE = 'file'
+      process.env.MOVP_CONFIG = join(dir, 'config.json')
+      fileStore('http://api', process.env).save({ pat: 'movp_pat_secret' })
+      const { cmd, out } = program()
+      await cmd.parseAsync(['node', 'movp', 'logout'])
+      expect(out.join('\n')).toContain('ok')
+      expect(fileStore('http://api', process.env).load()).toEqual({})
+    } finally {
+      process.env = prev
       rmSync(dir, { recursive: true, force: true })
     }
   })

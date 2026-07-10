@@ -2,8 +2,9 @@ import { Command } from 'commander'
 import type { CollectionDef, FieldDef } from '@movp/core-schema'
 import { schema } from '@movp/core-schema'
 import { createDomain, type CollectionService, type Domain } from '@movp/domain'
-import { resolveCliCtx, type CliCtx } from './client.ts'
-import { writeCliConfig } from './config.ts'
+import { resolveCliCtx, exchangePat, type CliCtx } from './client.ts'
+import { writeCliConfig, loadCliConfig } from './config.ts'
+import { selectSecureStore } from './secure-store.ts'
 
 export interface JobsHandlers {
   replay: (o: { kind?: string; dead?: boolean; workspaceId?: string }) => Promise<void>
@@ -33,6 +34,12 @@ function parseJsonFlag(value: string | undefined, fallback: unknown): unknown {
   } catch {
     throw new Error('invalid_json')
   }
+}
+
+async function readTokenFromStdin(): Promise<string> {
+  const chunks: Buffer[] = []
+  for await (const chunk of process.stdin) chunks.push(chunk as Buffer)
+  return Buffer.concat(chunks).toString('utf8').trim()
 }
 
 export function buildProgram(opts: BuildProgramOpts = {}): Command {
@@ -558,6 +565,35 @@ export function buildProgram(opts: BuildProgramOpts = {}): Command {
     .action((o: { apiUrl: string; anonKey: string; workspace?: string }) => {
       const path = writeCliConfig({ apiUrl: o.apiUrl, anonKey: o.anonKey, defaultWorkspaceId: o.workspace })
       out(JSON.stringify({ ok: true, config: path }))
+    })
+
+  program
+    .command('login')
+    .description('Validate a Personal Access Token via the exchange endpoint and store it securely')
+    .option('--token <pat>', 'PAT (movp_pat_…); read from stdin when omitted')
+    .action(async (o: { token?: string }) => {
+      const pat = (o.token ?? (await readTokenFromStdin())).trim()
+      if (!pat.startsWith('movp_pat_')) throw new Error('a movp_pat_… token is required')
+      const cfg = loadCliConfig()
+      const apiUrl = process.env.SUPABASE_URL ?? cfg?.apiUrl
+      const anonKey = process.env.SUPABASE_ANON_KEY ?? cfg?.anonKey
+      if (!apiUrl || !anonKey) throw new Error('run `movp init` first (apiUrl/anonKey missing)')
+      // exchangePat throws the stable code ('invalid_token'|'expired_token') on reject, so a
+      // bad PAT is never stored. NEVER print `pat` — only the non-secret metadata below.
+      const ex = await exchangePat(pat, apiUrl, anonKey)
+      selectSecureStore(apiUrl).save({ pat, session: { access_token: ex.access_token, expires_at: ex.expires_at } })
+      out(JSON.stringify({ ok: true, user_id: ex.user_id, default_workspace_id: ex.default_workspace_id }))
+    })
+
+  program
+    .command('logout')
+    .description('Clear the stored PAT and cached session')
+    .action(() => {
+      const cfg = loadCliConfig()
+      const apiUrl = process.env.SUPABASE_URL ?? cfg?.apiUrl
+      if (!apiUrl) throw new Error('run `movp init` first (apiUrl missing)')
+      selectSecureStore(apiUrl).clear()
+      out(JSON.stringify({ ok: true }))
     })
 
   program.command('codegen').description('Run the codegen pipeline (Plan 2)').action(async () => {
