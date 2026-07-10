@@ -12,6 +12,7 @@
     "check:quickstart-docs": "node scripts/check-quickstart-docs.mjs",
     "check:onboarding-debt": "node scripts/check-onboarding-debt.mjs",
     "check:supabase-ports": "node scripts/check-supabase-port-strategy.mjs",
+    "check:agent-configs": "node scripts/check-agent-configs.mjs",
     "seed:demo": "tsx scripts/seed-demo.ts",
     "bootstrap": "node scripts/bootstrap.mjs",
     "test": "turbo run test",
