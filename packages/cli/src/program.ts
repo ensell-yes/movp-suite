@@ -5,6 +5,7 @@ import { createDomain, type CollectionService, type Domain } from '@movp/domain'
 import { resolveCliCtx, exchangePat, type CliCtx } from './client.ts'
 import { writeCliConfig, loadCliConfig } from './config.ts'
 import { selectSecureStore } from './secure-store.ts'
+import { searchViaGraphql } from './graphql-client.ts'
 
 export interface JobsHandlers {
   replay: (o: { kind?: string; dead?: boolean; workspaceId?: string }) => Promise<void>
@@ -535,17 +536,35 @@ export function buildProgram(opts: BuildProgramOpts = {}): Command {
   program
     .command('search <query>')
     .requiredOption('--workspace <id>', 'workspace id')
-    .option('--mode <mode>', 'fts only in the direct Node CLI; use GraphQL/MCP for semantic/hybrid')
+    .option('--mode <mode>', 'fts (direct PG) | semantic | hybrid (via the GraphQL edge)')
     .option('--collection <name>', 'restrict to a collection')
     .option('--limit <n>', 'max hits', (v) => parseInt(v, 10))
     .action(async (query: string, o: { workspace: string; mode?: string; collection?: string; limit?: number }) => {
-      if (o.mode && o.mode !== 'fts') {
-        throw new Error('CLI search supports fts only; use GraphQL/MCP for semantic/hybrid search')
+      const ctx = await resolveCtx()
+      if (o.mode === 'semantic' || o.mode === 'hybrid') {
+        const cfg = loadCliConfig()
+        const apiUrl = process.env.SUPABASE_URL ?? cfg?.apiUrl
+        if (!apiUrl) throw new Error('SUPABASE_URL is required for semantic/hybrid search (run `movp init`)')
+        if (!ctx.accessToken) throw new Error('semantic/hybrid search needs a session token (login with a PAT or set MOVP_ACCESS_TOKEN)')
+        out(
+          JSON.stringify(
+            await searchViaGraphql({
+              apiUrl,
+              accessToken: ctx.accessToken,
+              workspaceId: o.workspace,
+              query,
+              mode: o.mode,
+              collection: o.collection,
+              limit: o.limit,
+            }),
+          ),
+        )
+        return
       }
-      const domain = createDomain(await resolveCtx())
+      if (o.mode && o.mode !== 'fts') throw new Error(`unknown search mode: ${o.mode}`)
       out(
         JSON.stringify(
-          await domain.search({
+          await createDomain(ctx).search({
             workspaceId: o.workspace,
             query,
             mode: 'fts',

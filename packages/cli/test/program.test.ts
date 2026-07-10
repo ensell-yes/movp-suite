@@ -220,11 +220,24 @@ describe('movp CLI', () => {
     expect(search).toHaveBeenCalledWith(expect.objectContaining({ workspaceId: 'w', query: 'Hello', mode: 'fts' }))
   })
 
-  it('search rejects semantic and hybrid modes in the direct Node CLI', async () => {
-    const { cmd } = program()
-    await expect(
-      cmd.parseAsync(['node', 'movp', 'search', 'Hello', '--workspace', 'w', '--mode', 'semantic']),
-    ).rejects.toThrow(/CLI search supports fts only/)
+  it('search --mode hybrid routes to the GraphQL edge and returns hits', async () => {
+    const prev = process.env.SUPABASE_URL
+    process.env.SUPABASE_URL = 'http://api'
+    const fetchSpy = vi.fn(async (_input: string | URL | Request, _init?: RequestInit) =>
+      new Response(JSON.stringify({ data: { search: [{ collection: 'note', id: 'n1', title: 'Hello', snippet: 'Hello', score: 0.9 }] } }), { status: 200 }),
+    )
+    vi.stubGlobal('fetch', fetchSpy)
+    try {
+      const { cmd, out } = program({ resolveCtx: () => ({ db: {} as never, userId: 'u', accessToken: 'session-jwt' }) })
+      await cmd.parseAsync(['node', 'movp', 'search', 'Hello', '--workspace', 'w', '--mode', 'hybrid'])
+      expect(fetchSpy).toHaveBeenCalledTimes(1)
+      expect(String(fetchSpy.mock.calls[0]![0])).toContain('/functions/v1/graphql')
+      expect(out.at(-1)).toContain('n1')
+    } finally {
+      vi.unstubAllGlobals()
+      if (prev === undefined) delete process.env.SUPABASE_URL
+      else process.env.SUPABASE_URL = prev
+    }
   })
 
   it('jobs replay forwards to the injected handler', async () => {
