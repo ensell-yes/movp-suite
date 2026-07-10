@@ -5,6 +5,7 @@ export { makeCollabService, resolveShareLink } from './collab.ts'
 export { makeContentService } from './content.ts'
 export { createDomain } from './domain.ts'
 export { makeGraphService } from './graph.ts'
+export { makePatService } from './pat.ts'
 export { runSearch } from './search.ts'
 export { makeTaskService } from './task.ts'
 export { makeWorkflowService } from './workflows.ts'
@@ -15,6 +16,7 @@ export type {
   CollabService,
   CollectionService,
   ContentService,
+  CreatedPat,
   DeadJobRow,
   Domain,
   DomainCtx,
@@ -25,6 +27,8 @@ export type {
   InboxItem,
   ListArgs,
   Page,
+  PatService,
+  PatTokenRow,
   SearchArgs,
   SearchHit,
   TaskBoardColumn,
