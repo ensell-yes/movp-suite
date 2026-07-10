@@ -1,4 +1,4 @@
-export type Surface = 'graphql' | 'mcp' | 'cli' | 'flows' | 'embed' | 'ingest'
+export type Surface = 'graphql' | 'mcp' | 'cli' | 'flows' | 'embed' | 'ingest' | 'exchange'
 
 export interface ObsEvent {
   trace_id: string
