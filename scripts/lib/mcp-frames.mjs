@@ -11,7 +11,7 @@ export function env(name, fallback) {
 }
 
 // Streamable HTTP returns a raw JSON body OR an SSE stream (event: message /
-// data: {…}); mcp-remote emits newline-delimited JSON over stdio. Normalise all.
+// data: {…}); the MOVP bridge emits newline-delimited JSON over stdio. Normalise all.
 export function parseRpc(body) {
   const trimmed = body.trim()
   if (trimmed.startsWith('{')) {

@@ -1,5 +1,11 @@
 # MOVP Stage C3d — `[agents]` End-to-End Slice + CI
 
+> **EXECUTION DEVIATION (2026-07-10):** `mcp-remote@0.1.38` intermittently dropped static PAT
+> headers and attempted OAuth during the C3c gate, so the plan-sanctioned fallback shipped as
+> `@movp/mcp-bridge`. The executed slice uses `scripts/mcp-bridge-probe.mjs`; see
+> `docs/agents/mcp/stdio-bridge.md` for the decision and supported configuration. References to
+> `mcp-remote` below are preserved as the original TDD instructions, not the current runtime path.
+
 > **For agentic workers (Codex):** implement task-by-task with TDD. Steps use checkbox
 > (`- [ ]`) syntax. Transcribe the bash verbatim — it is grounded in the real committed
 > `scripts/slice-e2e.sh` (line-verified 2026-07-09), the frozen C3 contracts, and the

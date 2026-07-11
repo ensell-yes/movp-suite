@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 // MCP stdio smoke via @movp/mcp-bridge. The community mcp-remote@0.1.38 path
 // was rejected because it intermittently dropped PAT auth and attempted OAuth.
+// Manual local-stack gate; the CI slice covers tools/list, while this script keeps
+// a focused stdio tools/call check for bridge diagnosis.
 import { spawn } from 'node:child_process'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -17,8 +19,8 @@ function waitFor(map, id, child, timeoutMs = 90000) {
     const t0 = Date.now()
     const iv = setInterval(() => {
       if (map.has(id)) { clearInterval(iv); resolve(map.get(id)) }
-      else if (child.exitCode !== null) { clearInterval(iv); reject(new Error(`mcp-remote exited ${child.exitCode} before JSON-RPC id=${id}`)) }
-      else if (Date.now() - t0 > timeoutMs) { clearInterval(iv); reject(new Error(`timed out waiting for JSON-RPC id=${id} from mcp-remote`)) }
+      else if (child.exitCode !== null) { clearInterval(iv); reject(new Error(`@movp/mcp-bridge exited ${child.exitCode} before JSON-RPC id=${id}`)) }
+      else if (Date.now() - t0 > timeoutMs) { clearInterval(iv); reject(new Error(`timed out waiting for JSON-RPC id=${id} from @movp/mcp-bridge`)) }
     }, 200)
   })
 }

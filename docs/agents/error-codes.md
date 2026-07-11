@@ -14,6 +14,9 @@ friendly message. These four codes are **stable** — agents branch on them and 
 (A revoked PAT collapses to `invalid_token` at the principal boundary — agents should re-auth, not
 retry the same token.)
 
+Revocation blocks new PAT exchanges immediately; already-minted sessions can remain valid for up to
+1 hour, until their JWT expires. Rotate credentials and terminate active agent processes after a leak.
+
 ## Tool naming
 Tools are `<collection>.<verb>` for schema collections (e.g. `task.list`, `task.create`,
 `content.publish`) and `<domain>.<verb>` for cross-cutting domains (e.g. `workflow.event_types`,

@@ -2,20 +2,21 @@
 // Config-lint for the per-client MCP samples under docs/agents/mcp/.
 // Asserts: (1) each sample points at the real streamable-HTTP endpoint path,
 // (2) the bearer/auth shape is correct per client, (3) every documented
-// tools/call example names a CURRENTLY-registered MCP tool (drift guard vs.
-// packages/mcp/src/server.ts). Section 4 (error-codes + llms.txt presence) is
-// appended in Task C3c.4.
+// tools/call example names a CURRENTLY-registered MCP tool, and (4) consumer
+// docs and bridge runtime references remain aligned with the implementation.
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { dirname, extname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const MCP_ENDPOINT_PATH = '/functions/v1/mcp'
+const REVOCATION_WINDOW = 'already-minted sessions can remain valid for up to 1 hour'
 const serverPath = join(root, 'packages', 'mcp', 'src', 'server.ts')
 const mcpDir = join(root, 'docs', 'agents', 'mcp')
 
 const errors = []
 const fail = (msg) => errors.push(msg)
+const includesNormalized = (text, expected) => text.replace(/\s+/g, ' ').includes(expected)
 
 // --- 1. Registered MCP tool names (literal registrations only; the dynamic
 //        `${c.name}.*` collection tools are intentionally excluded so docs must
@@ -72,13 +73,13 @@ for (const s of samples) {
 
 // --- 3. Every documented tools/call example must name a registered tool ---
 const tools = registeredTools()
-function walk(dir) {
+function walk(dir, extensions = new Set(['.md', '.txt'])) {
   if (!existsSync(dir)) return []
   const out = []
   for (const e of readdirSync(dir, { withFileTypes: true })) {
     const fp = join(dir, e.name)
-    if (e.isDirectory()) out.push(...walk(fp))
-    else if (['.md', '.txt'].includes(extname(e.name))) out.push(fp)
+    if (e.isDirectory()) out.push(...walk(fp, extensions))
+    else if (extensions.has(extname(e.name))) out.push(fp)
   }
   return out
 }
@@ -105,6 +106,7 @@ if (!existsSync(errCodesDoc)) fail('missing docs/agents/error-codes.md')
 else {
   const t = readFileSync(errCodesDoc, 'utf8')
   for (const c of STABLE_CODES) if (!t.includes(`| \`${c}\` |`)) fail(`error-codes.md missing stable code: ${c}`)
+  if (!includesNormalized(t, REVOCATION_WINDOW)) fail('error-codes.md must document the PAT revocation residual window')
 }
 const llms = join(root, 'llms.txt')
 if (!existsSync(llms)) fail('missing repo-root llms.txt')
@@ -118,8 +120,10 @@ else {
 }
 const agentsTemplate = join(root, 'docs', 'agents', 'AGENTS.template.md')
 if (!existsSync(agentsTemplate)) fail('missing docs/agents/AGENTS.template.md (consumer template)')
-else if (!readFileSync(agentsTemplate, 'utf8').startsWith('<!-- MOVP consumer AGENTS.md template.')) {
-  fail('AGENTS.template.md must start with the consumer-template marker')
+else {
+  const t = readFileSync(agentsTemplate, 'utf8')
+  if (!t.startsWith('<!-- MOVP consumer AGENTS.md template.')) fail('AGENTS.template.md must start with the consumer-template marker')
+  if (!includesNormalized(t, REVOCATION_WINDOW)) fail('AGENTS.template.md must document the PAT revocation residual window')
 }
 const stdioDoc = join(mcpDir, 'stdio-bridge.md')
 if (!existsSync(stdioDoc)) fail('missing docs/agents/mcp/stdio-bridge.md')
@@ -129,6 +133,24 @@ else {
   if (/npx\s+(?:-y\s+)?mcp-remote/.test(t)) fail('stdio-bridge.md must not recommend the rejected mcp-remote path')
 }
 if (!existsSync(join(root, 'packages', 'mcp-bridge', 'src', 'index.ts'))) fail('missing @movp/mcp-bridge implementation')
+
+const scriptFiles = walk(join(root, 'scripts'), new Set(['.js', '.mjs', '.ts', '.sh']))
+for (const file of scriptFiles) {
+  if (file.endsWith('check-agent-configs.mjs')) continue
+  const t = readFileSync(file, 'utf8')
+  if (/mcp-remote (?:emits|exited)|from mcp-remote/.test(t)) {
+    fail(`${file}: stale mcp-remote runtime diagnostic; use @movp/mcp-bridge`)
+  }
+  if (/spawn\([\s\S]{0,400}mcp-remote@|const\s+args\s*=\s*\[[\s\S]{0,400}mcp-remote@/.test(t)) {
+    fail(`${file}: executable mcp-remote path is rejected; use @movp/mcp-bridge`)
+  }
+}
+
+const c3dPlan = join(root, 'docs', 'superpowers', 'plans', '2026-07-09-movp-stage-c-03d-agents-slice.md')
+if (!existsSync(c3dPlan)) fail('missing executed C3d plan')
+else if (!readFileSync(c3dPlan, 'utf8').includes('**EXECUTION DEVIATION (2026-07-10):**')) {
+  fail('C3d plan must preserve the mcp-remote execution-deviation banner')
+}
 
 if (errors.length) {
   console.error('agent-config lint: FAIL')

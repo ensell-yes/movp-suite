@@ -2,6 +2,8 @@
 // MCP streamable-HTTP smoke: seed a PAT -> initialize -> tools/list -> tools/call
 // (one safe read tool). Prints the exact JSON-RPC frames. Also proves a bad PAT
 // is rejected 401 invalid_token.
+// Manual local-stack gate; the CI slice covers the primary agent path, while this
+// script retains initialize framing and bogus-PAT coverage for focused diagnosis.
 // GOTCHA: endpoint is /functions/v1/mcp (streamable HTTP, SDK 1.26.0, STATELESS:
 // each POST is independent, no Mcp-Session-Id). Responses may be raw JSON or SSE
 // (event: message / data: {…}) -> parseRpc() normalises both.

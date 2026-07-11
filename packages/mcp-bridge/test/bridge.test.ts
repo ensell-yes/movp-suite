@@ -67,11 +67,16 @@ function waitForLine(child: ChildProcessWithoutNullStreams, id: number): Promise
 
 describe('movp-mcp-bridge', () => {
   it('forwards tools/list from stdio to streamable HTTP', async () => {
+    const seenHeaders: Array<{ authorization: string | undefined; apikey: string | undefined }> = []
     upstream = createServer((request, response) => {
       if (request.method !== 'POST') {
         response.writeHead(202).end()
         return
       }
+      seenHeaders.push({
+        authorization: request.headers.authorization,
+        apikey: typeof request.headers.apikey === 'string' ? request.headers.apikey : undefined,
+      })
       let raw = ''
       request.setEncoding('utf8')
       request.on('data', (chunk: string) => { raw += chunk })
@@ -96,6 +101,7 @@ describe('movp-mcp-bridge', () => {
       env: {
         HOME: process.env.HOME ?? '',
         MOVP_MCP_URL: `http://127.0.0.1:${address.port}`,
+        MOVP_MCP_APIKEY: 'anon-test-key',
         MOVP_PAT: 'movp_pat_test',
         PATH: process.env.PATH ?? '',
       },
@@ -109,5 +115,10 @@ describe('movp-mcp-bridge', () => {
     const listed = await waitForLine(bridge, 2)
 
     expect(listed).toMatchObject({ result: { tools: [{ name: 'task.list' }] } })
+    expect(seenHeaders.length).toBeGreaterThan(0)
+    expect(seenHeaders).toEqual(seenHeaders.map(() => ({
+      authorization: 'Bearer movp_pat_test',
+      apikey: 'anon-test-key',
+    })))
   })
 })

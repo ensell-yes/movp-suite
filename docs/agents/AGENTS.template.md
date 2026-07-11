@@ -16,6 +16,8 @@ This project exposes a MOVP instance over MCP (streamable HTTP) and the `movp` C
 - Enumerate tools with `tools/list`; tools are named `<collection>.<verb>` / `<domain>.<verb>`.
 - On `invalid_token` / `expired_token` (HTTP 401), re-authenticate — do not blind-retry. Full code
   list: `docs/agents/error-codes.md`.
+- Revocation blocks new PAT exchanges immediately; already-minted sessions can remain valid for up to
+  1 hour. Terminate active agent processes when rotating a leaked credential.
 
 ## Example
 ```json
