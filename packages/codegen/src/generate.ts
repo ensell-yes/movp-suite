@@ -76,6 +76,18 @@ async function readIfPresent(f: Fs, path: string): Promise<string | null> {
   return f.readFile(path, 'utf8')
 }
 
+async function assertSafeWriteTarget(f: Fs, path: string, label: string): Promise<void> {
+  let info: Awaited<ReturnType<Fs['lstat']>>
+  try {
+    info = await f.lstat(path)
+  } catch (error: unknown) {
+    if (isMissing(error)) return
+    throw error
+  }
+  if (info.isSymbolicLink()) throw new Error(`${label} is a symlink: ${path}`)
+  if (!info.isFile()) throw new Error(`${label} is not a regular file: ${path}`)
+}
+
 export async function generate(
   options: GenerateOptions = {},
 ): Promise<{ migrationPath: string; typesPath: string; deltaPaths: string[] }> {
@@ -117,10 +129,12 @@ export async function generate(
   const deltaPaths: string[] = []
   for (const delta of deltas) {
     const deltaPath = joinPath(migrationsDir, delta.file)
+    await assertSafeWriteTarget(f, deltaPath, 'generated delta')
     await f.writeFile(deltaPath, delta.emit(schema))
     deltaPaths.push(deltaPath)
   }
 
+  await assertSafeWriteTarget(f, typesPath, 'generated types output')
   await f.writeFile(typesPath, emitTypes(schema))
 
   return { migrationPath, typesPath, deltaPaths }

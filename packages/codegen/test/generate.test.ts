@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readdir, readFile, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -57,5 +57,15 @@ describe('generate() generated-delta strategy (C4a.1)', () => {
     const { root } = await freshRoot()
     const delta = { file: '../escape.sql', emit: () => '-- must not be written' }
     await expect(generate({ root, deltas: [delta] })).rejects.toThrow(/invalid generated delta filename/)
+  })
+
+  it('rejects a delta symlink without overwriting its target', async () => {
+    const { root, migrationsDir } = await freshRoot()
+    const target = join(root, 'outside.sql')
+    const file = '20990101000001_movp_generated_reporting.sql'
+    await writeFile(target, '-- outside')
+    await symlink(target, join(migrationsDir, file))
+    await expect(generate({ root, deltas: [{ file, emit: () => '-- overwritten' }] })).rejects.toThrow(/symlink/)
+    expect(await readFile(target, 'utf8')).toBe('-- outside')
   })
 })
