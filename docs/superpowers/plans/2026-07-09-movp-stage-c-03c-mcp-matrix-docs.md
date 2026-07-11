@@ -1,5 +1,10 @@
 # MOVP Stage C3c — MCP HTTP Client Matrix + stdio Bridge + Agent Docs
 
+> **EXECUTION DEVIATION (2026-07-10):** the conditional fallback in C3c.3 was activated after
+> `mcp-remote@0.1.38` intermittently dropped static PAT headers and attempted OAuth. The supported
+> stdio path is `@movp/mcp-bridge`; see `docs/agents/mcp/stdio-bridge.md`. References and samples for
+> `mcp-remote` below are preserved as the original fail-first path, not a current recommendation.
+
 > **For agentic workers (Codex):** implement task-by-task with TDD. Steps use checkbox
 > (`- [ ]`) syntax. Transcribe the code/config samples **verbatim** — they are grounded in the
 > committed code (`supabase/functions/mcp/index.ts`, `packages/mcp/src/server.ts`,

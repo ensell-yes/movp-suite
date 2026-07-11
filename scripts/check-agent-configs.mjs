@@ -146,7 +146,14 @@ for (const file of scriptFiles) {
   }
 }
 
-const c3dPlan = join(root, 'docs', 'superpowers', 'plans', '2026-07-09-movp-stage-c-03d-agents-slice.md')
+const c3PlansDir = join(root, 'docs', 'superpowers', 'plans')
+const c3cPlan = join(c3PlansDir, '2026-07-09-movp-stage-c-03c-mcp-matrix-docs.md')
+if (!existsSync(c3cPlan)) fail('missing executed C3c plan')
+else if (!readFileSync(c3cPlan, 'utf8').includes('**EXECUTION DEVIATION (2026-07-10):**')) {
+  fail('C3c plan must preserve the mcp-remote execution-deviation banner')
+}
+
+const c3dPlan = join(c3PlansDir, '2026-07-09-movp-stage-c-03d-agents-slice.md')
 if (!existsSync(c3dPlan)) fail('missing executed C3d plan')
 else if (!readFileSync(c3dPlan, 'utf8').includes('**EXECUTION DEVIATION (2026-07-10):**')) {
   fail('C3d plan must preserve the mcp-remote execution-deviation banner')
