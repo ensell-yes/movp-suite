@@ -1,0 +1,19 @@
+{
+  "servers": {
+    "movp": {
+      "type": "http",
+      "url": "https://your-project-ref.supabase.co/functions/v1/mcp",
+      "headers": {
+        "Authorization": "Bearer ${input:movpPat}"
+      }
+    }
+  },
+  "inputs": [
+    {
+      "id": "movpPat",
+      "type": "promptString",
+      "description": "MOVP Personal Access Token (movp_pat_…)",
+      "password": true
+    }
+  ]
+}

@@ -282,6 +282,27 @@ export interface IngestKeySecret {
   rawKey: string
 }
 
+export interface PatTokenRow {
+  id: string
+  name: string
+  default_workspace_id: string
+  created_at: string
+  last_used_at: string | null
+  expires_at: string | null
+  revoked_at: string | null
+}
+
+export interface CreatedPat {
+  tokenId: string
+  token: string
+}
+
+export interface PatService {
+  createToken(i: { defaultWorkspaceId: string; name: string; ttlDays?: number | null }): Promise<CreatedPat>
+  listTokens(): Promise<PatTokenRow[]>
+  revokeToken(i: { tokenId: string }): Promise<void>
+}
+
 export interface DeadJobRow {
   id: string
   kind: string
@@ -344,4 +365,5 @@ export interface Domain {
   campaign: CampaignService
   workflows: WorkflowService
   admin: AdminService
+  pat: PatService
 }

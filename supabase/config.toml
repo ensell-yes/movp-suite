@@ -21,6 +21,11 @@ verify_jwt = false
 [functions.ingest]
 verify_jwt = false
 
+# The CLI exchanges a movp_pat_ token for a session here with NO session JWT; the function does
+# its OWN fail-closed PAT auth (verify_jwt would 401 the PAT before our code runs).
+[functions.auth-exchange]
+verify_jwt = false
+
 [api]
 enabled = true
 # Port to use for the API URL.

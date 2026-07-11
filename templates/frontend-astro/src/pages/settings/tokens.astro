@@ -1,0 +1,142 @@
+---
+import Base from '../../layouts/Base.astro'
+import AuthFailure from '../../components/states/AuthFailure.astro'
+import ErrorRetry from '../../components/states/ErrorRetry.astro'
+import EmptyState from '../../components/states/EmptyState.astro'
+import { readServerEnv } from '../../lib/env.ts'
+import { gqlRequest } from '../../lib/graphql.ts'
+import { getSessionToken } from '../../lib/session.ts'
+import {
+  CREATE_PAT_MUTATION,
+  PERSONAL_ACCESS_TOKENS_QUERY,
+  REVOKE_PAT_MUTATION,
+  type CreatedPat,
+  type PersonalAccessToken,
+} from '../../lib/pat-queries.ts'
+
+type TokensData = { personalAccessTokens: PersonalAccessToken[] }
+
+const token = getSessionToken(Astro.cookies)
+let state: 'auth' | 'error' | 'empty' | 'ok' = 'auth'
+let tokens: PersonalAccessToken[] = []
+let notice = ''
+let formError = ''
+let oneTimeToken: CreatedPat | null = null
+
+if (token) {
+  Astro.response.headers.set('Cache-Control', 'no-store')
+  state = 'ok'
+  // no-arg readServerEnv() (NOT process.env, NOT readServerEnv(ctx.locals)).
+  const { graphqlEndpoint, workspaceId } = readServerEnv()
+
+  if (Astro.request.method === 'POST') {
+    const form = await Astro.request.formData()
+    const action = String(form.get('action') ?? '')
+    if (action === 'create') {
+      const result = await gqlRequest<{ createPersonalAccessToken: CreatedPat }>(
+        { endpoint: graphqlEndpoint, token },
+        CREATE_PAT_MUTATION,
+        { defaultWorkspaceId: workspaceId, name: String(form.get('name') ?? ''), ttlDays: null },
+      )
+      if (!result.ok && result.code === 'auth_error') state = 'auth'
+      else if (!result.ok) formError = result.message ?? 'Could not create access token.'
+      else {
+        oneTimeToken = result.data.createPersonalAccessToken
+        notice = 'Access token created.'
+      }
+    } else if (action === 'revoke') {
+      if (form.get('confirm_revoke') !== '1') {
+        formError = 'Confirm revocation before continuing.'
+      } else {
+        const result = await gqlRequest(
+          { endpoint: graphqlEndpoint, token },
+          REVOKE_PAT_MUTATION,
+          { tokenId: String(form.get('tokenId') ?? '') },
+        )
+        if (!result.ok && result.code === 'auth_error') state = 'auth'
+        else if (!result.ok) formError = result.message ?? 'Could not revoke access token.'
+        else notice = 'Access token revoked.'
+      }
+    }
+  }
+
+  if (state !== 'auth') {
+    const result = await gqlRequest<TokensData>({ endpoint: graphqlEndpoint, token }, PERSONAL_ACCESS_TOKENS_QUERY, {})
+    if (!result.ok && result.code === 'auth_error') state = 'auth'
+    else if (!result.ok) state = 'error'
+    else {
+      tokens = result.data.personalAccessTokens
+      state = tokens.length === 0 ? 'empty' : 'ok'
+    }
+  }
+}
+---
+<Base title="Personal Access Tokens">
+  <h1 tabindex="-1" id="settings-tokens-heading">Personal Access Tokens</h1>
+  <p>Tokens grant your full access across your workspaces. Store them securely and revoke any you no longer use.</p>
+  {state === 'auth' && <AuthFailure resource="personal access tokens" />}
+  {state === 'error' && <ErrorRetry message="Could not load personal access tokens." retryHref={Astro.url.pathname} />}
+  {notice && <p role="status" data-testid="tokens-notice">{notice}</p>}
+  {formError && <p role="alert" data-testid="tokens-form-error">{formError}</p>}
+
+  {oneTimeToken && (
+    <section data-testid="pat-secret" role="status" aria-labelledby="pat-secret-heading">
+      <h2 id="pat-secret-heading">One-time access token</h2>
+      <p>Store this token now. It will not be shown again.</p>
+      <code>{oneTimeToken.token}</code>
+      <script is:inline>
+        history.replaceState(null, '', location.pathname)
+      </script>
+    </section>
+  )}
+
+  {(state === 'ok' || state === 'empty') && (
+    <section aria-labelledby="create-pat-heading">
+      <h2 id="create-pat-heading">Create token</h2>
+      <form method="post" data-testid="pat-create-form">
+        <input type="hidden" name="action" value="create" />
+        <label>
+          Name
+          <input name="name" required />
+        </label>
+        <button type="submit">Create access token</button>
+      </form>
+    </section>
+  )}
+
+  {state === 'empty' && <EmptyState message="No personal access tokens yet." />}
+
+  {state === 'ok' && (
+    <table data-testid="pat-tokens">
+      <thead>
+        <tr><th>Name</th><th>Status</th><th>Created</th><th>Last used</th><th>Actions</th></tr>
+      </thead>
+      <tbody>
+        {tokens.map((pat) => (
+          <tr>
+            <td>{pat.name}</td>
+            <td>{pat.revokedAt ? 'revoked' : 'active'}</td>
+            <td>{pat.createdAt}</td>
+            <td>{pat.lastUsedAt ?? '—'}</td>
+            <td>
+              <form method="post">
+                <input type="hidden" name="action" value="revoke" />
+                <input type="hidden" name="tokenId" value={pat.id} />
+                <label>
+                  <input
+                    type="checkbox"
+                    name="confirm_revoke"
+                    value="1"
+                    aria-label={`Confirm revocation of access token ${pat.name}`}
+                  />
+                  Confirm revocation
+                </label>
+                <button type="submit" aria-label={`Revoke access token ${pat.name}`}>Revoke token</button>
+              </form>
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  )}
+</Base>

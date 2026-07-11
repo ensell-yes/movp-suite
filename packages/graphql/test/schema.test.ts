@@ -62,6 +62,15 @@ describe('buildSchema', () => {
     expect(sdl).toContain('tags: [Tag!]!')
   })
 
+  it('exposes the PAT surfaces (self-service, user-scoped)', () => {
+    const sdl = printSchema(buildSchema(movpSchema))
+    expect(sdl).toContain('type PersonalAccessToken')
+    expect(sdl).toContain('type CreatedPat')
+    expect(sdl).toContain('personalAccessTokens: [PersonalAccessToken!]!')
+    expect(sdl).toContain('createPersonalAccessToken(')
+    expect(sdl).toContain('revokePersonalAccessToken(')
+  })
+
   it('strips id and workspace_id from generic update patches', async () => {
     mocks.noteUpdate.mockClear()
     const result = await graphql({

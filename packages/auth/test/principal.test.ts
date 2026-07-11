@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { createServer, type Server } from 'node:http'
 import { exportJWK, generateKeyPair, SignJWT } from 'jose'
 import type { KeyLike } from 'jose'
@@ -6,7 +6,7 @@ import { resolvePrincipal } from '../src/principal.ts'
 
 let SUPABASE_URL = ''
 let ISS = ''
-let env: { SUPABASE_URL: string; SUPABASE_ANON_KEY: string }
+let env: { SUPABASE_URL: string; SUPABASE_ANON_KEY: string; SUPABASE_SERVICE_ROLE_KEY: string }
 const KID = 'test-key-1'
 const ES_KID = 'test-key-2'
 const SUB = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
@@ -47,7 +47,7 @@ beforeAll(async () => {
   if (!address || typeof address === 'string') throw new Error('failed to bind jwks test server')
   SUPABASE_URL = `http://127.0.0.1:${address.port}`
   ISS = `${SUPABASE_URL}/auth/v1`
-  env = { SUPABASE_URL, SUPABASE_ANON_KEY: 'anon-test-key' }
+  env = { SUPABASE_URL, SUPABASE_ANON_KEY: 'anon-test-key', SUPABASE_SERVICE_ROLE_KEY: 'service-role-test-key' }
 })
 
 afterAll(() => {
@@ -136,5 +136,41 @@ describe('resolvePrincipal', () => {
     const token = await sign(rsPriv, 'RS256', { iss: ISS, aud: 'authenticated', sub: SUB }, past)
     const r = await resolvePrincipal(req(token), env)
     expect(r).toEqual({ ok: false, code: 'expired_token' })
+  })
+})
+
+describe('resolvePrincipal PAT branch (production-shaped: real branch, injected exchange)', () => {
+  it('routes a movp_pat_ token through the exchange and returns an RLS principal', async () => {
+    const resolvePat = vi.fn(async () => ({
+      ok: true as const, userId: SUB, defaultWorkspaceId: 'w1', accessToken: 'minted.jwt.token', expiresAt: 9999999999,
+    }))
+    const r = await resolvePrincipal(req('movp_pat_deadbeef'), env, { resolvePat })
+    expect(resolvePat).toHaveBeenCalledOnce()
+    expect(r.ok).toBe(true)
+    if (r.ok) {
+      expect(r.userId).toBe(SUB)
+      const dbState = r.db as unknown as { headers?: Record<string, string> }
+      expect(dbState.headers?.Authorization).toBe('Bearer minted.jwt.token')
+    }
+  })
+
+  it('maps an exchange invalid_token to the principal code', async () => {
+    const resolvePat = vi.fn(async () => ({ ok: false as const, code: 'invalid_token' as const }))
+    const r = await resolvePrincipal(req('movp_pat_bad'), env, { resolvePat })
+    expect(r).toEqual({ ok: false, code: 'invalid_token' })
+  })
+
+  it('maps an exchange expired_token to the principal code', async () => {
+    const resolvePat = vi.fn(async () => ({ ok: false as const, code: 'expired_token' as const }))
+    const r = await resolvePrincipal(req('movp_pat_expired'), env, { resolvePat })
+    expect(r).toEqual({ ok: false, code: 'expired_token' })
+  })
+
+  it('does NOT invoke the exchange for a non-PAT JWT token (JWT path byte-identical)', async () => {
+    const resolvePat = vi.fn(async () => ({ ok: false as const, code: 'invalid_token' as const }))
+    const token = await sign(rsPriv, 'RS256', { iss: ISS, aud: 'authenticated', sub: SUB })
+    const r = await resolvePrincipal(req(token), env, { resolvePat })
+    expect(resolvePat).not.toHaveBeenCalled()
+    expect(r.ok).toBe(true)
   })
 })

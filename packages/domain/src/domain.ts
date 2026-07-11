@@ -72,6 +72,7 @@ import { makeCollabService } from './collab.ts'
 import { makeCollectionService } from './collection.ts'
 import { makeContentService } from './content.ts'
 import { makeGraphService } from './graph.ts'
+import { makePatService } from './pat.ts'
 import { runSearch } from './search.ts'
 import { makeTaskService } from './task.ts'
 import type { Domain, DomainCtx, EmbeddingProvider } from './types.ts'
@@ -108,5 +109,6 @@ export function createDomain(ctx: DomainCtx, opts: { embedder?: EmbeddingProvide
     campaign: Object.assign(makeCollectionService<CampaignRow, CampaignCreate, CampaignUpdate>(ctx, { table: 'campaign' }), makeCampaignService(ctx)),
     workflows: makeWorkflowService(ctx),
     admin: makeAdminService(ctx),
+    pat: makePatService(ctx),
   }
 }

@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createDomain } from '@movp/domain'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { buildProgram } from '../src/index.ts'
+import { loadCliConfig } from '../src/config.ts'
+import { fileStore } from '../src/secure-store.ts'
 
 const created = { id: 'n1', workspace_id: 'w', title: 'Hello' }
 const noteCreate = vi.fn(async () => created)
@@ -143,11 +148,77 @@ function program(opts: Partial<Parameters<typeof buildProgram>[0]> = {}) {
 }
 
 describe('movp CLI', () => {
+  it('does not accept a PAT through an argv option', () => {
+    const { cmd } = program()
+    const login = cmd.commands.find((command) => command.name() === 'login')
+    expect(login).toBeDefined()
+    expect(login?.options.map((option) => option.long)).not.toContain('--token')
+  })
+
   it('creates a note through the generated collection command', async () => {
     const { cmd, out } = program()
     await cmd.parseAsync(['node', 'movp', 'note', 'create', '--workspace', 'w', '--title', 'Hello'])
     expect(noteCreate).toHaveBeenCalledWith(expect.objectContaining({ workspace_id: 'w', title: 'Hello' }))
     expect(out[0]).toContain('Hello')
+  })
+
+  it('init writes the CLI config file', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'movp-init-'))
+    const prev = process.env.MOVP_CONFIG
+    process.env.MOVP_CONFIG = join(dir, 'config.json')
+    try {
+      const { cmd, out } = program()
+      await cmd.parseAsync(['node', 'movp', 'init', '--api-url', 'http://api', '--anon-key', 'anon', '--workspace', 'w1'])
+      expect(out[0]).toContain(join(dir, 'config.json'))
+      expect(loadCliConfig({ MOVP_CONFIG: join(dir, 'config.json') })).toEqual({ apiUrl: 'http://api', anonKey: 'anon', defaultWorkspaceId: 'w1' })
+    } finally {
+      if (prev === undefined) delete process.env.MOVP_CONFIG
+      else process.env.MOVP_CONFIG = prev
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('login validates the PAT via exchange and stores it (never printing it)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'movp-login-'))
+    const prev = { ...process.env }
+    try {
+      process.env.SUPABASE_URL = 'http://api'
+      process.env.SUPABASE_ANON_KEY = 'anon'
+      process.env.MOVP_SECURE_STORE = 'file'
+      process.env.MOVP_CONFIG = join(dir, 'config.json')
+      const fetchSpy = vi.fn(async () =>
+        new Response(JSON.stringify({ access_token: 'jwt', expires_at: Math.floor(Date.now() / 1000) + 3600, default_workspace_id: 'w1', user_id: 'u1' }), { status: 200 }),
+      )
+      vi.stubGlobal('fetch', fetchSpy)
+      const { cmd, out } = program({ readLoginToken: async () => 'movp_pat_secret' })
+      await cmd.parseAsync(['node', 'movp', 'login'])
+      expect(fetchSpy).toHaveBeenCalledTimes(1)
+      expect(out.join('\n')).toContain('u1')
+      expect(out.join('\n')).not.toContain('movp_pat_secret')
+      expect(fileStore('http://api', process.env).load().pat).toBe('movp_pat_secret')
+    } finally {
+      vi.unstubAllGlobals()
+      process.env = prev
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('logout clears the stored credentials', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'movp-logout-'))
+    const prev = { ...process.env }
+    try {
+      process.env.SUPABASE_URL = 'http://api'
+      process.env.MOVP_SECURE_STORE = 'file'
+      process.env.MOVP_CONFIG = join(dir, 'config.json')
+      fileStore('http://api', process.env).save({ pat: 'movp_pat_secret' })
+      const { cmd, out } = program()
+      await cmd.parseAsync(['node', 'movp', 'logout'])
+      expect(out.join('\n')).toContain('ok')
+      expect(fileStore('http://api', process.env).load()).toEqual({})
+    } finally {
+      process.env = prev
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 
   it('search uses fts mode in the direct Node CLI', async () => {
@@ -156,11 +227,24 @@ describe('movp CLI', () => {
     expect(search).toHaveBeenCalledWith(expect.objectContaining({ workspaceId: 'w', query: 'Hello', mode: 'fts' }))
   })
 
-  it('search rejects semantic and hybrid modes in the direct Node CLI', async () => {
-    const { cmd } = program()
-    await expect(
-      cmd.parseAsync(['node', 'movp', 'search', 'Hello', '--workspace', 'w', '--mode', 'semantic']),
-    ).rejects.toThrow(/CLI search supports fts only/)
+  it('search --mode hybrid routes to the GraphQL edge and returns hits', async () => {
+    const prev = process.env.SUPABASE_URL
+    process.env.SUPABASE_URL = 'http://api'
+    const fetchSpy = vi.fn(async (_input: string | URL | Request, _init?: RequestInit) =>
+      new Response(JSON.stringify({ data: { search: [{ collection: 'note', id: 'n1', title: 'Hello', snippet: 'Hello', score: 0.9 }] } }), { status: 200 }),
+    )
+    vi.stubGlobal('fetch', fetchSpy)
+    try {
+      const { cmd, out } = program({ resolveCtx: () => ({ db: {} as never, userId: 'u', accessToken: 'session-jwt' }) })
+      await cmd.parseAsync(['node', 'movp', 'search', 'Hello', '--workspace', 'w', '--mode', 'hybrid'])
+      expect(fetchSpy).toHaveBeenCalledTimes(1)
+      expect(String(fetchSpy.mock.calls[0]![0])).toContain('/functions/v1/graphql')
+      expect(out.at(-1)).toContain('n1')
+    } finally {
+      vi.unstubAllGlobals()
+      if (prev === undefined) delete process.env.SUPABASE_URL
+      else process.env.SUPABASE_URL = prev
+    }
   })
 
   it('jobs replay forwards to the injected handler', async () => {

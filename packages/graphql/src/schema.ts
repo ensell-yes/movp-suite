@@ -8,10 +8,12 @@ import {
   AdminDomainError,
   resolveShareLink,
   type CollectionService,
+  type CreatedPat,
   type Domain,
   type DeadJobRow,
   type InboxItem,
   type Page,
+  type PatTokenRow,
   type SearchHit,
   type TaskBoardColumn,
   type TaskRow,
@@ -188,6 +190,23 @@ export function buildSchema(schema: MovpSchema): GraphQLSchema {
   })
   const replayDeadJobsRef = builder.objectRef<{ replayed: number }>('ReplayDeadJobsResult').implement({
     fields: (t) => ({ replayed: t.exposeInt('replayed') }),
+  })
+  const personalAccessTokenRef = builder.objectRef<PatTokenRow>('PersonalAccessToken').implement({
+    fields: (t) => ({
+      id: t.exposeID('id', { nullable: false }),
+      name: t.exposeString('name', { nullable: false }),
+      defaultWorkspaceId: t.exposeID('default_workspace_id', { nullable: false }),
+      createdAt: t.exposeString('created_at', { nullable: false }),
+      lastUsedAt: t.string({ nullable: true, resolve: (r) => r.last_used_at }),
+      expiresAt: t.string({ nullable: true, resolve: (r) => r.expires_at }),
+      revokedAt: t.string({ nullable: true, resolve: (r) => r.revoked_at }),
+    }),
+  })
+  const createdPatRef = builder.objectRef<CreatedPat>('CreatedPat').implement({
+    fields: (t) => ({
+      tokenId: t.exposeID('tokenId', { nullable: false }),
+      token: t.exposeString('token', { nullable: false }),
+    }),
   })
   const collectionFieldMetaRef = builder
     .objectRef<{ name: string; type: string; label: string; required: boolean }>('CollectionFieldMeta')
@@ -717,6 +736,53 @@ export function buildSchema(schema: MovpSchema): GraphQLSchema {
           kind: args.kind == null ? null : String(args.kind),
         })),
       }),
+    }),
+  )
+
+  // NO `any`. Pothos infers the field builder (`t`) and the resolver `args` from each field's
+  // `args:` config — this typechecks under `strict: true` (verified: both a no-args query field
+  // and an args-bearing mutation compile with `(t)` / bare `args`). Do NOT write `(t: any)` or
+  // `args: any`: that re-introduces `any` against the repo's NEVER-`any` rule and is unnecessary
+  // here. The pre-existing `(t: any)` on sibling admin fields is legacy debt, NOT a pattern to copy.
+  builder.queryField('personalAccessTokens', (t) =>
+    t.field({
+      type: [personalAccessTokenRef],
+      nullable: false,
+      complexity: 10,
+      resolve: (_r: unknown, _args, ctx: GraphQLContext) =>
+        adminCall(() => domainFrom(ctx).pat.listTokens()),
+    }),
+  )
+
+  builder.mutationField('createPersonalAccessToken', (t) =>
+    t.field({
+      type: createdPatRef,
+      nullable: false,
+      complexity: 10,
+      args: {
+        defaultWorkspaceId: t.arg.id({ required: true }),
+        name: t.arg.string({ required: true }),
+        ttlDays: t.arg.int({ required: false }),
+      },
+      resolve: (_r: unknown, args, ctx: GraphQLContext) =>
+        adminCall(() => domainFrom(ctx).pat.createToken({
+          defaultWorkspaceId: String(args.defaultWorkspaceId),
+          name: String(args.name),
+          ttlDays: args.ttlDays == null ? null : Number(args.ttlDays),
+        })),
+    }),
+  )
+
+  builder.mutationField('revokePersonalAccessToken', (t) =>
+    t.field({
+      type: 'Boolean',
+      nullable: false,
+      complexity: 10,
+      args: { tokenId: t.arg.id({ required: true }) },
+      resolve: async (_r: unknown, args, ctx: GraphQLContext) => {
+        await adminCall(() => domainFrom(ctx).pat.revokeToken({ tokenId: String(args.tokenId) }))
+        return true
+      },
     }),
   )
 

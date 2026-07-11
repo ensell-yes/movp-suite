@@ -43,6 +43,9 @@ function friendlyAdminMessage(error: GqlErrorPayload): string | null {
   const message = typeof error.message === 'string' ? error.message : ''
   if (!reason && !message.startsWith('domain.admin.')) return null
 
+  if (reason === 'not_workspace_member') return "You're not a member of this workspace."
+  if (reason === 'pat_name_required') return 'Enter a name for the access token.'
+  if (reason === 'pat_not_found') return 'That access token could not be found or is already revoked.'
   if (code === 'FORBIDDEN' || reason === 'not_workspace_admin') return "You're not an admin of this workspace."
   if (reason === 'last_owner_guard') return 'At least one workspace owner must remain.'
   if (reason === 'invite_email_mismatch') return 'This invite is for a different email address.'
