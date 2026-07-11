@@ -6,6 +6,12 @@ import { GteSmallProvider } from '@movp/search/gte-small'
 
 const yoga = createYoga({ schema })
 
+async function sha256Hex(value: string): Promise<string> {
+  const bytes = new TextEncoder().encode(value)
+  const digest = await crypto.subtle.digest('SHA-256', bytes)
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('')
+}
+
 Deno.serve(async (req: Request): Promise<Response> => {
   const env = {
     SUPABASE_URL: Deno.env.get('SUPABASE_URL')!,
@@ -33,10 +39,12 @@ Deno.serve(async (req: Request): Promise<Response> => {
   const yogaReq = new Request(new URL(`/graphql${url.search}`, url.origin), req)
   const requestId = crypto.randomUUID()
   const traceId = crypto.randomUUID()
-  const reportReportingFailure = ({ operation, errorCode }: ReportingFailureEvent): void => {
+  const reportReportingFailure = async ({ operation, errorCode, workspaceId }: ReportingFailureEvent): Promise<void> => {
     emit({
       trace_id: traceId,
       request_id: requestId,
+      workspace_id_hash: await sha256Hex(workspaceId),
+      actor_id: principal.userId,
       surface: 'graphql',
       operation,
       error_code: errorCode,

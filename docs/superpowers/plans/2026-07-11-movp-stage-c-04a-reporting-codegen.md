@@ -1,5 +1,8 @@
 # MOVP Stage C4a — Generated-Delta Codegen + Reporting Views
 
+> **Execution status:** completed. This file preserves the original fail-first sequence;
+> use committed source and tests, not intermediate RED-state samples, for current behavior.
+
 > **For agentic workers (Codex):** implement task-by-task with TDD. Steps use checkbox
 > (`- [ ]`) syntax. Transcribe the code samples verbatim — they are grounded in the real
 > committed code (line-verified 2026-07-11). Precondition: **C2 merged** (PR #9, admin

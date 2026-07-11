@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
-import type { EmbeddingProvider } from '@movp/domain'
+import type { Domain, EmbeddingProvider } from '@movp/domain'
 
 export type ReportingOperation =
   | 'reportingTaskThroughput'
@@ -14,6 +14,7 @@ export type ReportingOperation =
 export interface ReportingFailureEvent {
   operation: ReportingOperation
   errorCode: 'reporting_denied' | 'reporting_failed'
+  workspaceId: string
 }
 
 export interface GraphQLContext {
@@ -22,7 +23,8 @@ export interface GraphQLContext {
   embedder?: EmbeddingProvider
   accessToken?: string
   assetsFnUrl?: string
-  reportReportingFailure?: (event: ReportingFailureEvent) => void
+  domain?: Domain
+  reportReportingFailure?: (event: ReportingFailureEvent) => void | Promise<void>
 }
 
 export type Row = { id: string; workspace_id: string; created_at: string; updated_at: string } & Record<

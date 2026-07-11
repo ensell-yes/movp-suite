@@ -22,7 +22,11 @@ grant usage on schema reporting_bi to movp_bi_smoke;
 grant select on all tables in schema reporting_bi to movp_bi_smoke;
 
 set local role movp_bi_smoke;
-select is((select count(*)::int from reporting_bi.v_campaign_metric), 2,
+select is((select count(*)::int from reporting_bi.v_campaign_metric
+            where workspace_id in (
+              'c4c00000-0000-0000-0000-000000000001',
+              'c4c00000-0000-0000-0000-000000000002'
+            )), 2,
   'BI role sees both workspaces via the intentionally cross-workspace mirror');
 select throws_ok($$ select count(*) from reporting.v_campaign_metric $$, '42501', null,
   'BI role cannot read the app-facing reporting schema');
@@ -39,10 +43,11 @@ select ok(not has_schema_privilege('anon', 'reporting_bi', 'usage'),
 select ok(not has_table_privilege('authenticated', 'reporting_bi.v_campaign_metric', 'select'),
   'authenticated cannot select the mirror');
 
+grant execute on function reporting.setup_bi_mirror() to authenticated;
 set local role authenticated;
 set local request.jwt.claims = '{"sub":"c4c0aaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"}';
-select throws_ok($$ select reporting.setup_bi_mirror() $$, '42501', null,
-  'authenticated cannot invoke the mirror setup');
+select throws_ok($$ select reporting.setup_bi_mirror() $$, '42501', 'reserved_for_operator',
+  'the in-function operator guard rejects an explicitly granted app role');
 reset role;
 
 select * from finish();

@@ -1,5 +1,9 @@
 # MOVP Stage C4b — Analytics RPCs + Dashboard Query Layer
 
+> **Execution status:** completed. Post-review hardening added Yoga-safe structured errors,
+> one request-bound `Domain`, actor/workspace-attributed failure events, and production-path
+> masking tests. Committed source and tests are authoritative over intermediate samples.
+
 > **For agentic workers (Codex):** implement task-by-task with TDD. Steps use checkbox
 > (`- [ ]`) syntax. Transcribe the code samples verbatim — they are grounded in the real
 > committed code (line-verified 2026-07-11). Precondition: **C4a merged/landed** (the

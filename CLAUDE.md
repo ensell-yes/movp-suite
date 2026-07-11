@@ -34,6 +34,9 @@
 - Dashboard reads use member-gated `reporting_*` RPCs with stable `42501` denial and
   date windows clamped to 90 days. The `movp_internal` readers expose counts and bounded
   classifiers only, never payload values.
+- GraphQL maps reporting failures to safe structured codes after emitting a correlated,
+  actor-attributed, workspace-hashed event. `/admin/reports` requests all families once
+  and preserves healthy sections when another root field fails.
 - `reporting_bi`, created by the operator-only `reporting.setup_bi_mirror()`, bypasses
   RLS by design and is granted to no application role. Never grant it to `authenticated`
   or `anon`; `supabase/tests/reporting_bi_grants_test.sql` is the boundary audit.

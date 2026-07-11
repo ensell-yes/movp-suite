@@ -17,14 +17,14 @@ export type ReportingTypeDayCount = ReportingDayCount & { type: string }
 export type ReportingJobDayCount = ReportingDayCount & { kind: string; status: string }
 
 export type ReportingDashboardsData = {
-  reportingTaskThroughput: ReportingTaskThroughput
-  reportingContentFunnel: ReportingStatusCount[]
-  reportingCampaignMetrics: ReportingMetricTotal[]
-  reportingSegmentGrowth: ReportingSegmentGrowth[]
-  reportingWorkflowHealth: ReportingOutcomeDayCount[]
-  reportingIngestVolume: ReportingSourceDayCount[]
-  reportingEventDailyCounts: ReportingTypeDayCount[]
-  reportingJobDailyCounts: ReportingJobDayCount[]
+  reportingTaskThroughput: ReportingTaskThroughput | null
+  reportingContentFunnel: ReportingStatusCount[] | null
+  reportingCampaignMetrics: ReportingMetricTotal[] | null
+  reportingSegmentGrowth: ReportingSegmentGrowth[] | null
+  reportingWorkflowHealth: ReportingOutcomeDayCount[] | null
+  reportingIngestVolume: ReportingSourceDayCount[] | null
+  reportingEventDailyCounts: ReportingTypeDayCount[] | null
+  reportingJobDailyCounts: ReportingJobDayCount[] | null
 }
 
 export const REPORTING_DASHBOARDS_QUERY = /* GraphQL */ `
@@ -36,7 +36,7 @@ export const REPORTING_DASHBOARDS_QUERY = /* GraphQL */ `
     }
     reportingContentFunnel(workspaceId: $workspaceId) { status count }
     reportingCampaignMetrics(workspaceId: $workspaceId, days: $days) { metricKey total }
-    reportingSegmentGrowth(workspaceId: $workspaceId) { segmentId name points { takenAt memberCount } }
+    reportingSegmentGrowth(workspaceId: $workspaceId, days: $days) { segmentId name points { takenAt memberCount } }
     reportingWorkflowHealth(workspaceId: $workspaceId, days: $days) { day outcome count }
     reportingIngestVolume(workspaceId: $workspaceId, days: $days) { day source count }
     reportingEventDailyCounts(workspaceId: $workspaceId, days: $days) { day type count }

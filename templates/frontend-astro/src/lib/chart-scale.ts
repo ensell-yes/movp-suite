@@ -12,21 +12,28 @@ export interface TrendPoint {
   count: number
 }
 
+function visualValue(value: number): number {
+  return Number.isFinite(value) && value > 0 ? value : 0
+}
+
 export function scaleBars(data: BarDatum[]): ScaledBar[] {
-  const max = Math.max(0, ...data.map((datum) => datum.value))
-  return data.map((datum) => ({
-    ...datum,
-    pct: max === 0 ? 0 : Math.round((datum.value / max) * 100),
-  }))
+  const max = Math.max(0, ...data.map((datum) => visualValue(datum.value)))
+  return data.map((datum) => {
+    const value = visualValue(datum.value)
+    return {
+      ...datum,
+      pct: max === 0 || value === 0 ? 0 : Math.max(2, Math.round((value / max) * 100)),
+    }
+  })
 }
 
 export function trendPolyline(series: TrendPoint[], width = 320, height = 80, pad = 4): string {
   if (series.length === 0) return ''
-  const max = Math.max(1, ...series.map((point) => point.count))
+  const max = Math.max(1, ...series.map((point) => visualValue(point.count)))
   const stepX = series.length === 1 ? 0 : (width - pad * 2) / (series.length - 1)
   return series.map((point, index) => {
     const x = Math.round((pad + index * stepX) * 10) / 10
-    const y = Math.round((height - pad - (point.count / max) * (height - pad * 2)) * 10) / 10
+    const y = Math.round((height - pad - (visualValue(point.count) / max) * (height - pad * 2)) * 10) / 10
     return `${x},${y}`
   }).join(' ')
 }

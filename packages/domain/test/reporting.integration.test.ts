@@ -170,6 +170,7 @@ describe('domain.reporting (live stack)', () => {
 
   it('returns bounded event classifiers', async () => {
     const rows = await domain.reporting.eventDailyCounts({ workspaceId, days: 7 })
+    expect(rows.length).toBeGreaterThan(0)
     for (const row of rows) expect(Object.keys(row).sort()).toEqual(['count', 'day', 'type'])
   })
 

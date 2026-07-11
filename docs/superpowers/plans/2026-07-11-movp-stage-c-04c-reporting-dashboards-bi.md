@@ -1,5 +1,9 @@
 # MOVP Stage C4c — Admin Dashboards + External BI Seam
 
+> **Execution status:** completed. Post-review hardening preserves partial GraphQL data,
+> renders per-section failures, makes the BI guard assertion load-bearing, and bounds chart
+> geometry. Committed source and tests are authoritative over intermediate samples.
+
 > **For agentic workers (Codex):** implement task-by-task with TDD. Steps use checkbox
 > (`- [ ]`) syntax. Transcribe the code samples verbatim — they are grounded in the real
 > committed code (line-verified 2026-07-11). Precondition: **C4a + C4b landed** (the

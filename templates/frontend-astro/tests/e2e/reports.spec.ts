@@ -25,6 +25,7 @@ test('reports renders every dashboard family', async ({ page, context }) => {
     await expect(page.getByTestId(id)).toBeVisible()
   }
   await expect(page.getByTestId('chart-task-series').locator('svg polyline')).toBeVisible()
+  await expect(page.getByText('Completed per day (last 30d) data table', { exact: true })).toBeVisible()
   await expect(page.getByTestId('chart-content-funnel').locator('tbody tr')).toHaveCount(2)
   await expect(page.getByTestId('report-task-throughput')).toContainText('Open tasks')
 })
@@ -41,6 +42,16 @@ test('reports renders the shared error state', async ({ page, context }) => {
   await scenario('error')
   await page.goto('/admin/reports')
   await expect(page.getByTestId('error')).toBeVisible()
+})
+
+test('reports keeps healthy sections visible when one field fails', async ({ page, context }) => {
+  await seedSession(context)
+  await scenario('partial')
+  await page.goto('/admin/reports')
+  await expect(page.getByTestId('report-task-throughput')).toBeVisible()
+  await expect(page.getByTestId('chart-task-series')).toBeVisible()
+  await expect(page.getByTestId('report-campaign-metrics-error')).toBeVisible()
+  await expect(page.getByTestId('error')).toHaveCount(0)
 })
 
 test('reports authenticated view has no serious accessibility violations', async ({ page, context }) => {

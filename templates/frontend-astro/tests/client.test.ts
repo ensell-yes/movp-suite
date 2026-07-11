@@ -50,6 +50,43 @@ describe('gqlRequest', () => {
     expect(r).toEqual({ ok: false, code: 'graphql_error', message: 'nope' })
   })
 
+  it('preserves partial data and field errors only when explicitly enabled', async () => {
+    const response = {
+      data: { healthy: [{ count: 2 }], failed: null },
+      errors: [{
+        message: 'Could not load this report.',
+        path: ['failed'],
+        extensions: { code: 'INTERNAL_SERVER_ERROR' },
+      }],
+    }
+    const strict = await gqlRequest(
+      { endpoint: 'https://x', token: 't', fetchImpl: mockFetch(200, response) },
+      'query Partial { healthy failed }',
+      {},
+    )
+    expect(strict).toEqual({
+      ok: false,
+      code: 'graphql_error',
+      message: 'Could not load this report.',
+    })
+
+    const partial = await gqlRequest(
+      { endpoint: 'https://x', token: 't', fetchImpl: mockFetch(200, response) },
+      'query Partial { healthy failed }',
+      {},
+      { allowPartial: true },
+    )
+    expect(partial).toEqual({
+      ok: true,
+      data: response.data,
+      errors: [{
+        message: 'Could not load this report.',
+        path: ['failed'],
+        code: 'INTERNAL_SERVER_ERROR',
+      }],
+    })
+  })
+
   it('maps admin GraphQL error extensions to friendly copy', async () => {
     const r = await gqlRequest(
       {

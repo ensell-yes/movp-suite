@@ -23,7 +23,7 @@ const bars = scaleBars(data)
           <tr>
             <th scope="row">{bar.label}</th>
             <td>
-              <span class="bar" style={`inline-size:${Math.max(bar.pct, 2)}%`} aria-hidden="true"></span>
+              <span class="bar" style={`inline-size:${bar.pct}%`} aria-hidden="true"></span>
               <span>{bar.value}</span>
             </td>
           </tr>

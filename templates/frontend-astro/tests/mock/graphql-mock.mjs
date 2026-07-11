@@ -616,6 +616,7 @@ createServer(async (req, res) => {
   }
   if (query.includes('query ReportingDashboards')) {
     const empty = scenario === 'empty'
+    const partial = scenario === 'partial'
     return json(res, 200, {
       data: {
         reportingTaskThroughput: {
@@ -630,7 +631,7 @@ createServer(async (req, res) => {
           { status: 'draft', count: 2 },
           { status: 'published', count: 1 },
         ],
-        reportingCampaignMetrics: empty ? [] : [{ metricKey: 'clicks', total: 100 }],
+        reportingCampaignMetrics: partial ? null : empty ? [] : [{ metricKey: 'clicks', total: 100 }],
         reportingSegmentGrowth: empty ? [] : [{
           segmentId: 's-1',
           name: 'Registered',
@@ -647,6 +648,11 @@ createServer(async (req, res) => {
         reportingEventDailyCounts: empty ? [] : [{ day: '2026-07-10', type: 'task.completed', count: 5 }],
         reportingJobDailyCounts: empty ? [] : [{ day: '2026-07-10', kind: 'embed', status: 'done', count: 6 }],
       },
+      errors: partial ? [{
+        message: 'Could not load this report.',
+        path: ['reportingCampaignMetrics'],
+        extensions: { code: 'INTERNAL_SERVER_ERROR' },
+      }] : undefined,
     })
   }
   if (query.includes('mutation ReplayDeadJobs')) {

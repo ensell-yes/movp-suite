@@ -56,12 +56,14 @@ function service(domain: Domain, name: string): CollectionService<Row, Record<st
 }
 
 function domainFrom(ctx: GraphQLContext): Domain {
-  return createDomain({
+  if (ctx.domain) return ctx.domain
+  ctx.domain = createDomain({
     db: ctx.db,
     userId: ctx.userId,
     accessToken: ctx.accessToken,
     assetsFnUrl: ctx.assetsFnUrl,
   }, { embedder: ctx.embedder })
+  return ctx.domain
 }
 
 function adminGraphqlError(error: unknown): never {
@@ -99,13 +101,25 @@ function reportingErrorCode(error: unknown): 'reporting_denied' | 'reporting_fai
 async function observeReporting<T>(
   ctx: GraphQLContext,
   operation: ReportingOperation,
+  workspaceId: string,
   read: () => Promise<T>,
 ): Promise<T> {
   try {
     return await read()
   } catch (error: unknown) {
-    ctx.reportReportingFailure?.({ operation, errorCode: reportingErrorCode(error) })
-    throw error
+    const errorCode = reportingErrorCode(error)
+    await ctx.reportReportingFailure?.({ operation, errorCode, workspaceId })
+    throw new GraphQLError(
+      errorCode === 'reporting_denied'
+        ? 'You do not have access to these reports.'
+        : 'Could not load this report.',
+      {
+        extensions: {
+          code: errorCode === 'reporting_denied' ? 'FORBIDDEN' : 'INTERNAL_SERVER_ERROR',
+          safeReportingError: true,
+        },
+      },
+    )
   }
 }
 
@@ -2217,7 +2231,7 @@ export function buildSchema(schema: MovpSchema): GraphQLSchema {
       complexity: 5,
       args: { workspaceId: t.arg.id({ required: true }), days: t.arg.int() },
       resolve: (_root, args, ctx) =>
-        observeReporting(ctx, 'reportingTaskThroughput', () =>
+        observeReporting(ctx, 'reportingTaskThroughput', String(args.workspaceId), () =>
           domainFrom(ctx).reporting.taskThroughput({
             workspaceId: String(args.workspaceId),
             days: args.days ?? undefined,
@@ -2230,7 +2244,7 @@ export function buildSchema(schema: MovpSchema): GraphQLSchema {
       complexity: 5,
       args: { workspaceId: t.arg.id({ required: true }) },
       resolve: (_root, args, ctx) =>
-        observeReporting(ctx, 'reportingContentFunnel', () =>
+        observeReporting(ctx, 'reportingContentFunnel', String(args.workspaceId), () =>
           domainFrom(ctx).reporting.contentFunnel({ workspaceId: String(args.workspaceId) })),
     }),
   )
@@ -2240,7 +2254,7 @@ export function buildSchema(schema: MovpSchema): GraphQLSchema {
       complexity: 5,
       args: { workspaceId: t.arg.id({ required: true }), days: t.arg.int() },
       resolve: (_root, args, ctx) =>
-        observeReporting(ctx, 'reportingCampaignMetrics', () =>
+        observeReporting(ctx, 'reportingCampaignMetrics', String(args.workspaceId), () =>
           domainFrom(ctx).reporting.campaignMetrics({
             workspaceId: String(args.workspaceId),
             days: args.days ?? undefined,
@@ -2253,7 +2267,7 @@ export function buildSchema(schema: MovpSchema): GraphQLSchema {
       complexity: 10,
       args: { workspaceId: t.arg.id({ required: true }), days: t.arg.int() },
       resolve: (_root, args, ctx) =>
-        observeReporting(ctx, 'reportingSegmentGrowth', () =>
+        observeReporting(ctx, 'reportingSegmentGrowth', String(args.workspaceId), () =>
           domainFrom(ctx).reporting.segmentGrowth({
             workspaceId: String(args.workspaceId),
             days: args.days ?? undefined,
@@ -2266,7 +2280,7 @@ export function buildSchema(schema: MovpSchema): GraphQLSchema {
       complexity: 5,
       args: { workspaceId: t.arg.id({ required: true }), days: t.arg.int() },
       resolve: (_root, args, ctx) =>
-        observeReporting(ctx, 'reportingWorkflowHealth', () =>
+        observeReporting(ctx, 'reportingWorkflowHealth', String(args.workspaceId), () =>
           domainFrom(ctx).reporting.workflowHealth({
             workspaceId: String(args.workspaceId),
             days: args.days ?? undefined,
@@ -2279,7 +2293,7 @@ export function buildSchema(schema: MovpSchema): GraphQLSchema {
       complexity: 5,
       args: { workspaceId: t.arg.id({ required: true }), days: t.arg.int() },
       resolve: (_root, args, ctx) =>
-        observeReporting(ctx, 'reportingIngestVolume', () =>
+        observeReporting(ctx, 'reportingIngestVolume', String(args.workspaceId), () =>
           domainFrom(ctx).reporting.ingestVolume({
             workspaceId: String(args.workspaceId),
             days: args.days ?? undefined,
@@ -2292,7 +2306,7 @@ export function buildSchema(schema: MovpSchema): GraphQLSchema {
       complexity: 5,
       args: { workspaceId: t.arg.id({ required: true }), days: t.arg.int() },
       resolve: (_root, args, ctx) =>
-        observeReporting(ctx, 'reportingEventDailyCounts', () =>
+        observeReporting(ctx, 'reportingEventDailyCounts', String(args.workspaceId), () =>
           domainFrom(ctx).reporting.eventDailyCounts({
             workspaceId: String(args.workspaceId),
             days: args.days ?? undefined,
@@ -2305,7 +2319,7 @@ export function buildSchema(schema: MovpSchema): GraphQLSchema {
       complexity: 5,
       args: { workspaceId: t.arg.id({ required: true }), days: t.arg.int() },
       resolve: (_root, args, ctx) =>
-        observeReporting(ctx, 'reportingJobDailyCounts', () =>
+        observeReporting(ctx, 'reportingJobDailyCounts', String(args.workspaceId), () =>
           domainFrom(ctx).reporting.jobDailyCounts({
             workspaceId: String(args.workspaceId),
             days: args.days ?? undefined,

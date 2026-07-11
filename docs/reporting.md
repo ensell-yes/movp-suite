@@ -9,6 +9,11 @@
   ingestion, internal-event, and job aggregates. Date ranges are clamped to at most 90
   days. Internal event/job readers return counts and bounded classifiers only.
 - `/admin/reports` provides the prebuilt application dashboards.
+- Reporting resolver failures cross Yoga's production masking boundary as safe GraphQL
+  errors with `FORBIDDEN` or `INTERNAL_SERVER_ERROR`. The page preserves successful
+  sections when another reporting field fails and shows the failure within that section.
+- Server failure events include the authenticated actor and a SHA-256 workspace identifier;
+  raw workspace values and database error text are not emitted or returned to clients.
 
 ## External BI quickstart
 
@@ -37,6 +42,9 @@ Important security properties:
   explicit bounded projection while executing base-table reads as the mirror owner.
 - The role receives no access to base tables, `movp_internal`, or the application-facing
   `reporting` schema. `supabase/tests/reporting_bi_grants_test.sql` pins those boundaries.
+- The function-level operator guard is defense in depth beyond the EXECUTE revoke. Its
+  regression test temporarily grants an application role and asserts the exact
+  `reserved_for_operator` failure from inside the function body.
 - Re-run `reporting.setup_bi_mirror()` after adding reporting views, then repeat the
   `grant select on all tables in schema reporting_bi` statement for the BI role.
 

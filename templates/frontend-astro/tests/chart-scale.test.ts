@@ -16,6 +16,21 @@ describe('scaleBars', () => {
     expect(scaleBars([])).toEqual([])
     expect(scaleBars([{ label: 'x', value: 0 }])).toEqual([{ label: 'x', value: 0, pct: 0 }])
   })
+
+  it('keeps negative and non-finite values out of visual geometry', () => {
+    expect(scaleBars([
+      { label: 'negative', value: -5 },
+      { label: 'invalid', value: Number.NaN },
+      { label: 'positive', value: 10 },
+    ]).map((row) => row.pct)).toEqual([0, 0, 100])
+  })
+
+  it('keeps a visible minimum only for positive values', () => {
+    expect(scaleBars([
+      { label: 'tiny', value: 0.001 },
+      { label: 'large', value: 100 },
+    ]).map((row) => row.pct)).toEqual([2, 100])
+  })
 })
 
 describe('trendPolyline', () => {
@@ -32,6 +47,14 @@ describe('trendPolyline', () => {
       { day: '2026-07-09', count: 0 },
       { day: '2026-07-10', count: 10 },
     ], 320, 80, 4).split(' ')).toEqual(['4,76', '316,4'])
+  })
+
+  it('plots negative and non-finite counts at the zero baseline', () => {
+    expect(trendPolyline([
+      { day: '2026-07-08', count: -2 },
+      { day: '2026-07-09', count: Number.NaN },
+      { day: '2026-07-10', count: 4 },
+    ], 320, 80, 4).split(' ')).toEqual(['4,76', '160,76', '316,4'])
   })
 })
 

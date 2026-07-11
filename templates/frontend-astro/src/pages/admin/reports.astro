@@ -25,22 +25,32 @@ if (token) {
     { endpoint: graphqlEndpoint, token },
     REPORTING_DASHBOARDS_QUERY,
     { workspaceId, days: DAYS },
+    { allowPartial: true },
   )
   if (!result.ok && result.code === 'auth_error') state = 'auth'
   else if (!result.ok) state = 'error'
   else {
     data = result.data
-    const allEmpty =
-      data.reportingTaskThroughput.openCount === 0 &&
-      data.reportingTaskThroughput.series.length === 0 &&
-      data.reportingContentFunnel.length === 0 &&
-      data.reportingCampaignMetrics.length === 0 &&
-      data.reportingSegmentGrowth.length === 0 &&
-      data.reportingWorkflowHealth.length === 0 &&
-      data.reportingIngestVolume.length === 0 &&
-      data.reportingEventDailyCounts.length === 0 &&
-      data.reportingJobDailyCounts.length === 0
-    state = allEmpty ? 'empty' : 'ok'
+    const values = Object.values(data)
+    const hasResolvedSection = values.some((value) => value !== null)
+    const allDenied = (result.errors?.length ?? 0) > 0 && result.errors?.every((error) => error.code === 'FORBIDDEN')
+    if (!hasResolvedSection) {
+      state = allDenied ? 'auth' : 'error'
+    } else {
+      const complete = values.every((value) => value !== null)
+      const allEmpty =
+        complete &&
+        data.reportingTaskThroughput?.openCount === 0 &&
+        data.reportingTaskThroughput.series.length === 0 &&
+        data.reportingContentFunnel?.length === 0 &&
+        data.reportingCampaignMetrics?.length === 0 &&
+        data.reportingSegmentGrowth?.length === 0 &&
+        data.reportingWorkflowHealth?.length === 0 &&
+        data.reportingIngestVolume?.length === 0 &&
+        data.reportingEventDailyCounts?.length === 0 &&
+        data.reportingJobDailyCounts?.length === 0
+      state = allEmpty ? 'empty' : 'ok'
+    }
   }
 }
 ---
@@ -57,38 +67,54 @@ if (token) {
     <div class="report-grid">
       <section data-testid="report-task-throughput" aria-labelledby="report-task-heading">
         <h2 id="report-task-heading">Task throughput</h2>
-        <dl>
-          <div><dt>Open tasks</dt><dd>{data.reportingTaskThroughput.openCount}</dd></div>
-          <div><dt>Avg cycle (hours)</dt><dd>{data.reportingTaskThroughput.avgCycleHours ?? '—'}</dd></div>
-        </dl>
-        <TrendChart
-          title={`Completed per day (last ${DAYS}d)`}
-          series={data.reportingTaskThroughput.series}
-          testId="chart-task-series"
-        />
+        {data.reportingTaskThroughput === null ? (
+          <p data-testid="report-task-throughput-error" role="alert">Could not load task throughput.</p>
+        ) : (
+          <>
+            <dl>
+              <div><dt>Open tasks</dt><dd>{data.reportingTaskThroughput.openCount}</dd></div>
+              <div><dt>Avg cycle (hours)</dt><dd>{data.reportingTaskThroughput.avgCycleHours ?? '—'}</dd></div>
+            </dl>
+            <TrendChart
+              title={`Completed per day (last ${DAYS}d)`}
+              series={data.reportingTaskThroughput.series}
+              testId="chart-task-series"
+            />
+          </>
+        )}
       </section>
 
       <section data-testid="report-content-funnel" aria-labelledby="report-content-heading">
         <h2 id="report-content-heading">Content pipeline</h2>
-        <BarChart
-          title="Items by status"
-          data={data.reportingContentFunnel.map((row) => ({ label: row.status, value: row.count }))}
-          testId="chart-content-funnel"
-        />
+        {data.reportingContentFunnel === null ? (
+          <p data-testid="report-content-funnel-error" role="alert">Could not load the content pipeline.</p>
+        ) : (
+          <BarChart
+            title="Items by status"
+            data={data.reportingContentFunnel.map((row) => ({ label: row.status, value: row.count }))}
+            testId="chart-content-funnel"
+          />
+        )}
       </section>
 
       <section data-testid="report-campaign-metrics" aria-labelledby="report-campaign-heading">
         <h2 id="report-campaign-heading">Campaign metrics</h2>
-        <BarChart
-          title={`Totals by metric (last ${DAYS}d)`}
-          data={data.reportingCampaignMetrics.map((row) => ({ label: row.metricKey, value: row.total }))}
-          testId="chart-campaign-metrics"
-        />
+        {data.reportingCampaignMetrics === null ? (
+          <p data-testid="report-campaign-metrics-error" role="alert">Could not load campaign metrics.</p>
+        ) : (
+          <BarChart
+            title={`Totals by metric (last ${DAYS}d)`}
+            data={data.reportingCampaignMetrics.map((row) => ({ label: row.metricKey, value: row.total }))}
+            testId="chart-campaign-metrics"
+          />
+        )}
       </section>
 
       <section data-testid="report-segment-growth" aria-labelledby="report-segment-heading">
         <h2 id="report-segment-heading">Segment growth</h2>
-        {data.reportingSegmentGrowth.length === 0 ? (
+        {data.reportingSegmentGrowth === null ? (
+          <p data-testid="report-segment-growth-error" role="alert">Could not load segment growth.</p>
+        ) : data.reportingSegmentGrowth.length === 0 ? (
           <p>No segments yet.</p>
         ) : data.reportingSegmentGrowth.map((segment) => (
           <TrendChart
@@ -101,38 +127,54 @@ if (token) {
 
       <section data-testid="report-workflow-health" aria-labelledby="report-workflow-heading">
         <h2 id="report-workflow-heading">Workflow run health</h2>
-        <BarChart
-          title={`Runs by outcome (last ${DAYS}d)`}
-          data={rollup(data.reportingWorkflowHealth, (row) => row.outcome, (row) => row.count)}
-          testId="chart-workflow-health"
-        />
+        {data.reportingWorkflowHealth === null ? (
+          <p data-testid="report-workflow-health-error" role="alert">Could not load workflow health.</p>
+        ) : (
+          <BarChart
+            title={`Runs by outcome (last ${DAYS}d)`}
+            data={rollup(data.reportingWorkflowHealth, (row) => row.outcome, (row) => row.count)}
+            testId="chart-workflow-health"
+          />
+        )}
       </section>
 
       <section data-testid="report-ingest-volume" aria-labelledby="report-ingest-heading">
         <h2 id="report-ingest-heading">Ingestion volume</h2>
-        <TrendChart
-          title={`Platform events per day (last ${DAYS}d)`}
-          series={dayTotals(data.reportingIngestVolume)}
-          testId="chart-ingest-volume"
-        />
+        {data.reportingIngestVolume === null ? (
+          <p data-testid="report-ingest-volume-error" role="alert">Could not load ingestion volume.</p>
+        ) : (
+          <TrendChart
+            title={`Platform events per day (last ${DAYS}d)`}
+            series={dayTotals(data.reportingIngestVolume)}
+            testId="chart-ingest-volume"
+          />
+        )}
       </section>
 
       <section data-testid="report-event-trend" aria-labelledby="report-event-heading">
         <h2 id="report-event-heading">Internal event trend</h2>
-        <TrendChart
-          title={`Domain events per day (last ${DAYS}d)`}
-          series={dayTotals(data.reportingEventDailyCounts)}
-          testId="chart-event-trend"
-        />
+        {data.reportingEventDailyCounts === null ? (
+          <p data-testid="report-event-trend-error" role="alert">Could not load the event trend.</p>
+        ) : (
+          <TrendChart
+            title={`Domain events per day (last ${DAYS}d)`}
+            series={dayTotals(data.reportingEventDailyCounts)}
+            testId="chart-event-trend"
+          />
+        )}
       </section>
 
       <section data-testid="report-job-health" aria-labelledby="report-job-heading">
         <h2 id="report-job-heading">Job health</h2>
-        <BarChart
-          title={`Jobs by kind/status (last ${DAYS}d)`}
-          data={rollup(data.reportingJobDailyCounts, (row) => `${row.kind}/${row.status}`, (row) => row.count)}
-          testId="chart-job-health"
-        />
+        {data.reportingJobDailyCounts === null ? (
+          <p data-testid="report-job-health-error" role="alert">Could not load job health.</p>
+        ) : (
+          <BarChart
+            title={`Jobs by kind/status (last ${DAYS}d)`}
+            data={rollup(data.reportingJobDailyCounts, (row) => `${row.kind}/${row.status}`, (row) => row.count)}
+            testId="chart-job-health"
+          />
+        )}
       </section>
     </div>
   )}

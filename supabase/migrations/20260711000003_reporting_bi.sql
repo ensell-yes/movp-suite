@@ -10,9 +10,13 @@ as $$
 declare
   view record;
   created_count int := 0;
+  active_role text := current_setting('role', true);
 begin
   if (select auth.role()) is distinct from 'service_role'
-     and session_user not in ('postgres', 'supabase_admin') then
+     and (
+       session_user not in ('postgres', 'supabase_admin')
+       or coalesce(active_role, 'none') not in ('none', 'postgres', 'supabase_admin')
+     ) then
     raise exception 'reserved_for_operator' using errcode = '42501';
   end if;
 
