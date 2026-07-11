@@ -1,5 +1,6 @@
 import { schema } from '@movp/core-schema'
 import type { MovpSchema } from '@movp/core-schema'
+import { emitReportingSql } from './emit-reporting.ts'
 import { emitSqlMigration } from './emit-sql.ts'
 import { emitTypes } from './emit-types.ts'
 
@@ -10,7 +11,9 @@ export interface GeneratedDelta {
 
 // Post-freeze generated objects ship as immutable, timestamped delta migrations.
 // Once an entry merges, never remove or rename it; changed output gets a new entry.
-export const GENERATED_DELTAS: readonly GeneratedDelta[] = []
+export const GENERATED_DELTAS: readonly GeneratedDelta[] = [
+  { file: '20260711000001_movp_generated_reporting.sql', emit: emitReportingSql },
+]
 
 export interface GenerateOptions {
   root?: string
