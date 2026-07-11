@@ -8,4 +8,4 @@ export {
   DEPTH_LIMIT,
   COMPLEXITY_BUDGET,
 } from './limits.ts'
-export type { GraphQLContext, Row } from './types.ts'
+export type { GraphQLContext, ReportingFailureEvent, ReportingOperation, Row } from './types.ts'

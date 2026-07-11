@@ -71,6 +71,19 @@ describe('buildSchema', () => {
     expect(sdl).toContain('revokePersonalAccessToken(')
   })
 
+  it('exposes all reporting dashboard reads', () => {
+    const sdl = printSchema(buildSchema(movpSchema))
+    expect(sdl).toMatch(/reportingTaskThroughput\(/)
+    expect(sdl).toMatch(/reportingContentFunnel\(/)
+    expect(sdl).toMatch(/reportingCampaignMetrics\(/)
+    expect(sdl).toMatch(/reportingSegmentGrowth\(/)
+    expect(sdl).toMatch(/reportingWorkflowHealth\(/)
+    expect(sdl).toMatch(/reportingIngestVolume\(/)
+    expect(sdl).toMatch(/reportingEventDailyCounts\(/)
+    expect(sdl).toMatch(/reportingJobDailyCounts\(/)
+    expect(sdl).toContain('type ReportingTaskThroughput')
+  })
+
   it('strips id and workspace_id from generic update patches', async () => {
     mocks.noteUpdate.mockClear()
     const result = await graphql({
