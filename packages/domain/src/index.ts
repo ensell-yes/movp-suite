@@ -6,6 +6,7 @@ export { makeContentService } from './content.ts'
 export { createDomain } from './domain.ts'
 export { makeGraphService } from './graph.ts'
 export { makePatService } from './pat.ts'
+export { makeReportingService } from './reporting.ts'
 export { runSearch } from './search.ts'
 export { makeTaskService } from './task.ts'
 export { makeWorkflowService } from './workflows.ts'
@@ -29,6 +30,17 @@ export type {
   Page,
   PatService,
   PatTokenRow,
+  ReportingDayCount,
+  ReportingJobDayCount,
+  ReportingMetricTotal,
+  ReportingOutcomeDayCount,
+  ReportingSegmentGrowth,
+  ReportingService,
+  ReportingSnapshotPoint,
+  ReportingSourceDayCount,
+  ReportingStatusCount,
+  ReportingTaskThroughput,
+  ReportingTypeDayCount,
   SearchArgs,
   SearchHit,
   TaskBoardColumn,
