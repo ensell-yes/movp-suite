@@ -1,0 +1,45 @@
+---
+import { trendPolyline, type TrendPoint } from '../../lib/chart-scale.ts'
+
+interface Props {
+  title: string
+  series: TrendPoint[]
+  testId: string
+}
+
+const { title, series, testId } = Astro.props
+const points = trendPolyline(series)
+---
+
+<figure data-testid={testId} class="report-chart">
+  <figcaption>{title}</figcaption>
+  {series.length === 0 ? (
+    <p>No data yet.</p>
+  ) : (
+    <>
+      <svg
+        viewBox="0 0 320 80"
+        role="img"
+        aria-label={`${title} — ${series.length} data points`}
+        preserveAspectRatio="none"
+      >
+        <polyline points={points} fill="none" stroke="currentColor" stroke-width="2" />
+      </svg>
+      <details>
+        <summary>Data table</summary>
+        <table>
+          <thead><tr><th scope="col">Day</th><th scope="col">Count</th></tr></thead>
+          <tbody>
+            {series.map((point) => (
+              <tr><th scope="row">{point.day}</th><td>{point.count}</td></tr>
+            ))}
+          </tbody>
+        </table>
+      </details>
+    </>
+  )}
+</figure>
+
+<style>
+  .report-chart svg { inline-size: 100%; block-size: 5rem; }
+</style>

@@ -1,0 +1,47 @@
+---
+import { scaleBars, type BarDatum } from '../../lib/chart-scale.ts'
+
+interface Props {
+  title: string
+  data: BarDatum[]
+  testId: string
+}
+
+const { title, data, testId } = Astro.props
+const bars = scaleBars(data)
+---
+
+<figure data-testid={testId} class="report-chart">
+  <figcaption>{title}</figcaption>
+  {bars.length === 0 ? (
+    <p>No data yet.</p>
+  ) : (
+    <table>
+      <thead><tr><th scope="col">Label</th><th scope="col">Value</th></tr></thead>
+      <tbody>
+        {bars.map((bar) => (
+          <tr>
+            <th scope="row">{bar.label}</th>
+            <td>
+              <span class="bar" style={`inline-size:${Math.max(bar.pct, 2)}%`} aria-hidden="true"></span>
+              <span>{bar.value}</span>
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  )}
+</figure>
+
+<style>
+  .report-chart table { inline-size: 100%; border-collapse: collapse; }
+  .report-chart td { inline-size: 100%; }
+  .bar {
+    display: inline-block;
+    block-size: 0.75rem;
+    margin-inline-end: 0.5rem;
+    background: currentColor;
+    opacity: 0.55;
+    vertical-align: baseline;
+  }
+</style>
