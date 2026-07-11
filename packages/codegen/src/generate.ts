@@ -24,6 +24,12 @@ export interface GenerateOptions {
 }
 
 const MAX_GENERATED_FILE_BYTES = 10 * 1024 * 1024
+const MIGRATION_FILE = /^\d{14}_[a-z0-9_]+\.sql$/
+
+function migrationFileName(file: string, label: string): string {
+  if (!MIGRATION_FILE.test(file)) throw new Error(`invalid ${label} filename: ${file}`)
+  return file
+}
 
 function defaultRoot(): string {
   return decodeURIComponent(new URL('../../../', import.meta.url).pathname).replace(/\/$/, '')
@@ -74,17 +80,24 @@ export async function generate(
   options: GenerateOptions = {},
 ): Promise<{ migrationPath: string; typesPath: string; deltaPaths: string[] }> {
   const root = options.root ?? defaultRoot()
-  const migrationName = options.migrationName ?? '20260701000002_movp_generated.sql'
+  const migrationName = migrationFileName(
+    options.migrationName ?? '20260701000002_movp_generated.sql',
+    'generated baseline',
+  )
   const migrationsDir = options.migrationsDir ?? joinPath(root, 'supabase', 'migrations')
   const migrationPath = joinPath(migrationsDir, migrationName)
   const typesPath = options.typesPath ?? joinPath(root, 'packages', 'domain', 'src', 'generated', 'types.ts')
   const deltas = options.deltas ?? GENERATED_DELTAS
+  const deltaFiles = deltas.map((delta) => migrationFileName(delta.file, 'generated delta'))
+  if (new Set(deltaFiles).size !== deltaFiles.length) {
+    throw new Error('duplicate generated delta filename')
+  }
   const f = await fs()
 
   await f.mkdir(migrationsDir, { recursive: true })
   await f.mkdir(dirname(typesPath), { recursive: true })
 
-  const keep = new Set([migrationName, ...deltas.map((delta) => delta.file)])
+  const keep = new Set([migrationName, ...deltaFiles])
   for (const file of await f.readdir(migrationsDir)) {
     if (file.endsWith('_movp_generated.sql') && !keep.has(file)) {
       await f.rm(joinPath(migrationsDir, file))

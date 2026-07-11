@@ -52,4 +52,10 @@ describe('generate() generated-delta strategy (C4a.1)', () => {
     expect(files).toContain('20990101000001_movp_generated.sql')
     expect(await readFile(join(migrationsDir, '20990101000001_movp_generated.sql'), 'utf8')).toBe('-- kept')
   })
+
+  it('rejects delta filenames that could escape the migrations directory', async () => {
+    const { root } = await freshRoot()
+    const delta = { file: '../escape.sql', emit: () => '-- must not be written' }
+    await expect(generate({ root, deltas: [delta] })).rejects.toThrow(/invalid generated delta filename/)
+  })
 })
