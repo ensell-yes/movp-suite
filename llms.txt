@@ -1,0 +1,17 @@
+# MOVP — agent connectivity
+
+> MOVP is an OSS Supabase-backed suite. Named agent clients connect over MCP (streamable HTTP at
+> `/functions/v1/mcp`, or stdio via `@movp/mcp-bridge`) and the `movp` CLI, using user-scoped Personal
+> Access Tokens (`Authorization: Bearer movp_pat_…`).
+
+## MCP client configs
+- [Claude Code](docs/agents/mcp/claude-code.md): streamable-HTTP `.mcp.json` sample.
+- [Codex](docs/agents/mcp/codex.md): `~/.codex/config.toml` (rmcp, `bearer_token_env_var`).
+- [Cursor](docs/agents/mcp/cursor.md): `.cursor/mcp.json` sample.
+- [Gemini CLI](docs/agents/mcp/gemini-cli.md): `~/.gemini/settings.json` (`httpUrl`).
+- [Copilot](docs/agents/mcp/copilot.md): `.vscode/mcp.json` (`servers`, prompted input).
+- [stdio via @movp/mcp-bridge](docs/agents/mcp/stdio-mcp-remote.md): stdio-only clients.
+
+## Conventions
+- [Error codes & conventions](docs/agents/error-codes.md): stable codes, tool naming, workspace-id.
+- [Consumer AGENTS.md template](docs/agents/AGENTS.template.md).

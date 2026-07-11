@@ -98,8 +98,29 @@ for (const file of docFiles) {
   }
 }
 
-// --- 4. (appended in Task C3c.4) error-codes.md + llms.txt + AGENTS.template presence ---
-// C3C4_ANCHOR
+// --- 4. Agent-docs facts: stable error codes, llms.txt index, consumer template ---
+const STABLE_CODES = ['missing_token', 'invalid_token', 'expired_token', 'invalid_claims']
+const errCodesDoc = join(root, 'docs', 'agents', 'error-codes.md')
+if (!existsSync(errCodesDoc)) fail('missing docs/agents/error-codes.md')
+else {
+  const t = readFileSync(errCodesDoc, 'utf8')
+  for (const c of STABLE_CODES) if (!t.includes(`| \`${c}\` |`)) fail(`error-codes.md missing stable code: ${c}`)
+}
+const llms = join(root, 'llms.txt')
+if (!existsSync(llms)) fail('missing repo-root llms.txt')
+else {
+  const t = readFileSync(llms, 'utf8')
+  if (!t.startsWith('# MOVP — agent connectivity\n\n>')) fail('llms.txt must start with its agent-connectivity H1 and summary blockquote')
+  if (!t.includes(MCP_ENDPOINT_PATH)) fail(`llms.txt must reference the MCP endpoint path ${MCP_ENDPOINT_PATH}`)
+  for (const f of ['claude-code', 'codex', 'cursor', 'gemini-cli', 'copilot']) {
+    if (!t.includes(`agents/mcp/${f}`)) fail(`llms.txt must link to docs/agents/mcp/${f}`)
+  }
+}
+const agentsTemplate = join(root, 'docs', 'agents', 'AGENTS.template.md')
+if (!existsSync(agentsTemplate)) fail('missing docs/agents/AGENTS.template.md (consumer template)')
+else if (!readFileSync(agentsTemplate, 'utf8').startsWith('<!-- MOVP consumer AGENTS.md template.')) {
+  fail('AGENTS.template.md must start with the consumer-template marker')
+}
 
 if (errors.length) {
   console.error('agent-config lint: FAIL')
