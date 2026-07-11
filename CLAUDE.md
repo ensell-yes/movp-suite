@@ -9,7 +9,8 @@
 - Storage may be temporarily disabled for pure-Postgres DB gates only when the local storage container healthcheck
   blocks `supabase db reset`. Re-enable storage before CMS asset or frontend e2e work.
 - When debugging `scripts/slice-e2e.sh` Edge Functions locally, use the script's env-file pattern:
-  `supabase functions serve ... --env-file <file>` with `MOVP_JWT_ISSUER=<API_URL>/auth/v1`.
+  `supabase functions serve --env-file <file>` with `MOVP_JWT_ISSUER=<API_URL>/auth/v1`.
+  The installed CLI serves all functions and accepts no positional function-name list.
   Shell-prefixed env vars may not propagate into the edge runtime and can look like JWT/auth defects.
 - The slice only kills existing local edge-runtime/function processes in CI, or when explicitly run with
   `MOVP_CLEAN_EDGE_RUNTIME=1`; keep that cleanup opt-in locally so other Supabase projects are not disturbed.
@@ -31,8 +32,22 @@
   e.g. Segmentation is 04a **and** 04b **and** 04c **and** 04d, not 04a alone. Executing one part
   and stopping is normal and fine; reporting the *phase* as done when parts are pending is not.
 - The authoritative record is the **Stage B EXECUTION STATUS table** in
-  `docs/superpowers/plans/README.md`. Update it in the same commit that lands a part, and read it
+  `docs/superpowers/plans/README.md` (and the Stage C table for C phases). Update it in the same
+  commit that lands a part, and read it
   before claiming or assuming completion status.
+
+## Agent Connectivity
+
+- Personal Access Tokens are user-scoped credentials. `default_workspace_id` is a CLI home hint,
+  not an authorization boundary; MCP, GraphQL, and CLI operations reuse the user's normal RLS.
+- The hosted MCP transport is streamable HTTP at `/functions/v1/mcp`. Stdio-only clients use the
+  narrow `@movp/mcp-bridge` workspace package with `MOVP_MCP_URL` + `MOVP_PAT`; local gateways may
+  additionally require `MOVP_MCP_APIKEY`.
+- `mcp-remote@0.1.38` is not supported: repeated local gates intermittently dropped static bearer
+  auth, attempted OAuth registration, and could log custom header values. Do not restore it without
+  a pinned, repeatable smoke that keeps credentials out of argv and logs.
+- Agent-facing auth codes are `missing_token`, `invalid_token`, `expired_token`, and
+  `invalid_claims`. A revoked PAT maps to `invalid_token` at every public boundary.
 
 ## Eight-Dimension Review Harness
 
