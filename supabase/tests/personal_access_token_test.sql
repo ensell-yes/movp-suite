@@ -1,5 +1,5 @@
 begin;
-select plan(26);
+select plan(28);
 
 -- seed as table owner (bypasses RLS): U in W1 AND W2 (multi-workspace); V in W3
 insert into public.workspace (id, name) values
@@ -87,52 +87,75 @@ select ok(
    select not (v ? 'token') and not (v ? 'token_hash') from j),
   'resolve_pat never returns secret material');
 
+-- (14) a second resolve inside five minutes does not amplify last_used_at writes
+reset role;
+create temp table _last_used as
+  select last_used_at from movp_internal.personal_access_token
+   where token_hash = encode(extensions.digest('movp_pat_main','sha256'),'hex');
+set local role service_role;
+do $$ begin
+  perform public.resolve_pat(encode(extensions.digest('movp_pat_main','sha256'),'hex'));
+end $$;
+reset role;
+select is(
+  (select last_used_at from movp_internal.personal_access_token
+    where token_hash = encode(extensions.digest('movp_pat_main','sha256'),'hex')),
+  (select last_used_at from _last_used),
+  'resolve_pat throttles last_used_at writes within five minutes');
+
 -- (15-17) not_found / expired / revoked discriminants (still service_role)
+set local role service_role;
 select is(public.resolve_pat('deadbeef') ->> 'status', 'not_found', 'unknown hash -> not_found');
 select is(public.resolve_pat(encode(extensions.digest('movp_pat_expired','sha256'),'hex')) ->> 'status', 'expired', 'expired PAT -> expired');
 select is(public.resolve_pat(encode(extensions.digest('movp_pat_revoked','sha256'),'hex')) ->> 'status', 'revoked', 'revoked PAT -> revoked');
 
--- (14) resolve_pat is service-role only: authenticated is denied
+-- (18)(19) resolve_pat is service-role only: authenticated and anon are denied
 set local role authenticated;
 set local request.jwt.claims = '{"sub":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"}';
 select throws_ok(
   $$select public.resolve_pat('deadbeef')$$,
   '42501',null,'authenticated cannot call resolve_pat (service-role only)');
+set local role anon;
+select throws_ok(
+  $$select public.resolve_pat('deadbeef')$$,
+  '42501',null,'anon cannot call resolve_pat (service-role only)');
 
--- (18) list exposes metadata, never the hash
+-- (20) list exposes metadata, never the hash
+set local role authenticated;
+set local request.jwt.claims = '{"sub":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"}';
 select ok(
   public.list_personal_access_tokens()::text not like '%token_hash%'
   and (public.list_personal_access_tokens() -> 0 ? 'name'),
   'list exposes metadata, never token_hash');
 
--- (19) list is own-only: V sees none of U's tokens
+-- (21) list is own-only: V sees none of U's tokens
 set local request.jwt.claims = '{"sub":"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"}';
 select is(jsonb_array_length(public.list_personal_access_tokens()), 0, 'list is own-only (V sees no PATs)');
 
--- (20) list requires a caller
+-- (22) list requires a caller
 set local request.jwt.claims = '{}';
 select throws_ok(
   $$select public.list_personal_access_tokens()$$,
   '42501',null,'unauthenticated cannot list');
 
--- (21) revoke is own-only: V cannot revoke U's PAT
+-- (23) revoke is own-only: V cannot revoke U's PAT
 set local request.jwt.claims = '{"sub":"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"}';
 select throws_ok(
   format($$select public.revoke_personal_access_token(%L)$$, (select r->>'token_id' from _pat)),
   'P0001','pat_not_found','V cannot revoke U''s PAT (own-only)');
 
--- (22) revoke of an unknown id -> pat_not_found
+-- (24) revoke of an unknown id -> pat_not_found
 set local request.jwt.claims = '{"sub":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"}';
 select throws_ok(
   $$select public.revoke_personal_access_token('99999999-9999-9999-9999-999999999999')$$,
   'P0001','pat_not_found','revoking an unknown id is rejected');
 
--- (23) U revokes its own PAT
+-- (25) U revokes its own PAT
 select lives_ok(
   format($$select public.revoke_personal_access_token(%L)$$, (select r->>'token_id' from _pat)),
   'U revokes its own PAT');
 
--- (24-26) identity boundary + non-confinement, proven via the RLS the minted session inherits
+-- (26-28) identity boundary + non-confinement, proven via the RLS the minted session inherits
 select is((select count(*)::int from public.note where id = 'd1000000-0000-0000-0000-000000000001'), 1, 'U sees its W1 note');
 select is((select count(*)::int from public.note where id = 'd2000000-0000-0000-0000-000000000002'), 1, 'U sees its W2 note too (PAT is user-scoped, NOT confined to default_workspace_id)');
 select is((select count(*)::int from public.note where id = 'd3000000-0000-0000-0000-000000000003'), 0, 'U cannot see V''s private note (identity boundary)');

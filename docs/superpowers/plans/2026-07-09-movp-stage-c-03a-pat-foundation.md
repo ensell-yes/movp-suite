@@ -1,5 +1,9 @@
 # MOVP Stage C3a — PAT Foundation + Resolution
 
+> **POST-EXECUTION TEST HARDENING (2026-07-10):** the PAT pgTAP matrix now includes anonymous
+> `resolve_pat` denial and the five-minute `last_used_at` write throttle. The current file plans 28
+> assertions, bringing the repository pgTAP total to 611 across 30 files.
+
 > **For agentic workers (Codex):** implement task-by-task with TDD. Steps use checkbox
 > (`- [ ]`) syntax. Transcribe the code samples verbatim — they are grounded in the real
 > committed code (line-verified 2026-07-09) and the frozen C3 contracts. Precondition:
@@ -33,7 +37,7 @@ Cloudflare adapter, `@supabase/supabase-js` v2.
 
 | Gate | Baseline on `main` | After C3a |
 |---|---|---|
-| pgTAP (`supabase test db`) | **583 tests / 29 files** | **609 tests / 30 files** (+26 in 1 new file) |
+| pgTAP (`supabase test db`) | **583 tests / 29 files** | **611 tests / 30 files** (+28 in 1 new file) |
 | definer-audit (`node scripts/check-definer-audit.mjs`) | **175 function block(s), all pinned** | **179** (+4 SECURITY DEFINER RPCs) |
 | typecheck (`turbo run typecheck`) | **12/12 packages** | **12/12** (no new package) |
 | boundary (`bash scripts/check-boundary.sh`) | `boundary: clean` | `boundary: clean` |
@@ -82,7 +86,7 @@ scripts/
 supabase/migrations/
   20260709000001_personal_access_tokens.sql           # C3a.2 table + 4 RPCs
 supabase/tests/
-  personal_access_token_test.sql                       # C3a.2 pgTAP matrix (plan 26)
+  personal_access_token_test.sql                       # C3a.2 pgTAP matrix (plan 28)
 packages/auth/src/
   pat.ts                                               # C3a.3 PatExchange, resolvePatToken, sha256hex, PAT_PREFIX
   index.ts                                             # C3a.3 MODIFY: re-export pat.ts
@@ -266,12 +270,12 @@ per 5 min.
 **TDD steps**
 
 - [ ] **Step 1 — write the failing pgTAP** `supabase/tests/personal_access_token_test.sql`
-  (plan 26, complete). Users U/V, workspaces W1/W2 (U is a member of BOTH → non-confinement),
+  (plan 28, complete). Users U/V, workspaces W1/W2 (U is a member of BOTH → non-confinement),
   W3 (V-only → identity boundary):
 
 ```sql
 begin;
-select plan(26);
+select plan(28);
 
 -- seed as table owner (bypasses RLS): U in W1 AND W2 (multi-workspace); V in W3
 insert into public.workspace (id, name) values
@@ -359,52 +363,75 @@ select ok(
    select not (v ? 'token') and not (v ? 'token_hash') from j),
   'resolve_pat never returns secret material');
 
+-- (14) a second resolve inside five minutes does not amplify last_used_at writes
+reset role;
+create temp table _last_used as
+  select last_used_at from movp_internal.personal_access_token
+   where token_hash = encode(extensions.digest('movp_pat_main','sha256'),'hex');
+set local role service_role;
+do $$ begin
+  perform public.resolve_pat(encode(extensions.digest('movp_pat_main','sha256'),'hex'));
+end $$;
+reset role;
+select is(
+  (select last_used_at from movp_internal.personal_access_token
+    where token_hash = encode(extensions.digest('movp_pat_main','sha256'),'hex')),
+  (select last_used_at from _last_used),
+  'resolve_pat throttles last_used_at writes within five minutes');
+
 -- (15-17) not_found / expired / revoked discriminants (still service_role)
+set local role service_role;
 select is(public.resolve_pat('deadbeef') ->> 'status', 'not_found', 'unknown hash -> not_found');
 select is(public.resolve_pat(encode(extensions.digest('movp_pat_expired','sha256'),'hex')) ->> 'status', 'expired', 'expired PAT -> expired');
 select is(public.resolve_pat(encode(extensions.digest('movp_pat_revoked','sha256'),'hex')) ->> 'status', 'revoked', 'revoked PAT -> revoked');
 
--- (14) resolve_pat is service-role only: authenticated is denied
+-- (18)(19) resolve_pat is service-role only: authenticated and anon are denied
 set local role authenticated;
 set local request.jwt.claims = '{"sub":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"}';
 select throws_ok(
   $$select public.resolve_pat('deadbeef')$$,
   '42501',null,'authenticated cannot call resolve_pat (service-role only)');
+set local role anon;
+select throws_ok(
+  $$select public.resolve_pat('deadbeef')$$,
+  '42501',null,'anon cannot call resolve_pat (service-role only)');
 
--- (18) list exposes metadata, never the hash
+-- (20) list exposes metadata, never the hash
+set local role authenticated;
+set local request.jwt.claims = '{"sub":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"}';
 select ok(
   public.list_personal_access_tokens()::text not like '%token_hash%'
   and (public.list_personal_access_tokens() -> 0 ? 'name'),
   'list exposes metadata, never token_hash');
 
--- (19) list is own-only: V sees none of U's tokens
+-- (21) list is own-only: V sees none of U's tokens
 set local request.jwt.claims = '{"sub":"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"}';
 select is(jsonb_array_length(public.list_personal_access_tokens()), 0, 'list is own-only (V sees no PATs)');
 
--- (20) list requires a caller
+-- (22) list requires a caller
 set local request.jwt.claims = '{}';
 select throws_ok(
   $$select public.list_personal_access_tokens()$$,
   '42501',null,'unauthenticated cannot list');
 
--- (21) revoke is own-only: V cannot revoke U's PAT
+-- (23) revoke is own-only: V cannot revoke U's PAT
 set local request.jwt.claims = '{"sub":"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"}';
 select throws_ok(
   format($$select public.revoke_personal_access_token(%L)$$, (select r->>'token_id' from _pat)),
   'P0001','pat_not_found','V cannot revoke U''s PAT (own-only)');
 
--- (22) revoke of an unknown id -> pat_not_found
+-- (24) revoke of an unknown id -> pat_not_found
 set local request.jwt.claims = '{"sub":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"}';
 select throws_ok(
   $$select public.revoke_personal_access_token('99999999-9999-9999-9999-999999999999')$$,
   'P0001','pat_not_found','revoking an unknown id is rejected');
 
--- (23) U revokes its own PAT
+-- (25) U revokes its own PAT
 select lives_ok(
   format($$select public.revoke_personal_access_token(%L)$$, (select r->>'token_id' from _pat)),
   'U revokes its own PAT');
 
--- (24-26) identity boundary + non-confinement, proven via the RLS the minted session inherits
+-- (26-28) identity boundary + non-confinement, proven via the RLS the minted session inherits
 select is((select count(*)::int from public.note where id = 'd1000000-0000-0000-0000-000000000001'), 1, 'U sees its W1 note');
 select is((select count(*)::int from public.note where id = 'd2000000-0000-0000-0000-000000000002'), 1, 'U sees its W2 note too (PAT is user-scoped, NOT confined to default_workspace_id)');
 select is((select count(*)::int from public.note where id = 'd3000000-0000-0000-0000-000000000003'), 0, 'U cannot see V''s private note (identity boundary)');
@@ -557,8 +584,8 @@ assertion (14) pins that authenticated gets `42501`. ⚠ Gotcha: never `select t
 
 - [ ] **Step 4 — run it, expect PASS**:
 Run: `supabase db reset && supabase test db`
-Expected: **PASS** — `personal_access_token_test … ok` (plan 26); **609 tests across 30 files**
-(583 + 26).
+Expected: **PASS** — `personal_access_token_test … ok` (plan 28); **611 tests across 30 files**
+(583 + 28).
 
 - [ ] **Step 5 — gate + commit**:
 Run: `node scripts/check-definer-audit.mjs && node scripts/check-forward-only-migrations.mjs && supabase db diff`
@@ -1487,7 +1514,7 @@ git commit -m "feat(pat): self-service /settings/tokens page + friendly PAT copy
 ```sh
 pnpm install --frozen-lockfile
 node scripts/spike-pat-exchange.mjs                     # SPIKE GREEN (needs a live local stack)
-supabase db reset && supabase test db                    # 609 tests / 30 files PASS
+supabase db reset && supabase test db                    # 611 tests / 30 files PASS
 supabase db diff                                         # empty
 node scripts/check-forward-only-migrations.mjs           # only status A on 20260709000001
 node scripts/check-definer-audit.mjs                     # 179 blocks, all pinned
@@ -1499,7 +1526,7 @@ pnpm typecheck                                           # 12/12 packages
 bash scripts/check-boundary.sh                           # boundary: clean
 grep -q '\[functions.auth-exchange\]' supabase/config.toml && echo "auth-exchange registered"
 ```
-Expected: every line PASS; `supabase test db` total **609 across 30 files**; definer-audit
+Expected: every line PASS; `supabase test db` total **611 across 30 files**; definer-audit
 **179**; typecheck **12/12**; `boundary: clean`.
 
 ---
@@ -1508,12 +1535,12 @@ Expected: every line PASS; `supabase test db` total **609 across 30 files**; def
 
 - **Correctness:** one mechanism (a real GoTrue session) serves the edge and (in C3b) the CLI;
   every RLS policy and DEFINER RPC is reused UNCHANGED. The scope claim is honest — **user-scoped**,
-  proven by pgTAP (24)/(25) (U sees BOTH W1 and W2) and (26) (U cannot see V's note). The verify
+  proven by pgTAP (26)/(27) (U sees BOTH W1 and W2) and (28) (U cannot see V's note). The verify
   type is empirically PINNED to `'email'` by C3a.1 before anything depends on it. spec ↔ migration
   ↔ contracts ↔ tests agree on the 4 RPC signatures and the `PatExchange` union.
 - **Safety:** token hashed at rest (`token_hash <> token`, pinned (6)); one-time display; `movp_pat_`
   prefix; `movp_internal` posture closed to authenticated (pinned (9)); `resolve_pat` service-role
-  only (pinned (14)); auth-reject events keys-only (surface + code, no token/email); the web page
+  only (pinned (18)/(19)); auth-reject events keys-only (surface + code, no token/email); the web page
   never imports `@movp/*`/`service_role` (boundary grep). A leaked PAT = the owner's full access —
   documented on the page and in the spec; narrower-than-user PATs are the deferred enhancement.
 - **Reliability:** identity boundary (U cannot read V), expired, revoked, not_found all covered by
@@ -1546,7 +1573,7 @@ Expected: every line PASS; `supabase test db` total **609 across 30 files**; def
    `movp_internal` posture; `resolve_pat` service-role only; one-time secret + hash-at-rest;
    keys-only obs; no-arg `readServerEnv()`; `verifyOtp({type:'email'})`). ✅
 4. Every task has exact paths, commands, and EXPECTED output (fail-first red, then the exact
-   pass count — 609/30, definer-audit 179, 12/12 typecheck). ✅
+   pass count — 611/30, definer-audit 179, 12/12 typecheck). ✅
 5. Every task ends with a machine-checkable gate (a named vitest suite, `supabase test db`, a
    grep, a typecheck, `db diff`, `check-definer-audit.mjs`, `check-forward-only-migrations.mjs`,
    `check-boundary.sh`). ✅
