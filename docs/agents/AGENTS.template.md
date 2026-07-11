@@ -9,7 +9,7 @@ This project exposes a MOVP instance over MCP (streamable HTTP) and the `movp` C
 - Auth: `Authorization: Bearer movp_pat_…` (a **user-scoped** Personal Access Token minted at
   `/settings/tokens`; treat it as an account credential and revoke on leak).
 - Per-client config: see `docs/agents/mcp/` (Claude Code, Codex, Cursor, Gemini CLI, Copilot) and
-  `docs/agents/mcp/stdio-mcp-remote.md` for stdio clients.
+  `docs/agents/mcp/stdio-bridge.md` for stdio clients.
 
 ## Rules for agents
 - Pass `workspaceId` on every workspace-scoped tool call (the PAT's default workspace is only a hint).

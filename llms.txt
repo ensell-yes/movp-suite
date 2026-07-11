@@ -10,7 +10,7 @@
 - [Cursor](docs/agents/mcp/cursor.md): `.cursor/mcp.json` sample.
 - [Gemini CLI](docs/agents/mcp/gemini-cli.md): `~/.gemini/settings.json` (`httpUrl`).
 - [Copilot](docs/agents/mcp/copilot.md): `.vscode/mcp.json` (`servers`, prompted input).
-- [stdio via @movp/mcp-bridge](docs/agents/mcp/stdio-mcp-remote.md): stdio-only clients.
+- [stdio via @movp/mcp-bridge](docs/agents/mcp/stdio-bridge.md): stdio-only clients.
 
 ## Conventions
 - [Error codes & conventions](docs/agents/error-codes.md): stable codes, tool naming, workspace-id.

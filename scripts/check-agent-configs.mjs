@@ -121,6 +121,14 @@ if (!existsSync(agentsTemplate)) fail('missing docs/agents/AGENTS.template.md (c
 else if (!readFileSync(agentsTemplate, 'utf8').startsWith('<!-- MOVP consumer AGENTS.md template.')) {
   fail('AGENTS.template.md must start with the consumer-template marker')
 }
+const stdioDoc = join(mcpDir, 'stdio-bridge.md')
+if (!existsSync(stdioDoc)) fail('missing docs/agents/mcp/stdio-bridge.md')
+else {
+  const t = readFileSync(stdioDoc, 'utf8')
+  if (!t.includes('@movp/mcp-bridge')) fail('stdio-bridge.md must document @movp/mcp-bridge')
+  if (/npx\s+(?:-y\s+)?mcp-remote/.test(t)) fail('stdio-bridge.md must not recommend the rejected mcp-remote path')
+}
+if (!existsSync(join(root, 'packages', 'mcp-bridge', 'src', 'index.ts'))) fail('missing @movp/mcp-bridge implementation')
 
 if (errors.length) {
   console.error('agent-config lint: FAIL')
