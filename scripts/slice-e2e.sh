@@ -141,9 +141,10 @@ FN_ENV_FILE="$(mktemp "${TMPDIR:-/tmp}/movp-functions.XXXXXX")"
 # responses during manual debugging.
 printf 'MOVP_JWT_ISSUER=%s\n' "$API_URL/auth/v1" >"$FN_ENV_FILE"
 printf 'RESEND_API_KEY=%s\n' "slice-e2e-placeholder" >>"$FN_ENV_FILE"
-supabase_local functions serve graphql mcp index-embeddings flows ingest --env-file "$FN_ENV_FILE" >/tmp/movp-functions.log 2>&1 &
+# This CLI serves every function and accepts no positional function list.
+supabase_local functions serve --env-file "$FN_ENV_FILE" >/tmp/movp-functions.log 2>&1 &
 FN_PID=$!
-trap 'kill $FN_PID 2>/dev/null || true; rm -f "$FN_ENV_FILE"' EXIT
+trap 'kill $FN_PID 2>/dev/null || true; rm -f "$FN_ENV_FILE"; if [ -n "${AGENTS_XDG:-}" ]; then rm -rf "$AGENTS_XDG"; fi' EXIT
 GRAPHQL_READY=0
 BOOT_ERROR_COUNT=0
 LAST_BOOT_ERROR=""
@@ -803,6 +804,101 @@ ADMIN_UPDATE="$(post_graphql "{\"query\":\"mutation{updateNote(id:\\\"$ADMIN_NOT
 echo "$ADMIN_UPDATE" | grep -q 'Admin slice edited' || { echo "generic updateNote failed: $ADMIN_UPDATE"; exit 1; }
 ADMIN_NOTE_WS="$(echo "$ADMIN_UPDATE" | json_get data.updateNote.workspace_id)"
 [ "$ADMIN_NOTE_WS" = "$ADMIN_WS" ] || { echo "generic updateNote moved workspace_id ($ADMIN_NOTE_WS != $ADMIN_WS): $ADMIN_UPDATE"; exit 1; }
+
+echo "== [agents] mint a user-scoped PAT via the web RPC (as the e2e owner) =="
+# PATs are USER-SCOPED: this PAT grants exactly $USER_ID's own access. default_workspace_id
+# ($WS) is a CLI home hint, NOT an access boundary. Minted via the GraphQL surface with the
+# user's session JWT ($TOKEN) — mirrors how [admin] mints an ingest key via createIngestKey.
+AGENTS_PAT_CREATE="$(post_graphql "{\"query\":\"mutation{createPersonalAccessToken(defaultWorkspaceId:\\\"$WS\\\", name:\\\"agents-slice\\\"){tokenId token}}\"}")"
+AGENTS_PAT="$(echo "$AGENTS_PAT_CREATE" | json_get data.createPersonalAccessToken.token)"
+AGENTS_PAT_ID="$(echo "$AGENTS_PAT_CREATE" | json_get data.createPersonalAccessToken.tokenId)"
+[ -n "$AGENTS_PAT" ] && [ -n "$AGENTS_PAT_ID" ] || { echo "createPersonalAccessToken response was missing token or tokenId"; exit 1; }
+# assert the movp_pat_ prefix WITHOUT echoing the raw token (keys-only obs)
+case "$AGENTS_PAT" in movp_pat_*) : ;; *) echo "PAT missing movp_pat_ prefix (create response shape wrong)"; exit 1;; esac
+
+echo "== [agents] the metadata list exposes the PAT but never the raw token/hash =="
+AGENTS_PAT_LIST="$(post_graphql '{"query":"query{personalAccessTokens{id name defaultWorkspaceId createdAt revokedAt}}"}')"
+echo "$AGENTS_PAT_LIST" | grep -q 'agents-slice' || { echo "personalAccessTokens did not list the PAT: $AGENTS_PAT_LIST"; exit 1; }
+case "$AGENTS_PAT_LIST" in *"$AGENTS_PAT"*) echo "personalAccessTokens leaked the raw PAT"; exit 1;; esac
+
+echo "== [agents] exchange the PAT for a real session via the auth-exchange edge fn =="
+# The CLI login/headless path relies on THIS endpoint being served (see the serve-list edit).
+AGENTS_EX="$(curl -sS "$API_URL/functions/v1/auth-exchange" \
+  -H "Authorization: Bearer $AGENTS_PAT" \
+  -H "apikey: $ANON_KEY" \
+  -H "content-type: application/json" \
+  -d '{}')"
+echo "$AGENTS_EX" | grep -q 'access_token' || { echo "auth-exchange did not return a session (is auth-exchange served?): $AGENTS_EX"; exit 1; }
+AGENTS_EX_SUB="$(echo "$AGENTS_EX" | json_get user_id)"
+[ "$AGENTS_EX_SUB" = "$USER_ID" ] || { echo "exchange resolved the wrong user ($AGENTS_EX_SUB != $USER_ID): $AGENTS_EX"; exit 1; }
+
+echo "== [agents] MCP over streamable HTTP with the PAT: tools/list + a real tool-call =="
+# Bearer is the movp_pat_ token -> resolvePrincipal's PAT branch mints a session in-process and
+# binds principal.db under RLS. The transport is stateless (no initialize handshake needed),
+# exactly as the [4] block already proves for tools/list.
+AGENTS_MCP_LIST="$(curl -sS "$API_URL/functions/v1/mcp" \
+  -H "Authorization: Bearer $AGENTS_PAT" \
+  -H "apikey: $ANON_KEY" \
+  -H "content-type: application/json" \
+  -H "accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}')"
+echo "$AGENTS_MCP_LIST" | grep -q 'note.list' || { echo "MCP tools/list (PAT auth) missing note.list: $AGENTS_MCP_LIST"; exit 1; }
+AGENTS_MCP_CALL="$(curl -sS "$API_URL/functions/v1/mcp" \
+  -H "Authorization: Bearer $AGENTS_PAT" \
+  -H "apikey: $ANON_KEY" \
+  -H "content-type: application/json" \
+  -H "accept: application/json, text/event-stream" \
+  -d "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"note.list\",\"arguments\":{\"workspaceId\":\"$WS\"}}}")"
+echo "$AGENTS_MCP_CALL" | grep -q 'E2E note' || { echo "MCP note.list (PAT auth) returned no real data: $AGENTS_MCP_CALL"; exit 1; }
+
+echo "== [agents] MCP over stdio via @movp/mcp-bridge with the PAT: tools/list =="
+AGENTS_STDIO="$(MCP_ENDPOINT="$API_URL/functions/v1/mcp" MCP_PAT="$AGENTS_PAT" MCP_APIKEY="$ANON_KEY" \
+  node scripts/mcp-bridge-probe.mjs)"
+echo "$AGENTS_STDIO" | grep -q 'MCP_STDIO_TOOLS_OK' || { echo "@movp/mcp-bridge stdio tools/list did not list note.list: $AGENTS_STDIO"; exit 1; }
+
+echo "== [agents] CLI authed action + hybrid search via the PAT (headless MOVP_PAT mode) =="
+# GOTCHA: force the file-based 0600 credential store (MOVP_SECURE_STORE=file) and an isolated
+# XDG_CONFIG_HOME so a local macOS run never writes to the developer login Keychain; CI (Linux)
+# uses the file store anyway. The CLI is run from source via tsx (no build step needed).
+AGENTS_XDG="$(mktemp -d "${TMPDIR:-/tmp}/movp-agents-xdg.XXXXXX")"
+export SUPABASE_URL="$API_URL" SUPABASE_ANON_KEY="$ANON_KEY" MOVP_SECURE_STORE=file XDG_CONFIG_HOME="$AGENTS_XDG"
+AGENTS_TASKS="$(MOVP_PAT="$AGENTS_PAT" pnpm exec tsx packages/cli/src/bin.ts task list --workspace "$WS")"
+echo "$AGENTS_TASKS" | grep -q 'E2E task' || { echo "movp task list (PAT auth) returned no real data: $AGENTS_TASKS"; exit 1; }
+AGENTS_HYBRID="$(MOVP_PAT="$AGENTS_PAT" pnpm exec tsx packages/cli/src/bin.ts search 'semantic lighthouse' --workspace "$WS" --mode hybrid)"
+echo "$AGENTS_HYBRID" | grep -q 'E2E note' || { echo "movp search --mode hybrid (PAT auth) returned no hit: $AGENTS_HYBRID"; exit 1; }
+
+echo "== [agents] revoke the PAT -> every surface fails closed with the auth code =="
+post_graphql "{\"query\":\"mutation{revokePersonalAccessToken(tokenId:\\\"$AGENTS_PAT_ID\\\")}\"}" | grep -q 'true' \
+  || { echo "revokePersonalAccessToken did not return true"; exit 1; }
+# (1) MCP over HTTP with the revoked PAT -> 401 + stable code (mirrors the [6] fail-closed block)
+AGENTS_MCP_401="$(curl -sS -o /tmp/agents-mcp-revoked.json -w '%{http_code}' "$API_URL/functions/v1/mcp" \
+  -H "Authorization: Bearer $AGENTS_PAT" \
+  -H "apikey: $ANON_KEY" \
+  -H "content-type: application/json" \
+  -H "accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}')"
+[ "$AGENTS_MCP_401" = "401" ] || { echo "revoked PAT still reached MCP ($AGENTS_MCP_401): $(cat /tmp/agents-mcp-revoked.json)"; exit 1; }
+grep -q 'invalid_token' /tmp/agents-mcp-revoked.json || { echo "MCP 401 body missing the stable auth code: $(cat /tmp/agents-mcp-revoked.json)"; exit 1; }
+# (2) auth-exchange with the revoked PAT -> 401 + stable code
+AGENTS_EX_401="$(curl -sS -o /tmp/agents-ex-revoked.json -w '%{http_code}' "$API_URL/functions/v1/auth-exchange" \
+  -H "Authorization: Bearer $AGENTS_PAT" \
+  -H "apikey: $ANON_KEY" \
+  -H "content-type: application/json" \
+  -d '{}')"
+[ "$AGENTS_EX_401" = "401" ] || { echo "revoked PAT still exchanged a session ($AGENTS_EX_401): $(cat /tmp/agents-ex-revoked.json)"; exit 1; }
+grep -q 'invalid_token' /tmp/agents-ex-revoked.json || { echo "exchange 401 body missing the stable auth code: $(cat /tmp/agents-ex-revoked.json)"; exit 1; }
+# (3) the CLI re-validates via the exchange on EVERY login, so a revoked PAT fails closed
+# (non-zero) immediately. GOTCHA: an already-minted session stays valid up to jwt_expiry (~1h);
+# `movp login` re-exchanges, so it does not depend on that documented residual window.
+if printf '%s\n' "$AGENTS_PAT" | pnpm exec tsx packages/cli/src/bin.ts login >/tmp/agents-cli-revoked.log 2>&1; then
+  echo "revoked PAT was accepted by movp login: $(cat /tmp/agents-cli-revoked.log)"; exit 1
+fi
+grep -qiE 'token|auth' /tmp/agents-cli-revoked.log || { echo "movp login failure did not surface an auth/token error: $(cat /tmp/agents-cli-revoked.log)"; exit 1; }
+
+echo "== [agents] keys-only: the function log never printed the raw PAT =="
+AGENTS_FUNCTION_LOG="$(cat /tmp/movp-functions.log)"
+case "$AGENTS_FUNCTION_LOG" in *"$AGENTS_PAT"*) echo "function log leaked the raw PAT (keys-only obs violated)"; exit 1;; esac
+rm -rf "$AGENTS_XDG"
 
 echo "== [8] internal not exposed via PostgREST API =="
 REST="$(curl -sS -o /dev/null -w '%{http_code}' "$API_URL/rest/v1/movp_jobs" -H "apikey: $ANON_KEY")"
