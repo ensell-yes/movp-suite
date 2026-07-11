@@ -148,6 +148,13 @@ function program(opts: Partial<Parameters<typeof buildProgram>[0]> = {}) {
 }
 
 describe('movp CLI', () => {
+  it('does not accept a PAT through an argv option', () => {
+    const { cmd } = program()
+    const login = cmd.commands.find((command) => command.name() === 'login')
+    expect(login).toBeDefined()
+    expect(login?.options.map((option) => option.long)).not.toContain('--token')
+  })
+
   it('creates a note through the generated collection command', async () => {
     const { cmd, out } = program()
     await cmd.parseAsync(['node', 'movp', 'note', 'create', '--workspace', 'w', '--title', 'Hello'])
@@ -183,8 +190,8 @@ describe('movp CLI', () => {
         new Response(JSON.stringify({ access_token: 'jwt', expires_at: Math.floor(Date.now() / 1000) + 3600, default_workspace_id: 'w1', user_id: 'u1' }), { status: 200 }),
       )
       vi.stubGlobal('fetch', fetchSpy)
-      const { cmd, out } = program()
-      await cmd.parseAsync(['node', 'movp', 'login', '--token', 'movp_pat_secret'])
+      const { cmd, out } = program({ readLoginToken: async () => 'movp_pat_secret' })
+      await cmd.parseAsync(['node', 'movp', 'login'])
       expect(fetchSpy).toHaveBeenCalledTimes(1)
       expect(out.join('\n')).toContain('u1')
       expect(out.join('\n')).not.toContain('movp_pat_secret')

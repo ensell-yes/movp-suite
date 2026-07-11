@@ -1,5 +1,10 @@
 # MOVP Stage C3b — CLI Login / Init / Search Parity (PAT credential mode)
 
+> **POST-EXECUTION SAFETY HARDENING (2026-07-10):** `movp login --token <pat>` was removed because
+> process arguments expose credentials to process inspection. The supported login contract reads the
+> PAT from stdin. References to `--token` below are preserved as the original TDD instructions, not
+> the current CLI surface. The added command-shape regression brings the final CLI suite to 48 tests.
+
 > **For agentic workers (Codex):** implement task-by-task with TDD. Steps use checkbox
 > (`- [ ]`) syntax. **Transcribe the code samples verbatim** — they are grounded in the real
 > committed code (`packages/cli/src/{client,program,bin,index}.ts`, line-verified 2026-07-09)
@@ -49,7 +54,7 @@ new dependency** (node builtins `fs`/`os`/`path`/`crypto`/`child_process` + the 
 - **Baselines on this branch (verified 2026-07-09):** `@movp/cli` vitest suite = **16 tests**
   (all in `packages/cli/test/program.test.ts`); workspace `pnpm typecheck` = **12/12 packages**.
   C3b adds no package, so `pnpm typecheck` **stays 12/12**. The CLI suite grows
-  16 → 26 → 38 → 44 → 46 → 46 → 47 across the six tasks.
+  16 → 26 → 38 → 44 → 46 → 46 → 48 across the six tasks plus post-execution hardening.
 - **No new dependency.** Everything is a node builtin or an existing dep. Do **not** add a
   keytar/keychain npm package — shell out to `security` (macOS) per the global keychain rule.
 - **Never print or log the PAT or the session.** `movp login` prints only non-secret metadata
@@ -84,7 +89,7 @@ new dependency** (node builtins `fs`/`os`/`path`/`crypto`/`child_process` + the 
   on a rejected token). `expires_at` is **unix seconds** (GoTrue convention); the code tolerates
   a millisecond value defensively.
 - **Per-task gate + one commit per task.** A task is done only when its gate passes.
-  Phase C3b done only when C3b.1–C3b.6 all land and the CLI suite is 47 green, typecheck 12/12.
+  Phase C3b done only when C3b.1–C3b.6 all land and the CLI suite is 48 green, typecheck 12/12.
 
 ## File Structure
 
@@ -1532,12 +1537,12 @@ describe('CLI PAT lifecycle', () => {
   Run (restored): `pnpm --filter @movp/cli exec vitest run integration`
   Expected: PASS — `integration.test.ts (1 test)`.
 
-- [ ] **Step 3 — run the full CLI suite, expect PASS = 47:**
-  Run: `pnpm --filter @movp/cli test`  → Expected: **47 tests** across 5 files
-  (program 19 + config 9 + secure-store 12 + client 6 + integration 1).
+- [ ] **Step 3 — run the full CLI suite, expect PASS = 48:**
+  Run: `pnpm --filter @movp/cli test`  → Expected: **48 tests** across 5 files
+  (program 20 + config 9 + secure-store 12 + client 6 + integration 1).
 
 - [ ] **Step 4 — full C3b gate.** All must hold:
-  - `pnpm --filter @movp/cli test` → **47 passed**.
+  - `pnpm --filter @movp/cli test` → **48 passed**.
   - `pnpm typecheck` → **12/12** packages clean (C3b added no package).
   - `grep -rnE "console\.[a-z]+\([^)]*(pat|session|token|secret)" packages/cli/src` → **empty**.
   - `grep -rn "console" packages/cli/src/secure-store.ts packages/cli/src/config.ts packages/cli/src/graphql-client.ts` → **empty**.
@@ -1579,12 +1584,12 @@ git commit -m "test(cli): PAT lifecycle integration (init→login→list→hybri
 - **Simplicity:** no new package, **no new dependency**; the store shells out to `security`
   rather than pulling a keychain lib; `resolveCtx` is the single credential seam.
 - **Usability:** `movp init` removes the SUPABASE_URL-env requirement; `movp login` accepts a
-  pasted `--token` or stdin; errors are actionable ("run `movp init` first"); secrets never
+  stdin; errors are actionable ("run `movp init` first"); secrets never
   echo to the terminal.
 
 ## Self-check (author, satisfied)
 1. Every task has exact file paths, exact commands, and an **expected test count**
-   (16→26→38→44→46→46→47) + typecheck 12/12. ✅
+   (16→26→38→44→46→46→48) + typecheck 12/12. ✅
 2. Every code sample is copy-paste-correct and consistent with the prose (async `resolveCtx`,
    `await` at 38+2 sites, byte-identical ACCESS_TOKEN/service-role blocks). ✅
 3. Platform gotchas commented **at the trigger site**: `0o600`+`chmod` and `lstat`-symlink-refuse

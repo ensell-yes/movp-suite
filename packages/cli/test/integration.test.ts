@@ -43,8 +43,8 @@ afterEach(() => {
 describe('CLI PAT lifecycle', () => {
   it('init -> login -> list -> hybrid -> revoke -> auth-fail (fails closed)', async () => {
     const out: string[] = []
-    const run = (argv: string[]) => {
-      const cmd = buildProgram({ out: (line) => out.push(line) })
+    const run = (argv: string[], loginToken = '') => {
+      const cmd = buildProgram({ out: (line) => out.push(line), readLoginToken: async () => loginToken })
       cmd.exitOverride()
       return cmd.parseAsync(['node', 'movp', ...argv])
     }
@@ -67,7 +67,7 @@ describe('CLI PAT lifecycle', () => {
         ),
       ),
     )
-    await run(['login', '--token', 'movp_pat_live'])
+    await run(['login'], 'movp_pat_live')
     expect(out.at(-1)).toContain('user-1')
     expect(out.join('\n')).not.toContain('movp_pat_live')
 

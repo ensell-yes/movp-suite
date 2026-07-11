@@ -18,6 +18,7 @@ export interface BuildProgramOpts {
   runMigratePush?: () => Promise<void>
   jobs?: JobsHandlers
   out?: (line: string) => void
+  readLoginToken?: () => Promise<string>
 }
 
 type AnyService = CollectionService<Record<string, unknown>, Record<string, unknown>, Record<string, unknown>>
@@ -46,6 +47,7 @@ async function readTokenFromStdin(): Promise<string> {
 export function buildProgram(opts: BuildProgramOpts = {}): Command {
   const out = opts.out ?? ((l: string) => console.log(l))
   const resolveCtx = opts.resolveCtx ?? (() => resolveCliCtx())
+  const readLoginToken = opts.readLoginToken ?? readTokenFromStdin
 
   const runCodegen =
     opts.runCodegen ??
@@ -588,10 +590,9 @@ export function buildProgram(opts: BuildProgramOpts = {}): Command {
 
   program
     .command('login')
-    .description('Validate a Personal Access Token via the exchange endpoint and store it securely')
-    .option('--token <pat>', 'PAT (movp_pat_…); read from stdin when omitted')
-    .action(async (o: { token?: string }) => {
-      const pat = (o.token ?? (await readTokenFromStdin())).trim()
+    .description('Read a Personal Access Token from stdin, validate it, and store it securely')
+    .action(async () => {
+      const pat = (await readLoginToken()).trim()
       if (!pat.startsWith('movp_pat_')) throw new Error('a movp_pat_… token is required')
       const cfg = loadCliConfig()
       const apiUrl = process.env.SUPABASE_URL ?? cfg?.apiUrl

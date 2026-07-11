@@ -152,6 +152,11 @@ else if (!readFileSync(c3dPlan, 'utf8').includes('**EXECUTION DEVIATION (2026-07
   fail('C3d plan must preserve the mcp-remote execution-deviation banner')
 }
 
+const cliProgram = readFileSync(join(root, 'packages', 'cli', 'src', 'program.ts'), 'utf8')
+if (/\.option\(['"]--token\b/.test(cliProgram)) {
+  fail('movp login must read PATs from stdin; --token would expose the secret in argv')
+}
+
 if (errors.length) {
   console.error('agent-config lint: FAIL')
   for (const e of errors) console.error(`  - ${e}`)

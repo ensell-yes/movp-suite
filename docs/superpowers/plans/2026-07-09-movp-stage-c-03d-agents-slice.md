@@ -5,6 +5,8 @@
 > `@movp/mcp-bridge`. The executed slice uses `scripts/mcp-bridge-probe.mjs`; see
 > `docs/agents/mcp/stdio-bridge.md` for the decision and supported configuration. References to
 > `mcp-remote` below are preserved as the original TDD instructions, not the current runtime path.
+> Post-execution safety hardening also removed `movp login --token`; current automation pipes the PAT
+> over stdin, as the executed slice does at `scripts/slice-e2e.sh`.
 
 > **For agentic workers (Codex):** implement task-by-task with TDD. Steps use checkbox
 > (`- [ ]`) syntax. Transcribe the bash verbatim — it is grounded in the real committed
