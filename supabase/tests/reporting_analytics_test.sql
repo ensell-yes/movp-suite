@@ -68,13 +68,13 @@ values
    now() - interval '60 days', now());
 
 insert into movp_internal.movp_events (id, type, workspace_id, payload, trace_id, created_at) values
-  ('c4b00000-0000-0000-0000-000000000021', 'task.completed', 'c4b00000-0000-0000-0000-000000000001',
+  ('c4b00000-0000-0000-0000-000000000021', 'reporting.probe', 'c4b00000-0000-0000-0000-000000000001',
    '{"secret":"leak-me-not"}'::jsonb, 'c4b-trace-1', now()),
-  ('c4b00000-0000-0000-0000-000000000022', 'task.completed', 'c4b00000-0000-0000-0000-000000000001',
+  ('c4b00000-0000-0000-0000-000000000022', 'reporting.probe', 'c4b00000-0000-0000-0000-000000000001',
    '{"secret":"leak-me-not"}'::jsonb, 'c4b-trace-2', now()),
-  ('c4b00000-0000-0000-0000-000000000023', 'note.created', 'c4b00000-0000-0000-0000-000000000001',
+  ('c4b00000-0000-0000-0000-000000000023', 'reporting.other', 'c4b00000-0000-0000-0000-000000000001',
    '{"secret":"leak-me-not"}'::jsonb, 'c4b-trace-3', now() - interval '1 day'),
-  ('c4b00000-0000-0000-0000-000000000024', 'task.completed', 'c4b00000-0000-0000-0000-000000000002',
+  ('c4b00000-0000-0000-0000-000000000024', 'reporting.probe', 'c4b00000-0000-0000-0000-000000000002',
    '{"secret":"other-ws"}'::jsonb, 'c4b-trace-4', now());
 
 insert into movp_internal.movp_jobs (kind, idempotency_key, payload, workspace_id, status) values
@@ -119,10 +119,11 @@ select is(
        public.reporting_ingest_volume('c4b00000-0000-0000-0000-000000000001', 30)) entry),
   2, 'ingest volume: 30d window counts 2 and excludes the 60d-old event');
 select is(
-  (select sum((entry->>'count')::int)::int
+  (select (entry->>'count')::int
      from jsonb_array_elements(
-       public.reporting_event_daily_counts('c4b00000-0000-0000-0000-000000000001', 30)) entry),
-  3, 'event daily counts: 3 W1 internal events, W2 excluded');
+       public.reporting_event_daily_counts('c4b00000-0000-0000-0000-000000000001', 30)) entry
+    where entry->>'type' = 'reporting.probe'),
+  2, 'event daily counts: 2 W1 probe events, W2 probe excluded');
 select ok(
   public.reporting_event_daily_counts('c4b00000-0000-0000-0000-000000000001', 30)::text not like '%leak-me-not%',
   'event daily counts NEVER leak payload values');

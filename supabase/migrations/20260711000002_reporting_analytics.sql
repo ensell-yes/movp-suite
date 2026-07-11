@@ -179,3 +179,66 @@ end;
 $$;
 revoke all on function public.reporting_ingest_volume(uuid, int) from public, anon;
 grant execute on function public.reporting_ingest_volume(uuid, int) to authenticated;
+
+-- movp_internal analytics: bounded classifiers and counts only. Never return payload
+-- values, trace ids, or other free text from these SECURITY DEFINER functions.
+create or replace function public.reporting_event_daily_counts(ws uuid, days int default 30)
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  d int := least(greatest(coalesce(days, 30), 1), 90);
+begin
+  if (select auth.uid()) is null or not public.is_workspace_member(ws) then
+    raise exception 'not_workspace_member' using errcode = '42501';
+  end if;
+  return coalesce(
+    (select jsonb_agg(
+       jsonb_build_object('day', day, 'type', type, 'count', count)
+       order by day, type)
+       from (select to_char(date_trunc('day', event.created_at), 'YYYY-MM-DD') as day,
+                    event.type,
+                    count(*) as count
+               from movp_internal.movp_events event
+              where event.workspace_id = ws
+                and event.created_at >= now() - make_interval(days => d)
+              group by 1, 2) daily),
+    '[]'::jsonb);
+end;
+$$;
+revoke all on function public.reporting_event_daily_counts(uuid, int) from public, anon, authenticated;
+grant execute on function public.reporting_event_daily_counts(uuid, int) to authenticated;
+
+create or replace function public.reporting_job_daily_counts(ws uuid, days int default 30)
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  d int := least(greatest(coalesce(days, 30), 1), 90);
+begin
+  if (select auth.uid()) is null or not public.is_workspace_member(ws) then
+    raise exception 'not_workspace_member' using errcode = '42501';
+  end if;
+  return coalesce(
+    (select jsonb_agg(
+       jsonb_build_object('day', day, 'kind', kind, 'status', status, 'count', count)
+       order by day, kind, status)
+       from (select to_char(date_trunc('day', job.created_at), 'YYYY-MM-DD') as day,
+                    job.kind,
+                    job.status,
+                    count(*) as count
+               from movp_internal.movp_jobs job
+              where job.workspace_id = ws
+                and job.created_at >= now() - make_interval(days => d)
+              group by 1, 2, 3) daily),
+    '[]'::jsonb);
+end;
+$$;
+revoke all on function public.reporting_job_daily_counts(uuid, int) from public, anon, authenticated;
+grant execute on function public.reporting_job_daily_counts(uuid, int) to authenticated;
