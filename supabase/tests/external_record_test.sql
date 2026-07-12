@@ -28,7 +28,8 @@ on conflict (workspace_id, source, external_id) do update
   where public.external_record.payload is distinct from excluded.payload;
 reset role;
 select is(
-  (select count(*)::int from movp_internal.movp_events where type = 'external.record.upserted'),
+  (select count(*)::int from movp_internal.movp_events
+    where type = 'external.record.upserted' and workspace_id = 'c5a00000-0000-0000-0000-000000000001'),
   1, 'same-payload replay emits no new event');
 set local role authenticated;
 
@@ -39,7 +40,8 @@ on conflict (workspace_id, source, external_id) do update
   where public.external_record.payload is distinct from excluded.payload;
 reset role;
 select is(
-  (select count(*)::int from movp_internal.movp_events where type = 'external.record.upserted'),
+  (select count(*)::int from movp_internal.movp_events
+    where type = 'external.record.upserted' and workspace_id = 'c5a00000-0000-0000-0000-000000000001'),
   2, 'changed payload emits one more event');
 set local role authenticated;
 

@@ -59,7 +59,7 @@ bite-sized TDD plan (as C1 was) before building.
 > | C2 Admin Console & Operations | `2026-07-08-movp-stage-c-02-admin-console.md` | ✅ MERGED (PR #9 `004326b` + follow-up `7b51e28`, reviewed 9.26) |
 > | C3 Agent Connectivity (PATs/MCP/CLI) | `2026-07-09-movp-stage-c-03{a,b,c,d}-*.md` (+ design spec) | ✅ EXECUTED (C3a PAT foundation; C3b CLI parity; C3c MCP matrix + `@movp/mcp-bridge` + docs; C3d `[agents]` slice; local full gate + PR #11 CI green incl. `slice-e2e: PASS`) |
 > | C4 Reporting Views & Dashboards | `2026-07-11-movp-stage-c-04{a,b,c}-*.md` | ✅ EXECUTED (`169757e`…`14b27b8`; 666 pgTAP assertions / 33 files; local `slice-e2e: PASS`; reviewed 9.30) |
-> | C5 Integration Fabric | breakdown only | ⬜ expand before build (needs C3) |
+> | C5 Integration Fabric | `2026-07-11-movp-stage-c-05{a,b,c}-*.md` (+ design spec) | ✅ EXECUTED (C5a delta-owned external records + idempotent ingest; C5b PostgREST RLS audit/docs; C5c CRM worker/templates/integration slice; 699 pgTAP assertions, direct HTTP/edge integration checks) |
 > | C6 Templates & Scaffolding | breakdown only | ⬜ expand before build (needs C1) |
 > | C7 Inline Editing & Delivery | breakdown only | ⬜ expand before build (needs C1) |
 > | C8 Retrieval & RAG | breakdown only | ⬜ expand before build (needs C3) |

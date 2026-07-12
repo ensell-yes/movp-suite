@@ -900,6 +900,27 @@ AGENTS_FUNCTION_LOG="$(cat /tmp/movp-functions.log)"
 case "$AGENTS_FUNCTION_LOG" in *"$AGENTS_PAT"*) echo "function log leaked the raw PAT (keys-only obs violated)"; exit 1;; esac
 rm -rf "$AGENTS_XDG"
 
+echo "== [integration] idempotent ingest and external-ref upsert round trip =="
+RAW_IK="slice-integration-key"
+psql "$DB_URL" -v ON_ERROR_STOP=1 -c \
+  "insert into movp_internal.ingest_key (workspace_id, key_hash, label, active)
+   values ('$WS', encode(extensions.digest('$RAW_IK','sha256'),'hex'), 'slice', true)
+   on conflict (key_hash) do nothing;" >/dev/null
+EV='{"events":[{"event_type":"signup.completed","subject_ref":"u-int","occurred_at":"2026-07-11T00:00:00Z","idempotency_key":"slice-k1"}]}'
+R1="$(curl -sS "$API_URL/functions/v1/ingest" -H "apikey: $ANON_KEY" -H "x-ingest-key: $RAW_IK" -H "content-type: application/json" -d "$EV")"
+echo "$R1" | json_get inserted | grep -q '^1$' || { echo "ingest did not insert one event"; exit 1; }
+R2="$(curl -sS "$API_URL/functions/v1/ingest" -H "apikey: $ANON_KEY" -H "x-ingest-key: $RAW_IK" -H "content-type: application/json" -d "$EV")"
+echo "$R2" | json_get duplicate | grep -q '^1$' || { echo "ingest replay was not deduplicated"; exit 1; }
+
+curl -sS "$API_URL/rest/v1/rpc/upsert_by_external_ref" -H "apikey: $ANON_KEY" -H "Authorization: Bearer $TOKEN" \
+  -H "content-type: application/json" \
+  -d "{\"ws\":\"$WS\",\"source\":\"slice\",\"external_id\":\"int-1\",\"payload\":{\"stage\":\"lead\"}}" >/dev/null
+UP="$(curl -sS "$API_URL/rest/v1/external_record?select=external_id&source=eq.slice&external_id=eq.int-1" \
+  -H "apikey: $ANON_KEY" -H "Authorization: Bearer $TOKEN")"
+echo "$UP" | grep -q 'int-1' || { echo "external record was not readable after upsert"; exit 1; }
+EVT="$(psql "$DB_URL" -tA -c "select count(*) from movp_internal.movp_events where type='external.record.upserted' and workspace_id='$WS';")"
+[ "$EVT" -ge 1 ] || { echo "external.record.upserted was not emitted"; exit 1; }
+
 echo "== [integration-exposure] PostgREST facade is RLS-guarded =="
 EX1="$(curl -sS -o /dev/null -w '%{http_code}' "$API_URL/rest/v1/ingest_idempotency" -H "apikey: $ANON_KEY")"
 [ "$EX1" = "404" ] || [ "$EX1" = "401" ] || { echo "ingest_idempotency reachable via REST ($EX1)"; exit 1; }

@@ -19,7 +19,8 @@ select is(
   (public.upsert_by_external_ref('c5b00000-0000-0000-0000-000000000001', 'attio', 'rec-1', '{"stage":"lead"}'::jsonb)->>'external_id'),
   'rec-1', 'replay returns the row');
 reset role;
-select is((select count(*)::int from movp_internal.movp_events where type = 'external.record.upserted'),
+select is((select count(*)::int from movp_internal.movp_events
+  where type = 'external.record.upserted' and workspace_id = 'c5b00000-0000-0000-0000-000000000001'),
   1, 'idempotent replay emits no second event');
 set local role authenticated;
 
