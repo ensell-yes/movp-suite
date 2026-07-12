@@ -22,7 +22,9 @@ security definer
 set search_path = ''
 as $$
 begin
-  if new.source is distinct from old.source or new.external_id is distinct from old.external_id then
+  if new.workspace_id is distinct from old.workspace_id
+     or new.source is distinct from old.source
+     or new.external_id is distinct from old.external_id then
     raise exception 'external_ref_identity_immutable' using errcode = 'P0001';
   end if;
   return new;

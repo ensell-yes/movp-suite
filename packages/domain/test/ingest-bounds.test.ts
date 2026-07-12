@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  validateIngestEvent, boundBatch, INGEST_MAX_BATCH, INGEST_MAX_PROP_BYTES,
+  validateIngestEvent, INGEST_MAX_PROP_BYTES,
 } from '../src/ingest-bounds';
 
 describe('validateIngestEvent (require shape; measure serialized bytes)', () => {
@@ -48,18 +48,5 @@ describe('validateIngestEvent (require shape; measure serialized bytes)', () => 
     expect(validateIngestEvent({
       event_type: 'x', subject_ref: 's', occurred_at: '2026-07-01T00:00:00Z', properties: big,
     })).toEqual({ ok: false, error: 'oversized' });
-  });
-});
-
-describe('boundBatch (cap element count; require an array)', () => {
-  it('rejects a non-array', () => {
-    expect(boundBatch({ events: 'nope' })).toEqual({ ok: false, error: 'not_array' });
-  });
-  it('rejects a batch over the cap', () => {
-    const over = Array.from({ length: INGEST_MAX_BATCH + 1 }, () => ({}));
-    expect(boundBatch(over)).toEqual({ ok: false, error: 'batch_too_large' });
-  });
-  it('accepts a within-bound array', () => {
-    expect(boundBatch([{}, {}]).ok).toBe(true);
   });
 });

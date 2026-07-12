@@ -1,12 +1,13 @@
 -- C5a.3 external_record: identity immutability, no-delete, idempotent event emission.
 begin;
-select plan(10);
+select plan(11);
 
 insert into public.workspace (id, name) values
   ('c5a00000-0000-0000-0000-000000000001', 'ExtW1'),
   ('c5a00000-0000-0000-0000-000000000002', 'ExtW2');
 insert into public.workspace_membership (workspace_id, user_id, role) values
   ('c5a00000-0000-0000-0000-000000000001', 'c5a0aaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'member'),
+  ('c5a00000-0000-0000-0000-000000000002', 'c5a0aaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'member'),
   ('c5a00000-0000-0000-0000-000000000002', 'c5a0bbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'member');
 
 set local role authenticated;
@@ -53,6 +54,11 @@ select throws_ok(
   $$ update public.external_record set external_id = 'contact-2'
        where source = 'hubspot' and external_id = 'contact-1' $$,
   'P0001', 'external_ref_identity_immutable', 'external_id is immutable');
+select throws_ok(
+  $$ update public.external_record
+       set workspace_id = 'c5a00000-0000-0000-0000-000000000002'
+       where source = 'hubspot' and external_id = 'contact-1' $$,
+  'P0001', 'external_ref_identity_immutable', 'workspace_id is immutable even for a member of both workspaces');
 
 create temp table _external_record_deleted as
   with deleted as (

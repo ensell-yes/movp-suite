@@ -56,10 +56,3 @@ export function validateIngestEvent(e: unknown):
     },
   };
 }
-
-export function boundBatch(events: unknown):
-  { ok: true; value: unknown[] } | { ok: false; error: 'not_array' | 'batch_too_large' } {
-  if (!Array.isArray(events)) return { ok: false, error: 'not_array' };
-  if (events.length > INGEST_MAX_BATCH) return { ok: false, error: 'batch_too_large' };
-  return { ok: true, value: events };
-}

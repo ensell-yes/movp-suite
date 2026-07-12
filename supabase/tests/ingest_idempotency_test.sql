@@ -1,11 +1,16 @@
 -- C5a.5 idempotent ingest: same key and payload dedupe; mismatched payload conflicts.
 begin;
-select plan(15);
+select plan(16);
 
 insert into public.workspace (id, name) values ('c5c00000-0000-0000-0000-000000000001', 'IngW1');
 insert into movp_internal.ingest_key (workspace_id, key_hash, label, active)
 values ('c5c00000-0000-0000-0000-000000000001',
         encode(extensions.digest('c5c-raw-key', 'sha256'), 'hex'), 'test', true);
+
+select ok(
+  pg_get_functiondef('public.ingest_platform_event(text,jsonb)'::regprocedure)
+    like '%order by%idempotency_key%ordinality%',
+  'keyed events acquire advisory locks in canonical idempotency-key order');
 
 select is(
   (public.ingest_platform_event('c5c-raw-key',

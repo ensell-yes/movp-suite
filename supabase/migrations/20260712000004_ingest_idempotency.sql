@@ -55,7 +55,19 @@ begin
     raise exception 'batch_too_large' using errcode = '54000';
   end if;
 
-  for v_event in select value from jsonb_array_elements(events)
+  -- Keyed events must acquire transaction advisory locks in one global order. Without this,
+  -- concurrent batches [A, B] and [B, A] can deadlock while each waits on the other's key.
+  for v_event in
+    select value
+      from jsonb_array_elements(events) with ordinality as item(value, ordinality)
+     order by
+       case
+         when jsonb_typeof(value->'idempotency_key') = 'string'
+           and length(value->>'idempotency_key') > 0 then 0
+         else 1
+       end,
+       value->>'idempotency_key',
+       ordinality
   loop
     v_type := v_event->>'event_type';
     v_subject_ref := v_event->>'subject_ref';
