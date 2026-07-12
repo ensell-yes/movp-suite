@@ -1,7 +1,7 @@
 import { schema } from '@movp/core-schema'
 import type { MovpSchema } from '@movp/core-schema'
 import { emitReportingSql } from './emit-reporting.ts'
-import { emitSqlMigration } from './emit-sql.ts'
+import { emitDeltaSql, emitSqlMigration } from './emit-sql.ts'
 import { emitTypes } from './emit-types.ts'
 
 export interface GeneratedDelta {
@@ -23,6 +23,11 @@ function deltaOwnedEvents(deltas: readonly GeneratedDelta[]): string[] {
 // Once an entry merges, never remove or rename it; changed output gets a new entry.
 export const GENERATED_DELTAS: readonly GeneratedDelta[] = [
   { file: '20260711000001_movp_generated_reporting.sql', emit: emitReportingSql },
+  {
+    file: '20260712000001_movp_generated_external_record.sql',
+    emit: (schema) => emitDeltaSql(schema, { collections: ['external_record'] }),
+    collections: ['external_record'],
+  },
 ]
 
 export interface GenerateOptions {

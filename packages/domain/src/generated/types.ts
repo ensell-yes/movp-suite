@@ -1051,6 +1051,29 @@ export interface PlatformEventUpdate {
   ingested_at?: string
 }
 
+export interface ExternalRecordRow {
+  id: string
+  workspace_id: string
+  source: string
+  external_id: string
+  payload: Record<string, unknown> | null
+  created_at: string
+  updated_at: string
+}
+
+export interface ExternalRecordCreate {
+  workspace_id: string
+  source: string
+  external_id: string
+  payload?: Record<string, unknown>
+}
+
+export interface ExternalRecordUpdate {
+  source?: string
+  external_id?: string
+  payload?: Record<string, unknown>
+}
+
 export interface SegmentRow {
   id: string
   workspace_id: string

@@ -33,6 +33,7 @@ import { campaignMetric } from './collections/campaign_metric.ts'
 import { campaignSegment } from './collections/campaign_segment.ts'
 import { automationRule } from './collections/automation_rule.ts'
 import { eventType } from './collections/event_type.ts'
+import { externalRecord } from './collections/external_record.ts'
 import { marketingPlan } from './collections/marketing_plan.ts'
 import { platformEvent } from './collections/platform_event.ts'
 import { segment } from './collections/segment.ts'
@@ -94,6 +95,7 @@ export const schema = defineSchema([
   //  - segment_rule precedes segment_membership + segment_snapshot_member (matched_rule_id -> it).
   //  - segment_snapshot precedes segment_snapshot_member (snapshot_id -> it).
   platformEvent,
+  externalRecord,
   segment,
   segmentRule,
   segmentMembership,
