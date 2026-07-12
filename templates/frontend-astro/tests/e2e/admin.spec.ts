@@ -167,7 +167,7 @@ test('admin settings render workspace and retention advisory', async ({ page, co
   await expect(page.getByRole('link', { name: 'Event catalog and workflow rules' })).toHaveAttribute('href', '/workflows/rules')
 })
 
-for (const path of ['/admin', '/admin/members', '/admin/api-keys', '/admin/jobs', '/admin/collections', '/admin/collections/note', '/admin/settings', '/auth/accept-invite?token=invite-token-1234567890']) {
+for (const path of ['/admin', '/admin/members', '/admin/api-keys', '/admin/jobs', '/admin/collections', '/admin/collections/note', '/admin/settings', '/admin/reports', '/auth/accept-invite?token=invite-token-1234567890']) {
   test(`admin a11y smoke: ${path}`, async ({ page }) => {
     await page.goto(path)
     const results = await new AxeBuilder({ page }).analyze()

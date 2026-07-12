@@ -26,6 +26,21 @@
 - Future schema/codegen changes must either emit additive hand migrations or introduce a new generated-delta
   migration strategy. The original generated migration is frozen as historical deployment input.
 
+## Reporting Discipline
+
+- The `reporting` schema is codegen output from a generated delta registered in
+  `packages/codegen/src/generate.ts`. Never hand-edit a `*_movp_generated*.sql` file;
+  post-freeze emitter changes require a new registry entry and timestamped migration.
+- Dashboard reads use member-gated `reporting_*` RPCs with stable `42501` denial and
+  date windows clamped to 90 days. The `movp_internal` readers expose counts and bounded
+  classifiers only, never payload values.
+- GraphQL maps reporting failures to safe structured codes after emitting a correlated,
+  actor-attributed, workspace-hashed event. `/admin/reports` requests all families once
+  and preserves healthy sections when another root field fails.
+- `reporting_bi`, created by the operator-only `reporting.setup_bi_mirror()`, bypasses
+  RLS by design and is granted to no application role. Never grant it to `authenticated`
+  or `anon`; `supabase/tests/reporting_bi_grants_test.sql` is the boundary audit.
+
 ## Phase Completion Signal
 
 - A phase (`app-01` ... `app-06`) is DONE only when **every part in its plan series** is executed -

@@ -614,6 +614,47 @@ createServer(async (req, res) => {
       },
     })
   }
+  if (query.includes('query ReportingDashboards')) {
+    const empty = scenario === 'empty'
+    const partial = scenario === 'partial'
+    return json(res, 200, {
+      data: {
+        reportingTaskThroughput: {
+          avgCycleHours: empty ? null : 24,
+          openCount: empty ? 0 : 3,
+          series: empty ? [] : [
+            { day: '2026-07-09', count: 1 },
+            { day: '2026-07-10', count: 2 },
+          ],
+        },
+        reportingContentFunnel: empty ? [] : [
+          { status: 'draft', count: 2 },
+          { status: 'published', count: 1 },
+        ],
+        reportingCampaignMetrics: partial ? null : empty ? [] : [{ metricKey: 'clicks', total: 100 }],
+        reportingSegmentGrowth: empty ? [] : [{
+          segmentId: 's-1',
+          name: 'Registered',
+          points: [
+            { takenAt: '2026-07-09', memberCount: 3 },
+            { takenAt: '2026-07-10', memberCount: 5 },
+          ],
+        }],
+        reportingWorkflowHealth: empty ? [] : [
+          { day: '2026-07-10', outcome: 'succeeded', count: 4 },
+          { day: '2026-07-10', outcome: 'failed', count: 1 },
+        ],
+        reportingIngestVolume: empty ? [] : [{ day: '2026-07-10', source: 'internal', count: 7 }],
+        reportingEventDailyCounts: empty ? [] : [{ day: '2026-07-10', type: 'task.completed', count: 5 }],
+        reportingJobDailyCounts: empty ? [] : [{ day: '2026-07-10', kind: 'embed', status: 'done', count: 6 }],
+      },
+      errors: partial ? [{
+        message: 'Could not load this report.',
+        path: ['reportingCampaignMetrics'],
+        extensions: { code: 'INTERNAL_SERVER_ERROR' },
+      }] : undefined,
+    })
+  }
   if (query.includes('mutation ReplayDeadJobs')) {
     return json(res, 200, { data: { replayDeadJobs: { replayed: 1 } } })
   }

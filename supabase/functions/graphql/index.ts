@@ -1,10 +1,16 @@
-import { createYoga } from '@movp/graphql'
+import { createYoga, type ReportingFailureEvent } from '@movp/graphql'
 import { schema } from '@movp/core-schema'
 import { resolvePrincipal } from '@movp/auth'
 import { emit, REDACTION_VERSION } from '@movp/obs'
 import { GteSmallProvider } from '@movp/search/gte-small'
 
 const yoga = createYoga({ schema })
+
+async function sha256Hex(value: string): Promise<string> {
+  const bytes = new TextEncoder().encode(value)
+  const digest = await crypto.subtle.digest('SHA-256', bytes)
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('')
+}
 
 Deno.serve(async (req: Request): Promise<Response> => {
   const env = {
@@ -31,11 +37,26 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
   const url = new URL(req.url)
   const yogaReq = new Request(new URL(`/graphql${url.search}`, url.origin), req)
+  const requestId = crypto.randomUUID()
+  const traceId = crypto.randomUUID()
+  const reportReportingFailure = async ({ operation, errorCode, workspaceId }: ReportingFailureEvent): Promise<void> => {
+    emit({
+      trace_id: traceId,
+      request_id: requestId,
+      workspace_id_hash: await sha256Hex(workspaceId),
+      actor_id: principal.userId,
+      surface: 'graphql',
+      operation,
+      error_code: errorCode,
+      redaction_version: REDACTION_VERSION,
+    })
+  }
   return yoga.handleRequest(yogaReq, {
     db: principal.db,
     userId: principal.userId,
     embedder: new GteSmallProvider(),
     accessToken: req.headers.get('Authorization')?.replace(/^Bearer\s+/i, ''),
     assetsFnUrl: `${env.SUPABASE_URL}/functions/v1/content-assets`,
+    reportReportingFailure,
   })
 })

@@ -58,7 +58,7 @@ bite-sized TDD plan (as C1 was) before building.
 > | C1 OSS Packaging & Onboarding | `2026-07-07-movp-stage-c-01-oss-packaging-onboarding.md` | ✅ MERGED (PR #8 `7f65eff`, reviewed 9.2) |
 > | C2 Admin Console & Operations | `2026-07-08-movp-stage-c-02-admin-console.md` | ✅ MERGED (PR #9 `004326b` + follow-up `7b51e28`, reviewed 9.26) |
 > | C3 Agent Connectivity (PATs/MCP/CLI) | `2026-07-09-movp-stage-c-03{a,b,c,d}-*.md` (+ design spec) | ✅ EXECUTED (C3a PAT foundation; C3b CLI parity; C3c MCP matrix + `@movp/mcp-bridge` + docs; C3d `[agents]` slice; local full gate + PR #11 CI green incl. `slice-e2e: PASS`) |
-> | C4 Reporting Views & Dashboards | breakdown only | ⬜ expand before build (needs C2) |
+> | C4 Reporting Views & Dashboards | `2026-07-11-movp-stage-c-04{a,b,c}-*.md` | ✅ EXECUTED (`169757e`…`14b27b8`; 666 pgTAP assertions / 33 files; local `slice-e2e: PASS`; reviewed 9.30) |
 > | C5 Integration Fabric | breakdown only | ⬜ expand before build (needs C3) |
 > | C6 Templates & Scaffolding | breakdown only | ⬜ expand before build (needs C1) |
 > | C7 Inline Editing & Delivery | breakdown only | ⬜ expand before build (needs C1) |
@@ -88,6 +88,33 @@ ordinary GoTrue user session so every RLS policy/RPC is reused unchanged; `defau
 is a CLI home hint, **not** an access boundary. The C3.1 gate was amended accordingly (see the
 spec's F1 resolution), and C3.1 stays a real fail-first spike that proves the exchange
 end-to-end before C3b–C3d rely on it.
+
+**Phase C4 — Reporting Views & Dashboards is EXECUTED** (bite-sized TDD, three parts;
+commits `169757e`…`14b27b8`; local full gate and `slice-e2e: PASS`). Implemented in order
+C4a→C4b→C4c:
+**C4a** (`2026-07-11-movp-stage-c-04a-reporting-codegen.md`) the generated-delta codegen
+strategy — a frozen-baseline drift guard + `GENERATED_DELTAS` registry in `generate.ts` —
+then the reporting view emitter (26 `reporting.v_<collection>` security-invoker views,
+FK join keys always included), the `20260711000001_movp_generated_reporting.sql` delta,
+and pgTAP (structural totality over all 26 generated views + W1-leak checks across every
+workspace-scoped reporting view) →
+**C4b** (`…04b-reporting-analytics.md`) the hand-authored `reporting.v_task_cycle`, six
+member-gated INVOKER dashboard RPCs, two SECURITY DEFINER `movp_internal` daily-count
+RPCs (counts + bounded classifiers only, redaction pinned by value), `makeReportingService`
+in `@movp/domain`, and eight typed GraphQL reads wired into the `graphql-shape` gate →
+**C4c** (`…04c-reporting-dashboards-bi.md`) the `/admin/reports` page (zero-dependency
+SVG/table charts, `auth|error|empty|ok` states, Playwright + axe) and the external BI
+seam (`reporting.setup_bi_mirror()` inert operator mirror + grants-audit pgTAP +
+`docs/reporting.md`). One commit per task, TDD (failing test first), all repo gates
+green, implementation review 9.30. **Key design decisions (vs the breakdown prose):** dashboard
+reads are RPCs, never PostgREST view reads (the `reporting` schema is not API-exposed);
+`task` carries no reporting metadata by design — adding it would rewrite the frozen
+generated baseline, so its dashboard reads a hand-authored view; an external BI role
+cannot use security-invoker views (no grants, no JWT claims), so the BI seam is an
+operator-invoked `reporting_bi` mirror that deliberately bypasses RLS, granted to no app
+role, and pinned by a pgTAP grants audit. The target stack disproved the initial nested-view
+owner assumption, so the final mirror copies each reporting view's resolved, explicitly
+projected SQL into an owner view; the unchanged cross-workspace assertion proves the fallback.
 
 **Phase 2 — Collaboration is EXPANDED and EXECUTABLE** (bite-sized TDD, committed
 `31cceed`/`09a75a5`; passed adversarial review at 9.31). Execute **in order**:

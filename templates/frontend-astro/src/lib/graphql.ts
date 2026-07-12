@@ -20,7 +20,14 @@ export type SearchHit = {
 }
 
 export type GqlErrorCode = 'http_error' | 'auth_error' | 'graphql_error' | 'network_error'
-export type GqlResult<T> = { ok: true; data: T } | { ok: false; code: GqlErrorCode; message?: string }
+export type GqlFieldError = {
+  message?: string
+  path?: Array<string | number>
+  code?: string
+}
+export type GqlResult<T> =
+  | { ok: true; data: T; errors?: GqlFieldError[] }
+  | { ok: false; code: GqlErrorCode; message?: string }
 
 export type GqlClientOpts = {
   endpoint: string
@@ -30,11 +37,16 @@ export type GqlClientOpts = {
 
 type GqlErrorPayload = {
   message?: unknown
+  path?: unknown
   extensions?: {
     code?: unknown
     pgCode?: unknown
     reason?: unknown
   }
+}
+
+export type GqlRequestOptions = {
+  allowPartial?: boolean
 }
 
 function friendlyAdminMessage(error: GqlErrorPayload): string | null {
@@ -90,6 +102,7 @@ export async function gqlRequest<T>(
   opts: GqlClientOpts,
   query: string,
   variables: Record<string, unknown>,
+  requestOptions: GqlRequestOptions = {},
 ): Promise<GqlResult<T>> {
   const doFetch = opts.fetchImpl ?? fetch
   let res: Response
@@ -116,15 +129,22 @@ export async function gqlRequest<T>(
     return { ok: false, code: 'graphql_error' }
   }
   if (json.errors && json.errors.length > 0) {
-    const message = json.errors
-      .map((error) => {
-        if (!error || typeof error !== 'object') return ''
-        const payload = error as GqlErrorPayload
-        return friendlyAdminMessage(payload)
-          ?? ('message' in payload ? String(payload.message) : '')
-      })
-      .filter(Boolean)
-      .join('; ')
+    const errors: GqlFieldError[] = []
+    for (const error of json.errors) {
+      if (!error || typeof error !== 'object') continue
+      const payload = error as GqlErrorPayload
+      const message = friendlyAdminMessage(payload)
+        ?? ('message' in payload ? String(payload.message) : '')
+      const path = Array.isArray(payload.path)
+        ? payload.path.filter((part): part is string | number => typeof part === 'string' || typeof part === 'number')
+        : undefined
+      const code = typeof payload.extensions?.code === 'string' ? payload.extensions.code : undefined
+      errors.push({ message: message || undefined, path, code })
+    }
+    if (requestOptions.allowPartial && json.data !== undefined) {
+      return { ok: true, data: json.data, errors }
+    }
+    const message = errors.map((error) => error.message).filter(Boolean).join('; ')
     return { ok: false, code: 'graphql_error', message: message || undefined }
   }
   if (json.data === undefined) return { ok: false, code: 'graphql_error' }

@@ -335,6 +335,66 @@ export interface AdminService {
   settings(i: { workspaceId: string }): Promise<WorkspaceSettings>
 }
 
+export interface ReportingDayCount {
+  day: string
+  count: number
+}
+
+export interface ReportingTaskThroughput {
+  avg_cycle_hours: number | null
+  open_count: number
+  series: ReportingDayCount[]
+}
+
+export interface ReportingStatusCount {
+  status: string
+  count: number
+}
+
+export interface ReportingMetricTotal {
+  metric_key: string
+  total: number
+}
+
+export interface ReportingSnapshotPoint {
+  taken_at: string
+  member_count: number
+}
+
+export interface ReportingSegmentGrowth {
+  segment_id: string
+  name: string
+  points: ReportingSnapshotPoint[]
+}
+
+export interface ReportingOutcomeDayCount extends ReportingDayCount {
+  outcome: string
+}
+
+export interface ReportingSourceDayCount extends ReportingDayCount {
+  source: string
+}
+
+export interface ReportingTypeDayCount extends ReportingDayCount {
+  type: string
+}
+
+export interface ReportingJobDayCount extends ReportingDayCount {
+  kind: string
+  status: string
+}
+
+export interface ReportingService {
+  taskThroughput(input: { workspaceId: string; days?: number }): Promise<ReportingTaskThroughput>
+  contentFunnel(input: { workspaceId: string }): Promise<ReportingStatusCount[]>
+  campaignMetrics(input: { workspaceId: string; days?: number }): Promise<ReportingMetricTotal[]>
+  segmentGrowth(input: { workspaceId: string; days?: number }): Promise<ReportingSegmentGrowth[]>
+  workflowHealth(input: { workspaceId: string; days?: number }): Promise<ReportingOutcomeDayCount[]>
+  ingestVolume(input: { workspaceId: string; days?: number }): Promise<ReportingSourceDayCount[]>
+  eventDailyCounts(input: { workspaceId: string; days?: number }): Promise<ReportingTypeDayCount[]>
+  jobDailyCounts(input: { workspaceId: string; days?: number }): Promise<ReportingJobDayCount[]>
+}
+
 export interface Domain {
   event_type: CollectionService<EventTypeRow, EventTypeCreate, EventTypeUpdate>
   note: CollectionService<NoteRow, NoteCreate, NoteUpdate>
@@ -366,4 +426,5 @@ export interface Domain {
   workflows: WorkflowService
   admin: AdminService
   pat: PatService
+  reporting: ReportingService
 }

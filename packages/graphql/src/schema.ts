@@ -14,6 +14,16 @@ import {
   type InboxItem,
   type Page,
   type PatTokenRow,
+  type ReportingDayCount,
+  type ReportingJobDayCount,
+  type ReportingMetricTotal,
+  type ReportingOutcomeDayCount,
+  type ReportingSegmentGrowth,
+  type ReportingSnapshotPoint,
+  type ReportingSourceDayCount,
+  type ReportingStatusCount,
+  type ReportingTaskThroughput,
+  type ReportingTypeDayCount,
   type SearchHit,
   type TaskBoardColumn,
   type TaskRow,
@@ -24,7 +34,7 @@ import {
 } from '@movp/domain'
 import { COMPLEXITY_BUDGET, DEPTH_LIMIT, clampPageSize } from './limits.ts'
 import { loadEdgeTargets } from './relations.ts'
-import type { GraphQLContext, Row } from './types.ts'
+import type { GraphQLContext, ReportingOperation, Row } from './types.ts'
 
 function pascal(s: string): string {
   return s.split('_').map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join('')
@@ -46,12 +56,14 @@ function service(domain: Domain, name: string): CollectionService<Row, Record<st
 }
 
 function domainFrom(ctx: GraphQLContext): Domain {
-  return createDomain({
+  if (ctx.domain) return ctx.domain
+  ctx.domain = createDomain({
     db: ctx.db,
     userId: ctx.userId,
     accessToken: ctx.accessToken,
     assetsFnUrl: ctx.assetsFnUrl,
   }, { embedder: ctx.embedder })
+  return ctx.domain
 }
 
 function adminGraphqlError(error: unknown): never {
@@ -77,6 +89,37 @@ async function adminCall<T>(fn: () => Promise<T>): Promise<T> {
     return await fn()
   } catch (error) {
     adminGraphqlError(error)
+  }
+}
+
+function reportingErrorCode(error: unknown): 'reporting_denied' | 'reporting_failed' {
+  return error instanceof Error && error.message.includes('[42501]')
+    ? 'reporting_denied'
+    : 'reporting_failed'
+}
+
+async function observeReporting<T>(
+  ctx: GraphQLContext,
+  operation: ReportingOperation,
+  workspaceId: string,
+  read: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await read()
+  } catch (error: unknown) {
+    const errorCode = reportingErrorCode(error)
+    await ctx.reportReportingFailure?.({ operation, errorCode, workspaceId })
+    throw new GraphQLError(
+      errorCode === 'reporting_denied'
+        ? 'You do not have access to these reports.'
+        : 'Could not load this report.',
+      {
+        extensions: {
+          code: errorCode === 'reporting_denied' ? 'FORBIDDEN' : 'INTERNAL_SERVER_ERROR',
+          safeReportingError: true,
+        },
+      },
+    )
   }
 }
 
@@ -2113,6 +2156,176 @@ export function buildSchema(schema: MovpSchema): GraphQLSchema {
       }),
     )
   }
+
+  const reportingDayCount = builder.objectRef<ReportingDayCount>('ReportingDayCount').implement({
+    fields: (t) => ({
+      day: t.exposeString('day'),
+      count: t.exposeInt('count'),
+    }),
+  })
+  const reportingTaskThroughput = builder.objectRef<ReportingTaskThroughput>('ReportingTaskThroughput').implement({
+    fields: (t) => ({
+      avgCycleHours: t.exposeFloat('avg_cycle_hours', { nullable: true }),
+      openCount: t.exposeInt('open_count'),
+      series: t.field({ type: [reportingDayCount], resolve: (row) => row.series }),
+    }),
+  })
+  const reportingStatusCount = builder.objectRef<ReportingStatusCount>('ReportingStatusCount').implement({
+    fields: (t) => ({
+      status: t.exposeString('status'),
+      count: t.exposeInt('count'),
+    }),
+  })
+  const reportingMetricTotal = builder.objectRef<ReportingMetricTotal>('ReportingMetricTotal').implement({
+    fields: (t) => ({
+      metricKey: t.string({ resolve: (row) => row.metric_key }),
+      total: t.exposeFloat('total'),
+    }),
+  })
+  const reportingSnapshotPoint = builder.objectRef<ReportingSnapshotPoint>('ReportingSnapshotPoint').implement({
+    fields: (t) => ({
+      takenAt: t.string({ resolve: (row) => row.taken_at }),
+      memberCount: t.exposeFloat('member_count'),
+    }),
+  })
+  const reportingSegmentGrowth = builder.objectRef<ReportingSegmentGrowth>('ReportingSegmentGrowth').implement({
+    fields: (t) => ({
+      segmentId: t.id({ resolve: (row) => row.segment_id }),
+      name: t.exposeString('name'),
+      points: t.field({ type: [reportingSnapshotPoint], resolve: (row) => row.points }),
+    }),
+  })
+  const reportingOutcomeDayCount = builder.objectRef<ReportingOutcomeDayCount>('ReportingOutcomeDayCount').implement({
+    fields: (t) => ({
+      day: t.exposeString('day'),
+      outcome: t.exposeString('outcome'),
+      count: t.exposeInt('count'),
+    }),
+  })
+  const reportingSourceDayCount = builder.objectRef<ReportingSourceDayCount>('ReportingSourceDayCount').implement({
+    fields: (t) => ({
+      day: t.exposeString('day'),
+      source: t.exposeString('source'),
+      count: t.exposeInt('count'),
+    }),
+  })
+  const reportingTypeDayCount = builder.objectRef<ReportingTypeDayCount>('ReportingTypeDayCount').implement({
+    fields: (t) => ({
+      day: t.exposeString('day'),
+      type: t.exposeString('type'),
+      count: t.exposeInt('count'),
+    }),
+  })
+  const reportingJobDayCount = builder.objectRef<ReportingJobDayCount>('ReportingJobDayCount').implement({
+    fields: (t) => ({
+      day: t.exposeString('day'),
+      kind: t.exposeString('kind'),
+      status: t.exposeString('status'),
+      count: t.exposeInt('count'),
+    }),
+  })
+
+  builder.queryField('reportingTaskThroughput', (t) =>
+    t.field({
+      type: reportingTaskThroughput,
+      complexity: 5,
+      args: { workspaceId: t.arg.id({ required: true }), days: t.arg.int() },
+      resolve: (_root, args, ctx) =>
+        observeReporting(ctx, 'reportingTaskThroughput', String(args.workspaceId), () =>
+          domainFrom(ctx).reporting.taskThroughput({
+            workspaceId: String(args.workspaceId),
+            days: args.days ?? undefined,
+          })),
+    }),
+  )
+  builder.queryField('reportingContentFunnel', (t) =>
+    t.field({
+      type: [reportingStatusCount],
+      complexity: 5,
+      args: { workspaceId: t.arg.id({ required: true }) },
+      resolve: (_root, args, ctx) =>
+        observeReporting(ctx, 'reportingContentFunnel', String(args.workspaceId), () =>
+          domainFrom(ctx).reporting.contentFunnel({ workspaceId: String(args.workspaceId) })),
+    }),
+  )
+  builder.queryField('reportingCampaignMetrics', (t) =>
+    t.field({
+      type: [reportingMetricTotal],
+      complexity: 5,
+      args: { workspaceId: t.arg.id({ required: true }), days: t.arg.int() },
+      resolve: (_root, args, ctx) =>
+        observeReporting(ctx, 'reportingCampaignMetrics', String(args.workspaceId), () =>
+          domainFrom(ctx).reporting.campaignMetrics({
+            workspaceId: String(args.workspaceId),
+            days: args.days ?? undefined,
+          })),
+    }),
+  )
+  builder.queryField('reportingSegmentGrowth', (t) =>
+    t.field({
+      type: [reportingSegmentGrowth],
+      complexity: 10,
+      args: { workspaceId: t.arg.id({ required: true }), days: t.arg.int() },
+      resolve: (_root, args, ctx) =>
+        observeReporting(ctx, 'reportingSegmentGrowth', String(args.workspaceId), () =>
+          domainFrom(ctx).reporting.segmentGrowth({
+            workspaceId: String(args.workspaceId),
+            days: args.days ?? undefined,
+          })),
+    }),
+  )
+  builder.queryField('reportingWorkflowHealth', (t) =>
+    t.field({
+      type: [reportingOutcomeDayCount],
+      complexity: 5,
+      args: { workspaceId: t.arg.id({ required: true }), days: t.arg.int() },
+      resolve: (_root, args, ctx) =>
+        observeReporting(ctx, 'reportingWorkflowHealth', String(args.workspaceId), () =>
+          domainFrom(ctx).reporting.workflowHealth({
+            workspaceId: String(args.workspaceId),
+            days: args.days ?? undefined,
+          })),
+    }),
+  )
+  builder.queryField('reportingIngestVolume', (t) =>
+    t.field({
+      type: [reportingSourceDayCount],
+      complexity: 5,
+      args: { workspaceId: t.arg.id({ required: true }), days: t.arg.int() },
+      resolve: (_root, args, ctx) =>
+        observeReporting(ctx, 'reportingIngestVolume', String(args.workspaceId), () =>
+          domainFrom(ctx).reporting.ingestVolume({
+            workspaceId: String(args.workspaceId),
+            days: args.days ?? undefined,
+          })),
+    }),
+  )
+  builder.queryField('reportingEventDailyCounts', (t) =>
+    t.field({
+      type: [reportingTypeDayCount],
+      complexity: 5,
+      args: { workspaceId: t.arg.id({ required: true }), days: t.arg.int() },
+      resolve: (_root, args, ctx) =>
+        observeReporting(ctx, 'reportingEventDailyCounts', String(args.workspaceId), () =>
+          domainFrom(ctx).reporting.eventDailyCounts({
+            workspaceId: String(args.workspaceId),
+            days: args.days ?? undefined,
+          })),
+    }),
+  )
+  builder.queryField('reportingJobDailyCounts', (t) =>
+    t.field({
+      type: [reportingJobDayCount],
+      complexity: 5,
+      args: { workspaceId: t.arg.id({ required: true }), days: t.arg.int() },
+      resolve: (_root, args, ctx) =>
+        observeReporting(ctx, 'reportingJobDailyCounts', String(args.workspaceId), () =>
+          domainFrom(ctx).reporting.jobDailyCounts({
+            workspaceId: String(args.workspaceId),
+            days: args.days ?? undefined,
+          })),
+    }),
+  )
 
   return builder.toSchema()
 }
