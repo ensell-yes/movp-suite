@@ -19,23 +19,47 @@ begin
   if (select auth.uid()) is null or not public.is_workspace_member(ws) then
     raise exception 'not_workspace_member' using errcode = '42501';
   end if;
-  return jsonb_build_object(
-    'avg_cycle_hours',
-    (select round((avg(extract(epoch from (completed_at - created_at)) / 3600.0))::numeric, 1)
-       from reporting.v_task_cycle
-      where workspace_id = ws and completed_at is not null
-        and completed_at >= now() - make_interval(days => d)),
-    'open_count',
-    (select count(*) from reporting.v_task_cycle where workspace_id = ws and completed_at is null),
-    'series',
-    coalesce(
-      (select jsonb_agg(jsonb_build_object('day', day, 'count', count) order by day)
-         from (select to_char(date_trunc('day', completed_at), 'YYYY-MM-DD') as day, count(*) as count
-                 from reporting.v_task_cycle
-                where workspace_id = ws and completed_at is not null
+  return (
+    with scoped_cycles as (
+      select completed_at, created_at
+        from reporting.v_task_cycle
+       where workspace_id = ws
+    ),
+    totals as (
+      select
+        round(
+          (
+            avg(extract(epoch from (completed_at - created_at)) / 3600.0)
+              filter (
+                where completed_at is not null
                   and completed_at >= now() - make_interval(days => d)
-                group by 1) series),
-      '[]'::jsonb));
+              )
+          )::numeric,
+          1
+        ) as avg_cycle_hours,
+        count(*) filter (where completed_at is null) as open_count
+      from scoped_cycles
+    ),
+    series as (
+      select coalesce(
+        jsonb_agg(jsonb_build_object('day', day, 'count', count) order by day),
+        '[]'::jsonb
+      ) as series
+        from (
+          select to_char(date_trunc('day', completed_at), 'YYYY-MM-DD') as day, count(*) as count
+            from scoped_cycles
+           where completed_at is not null
+             and completed_at >= now() - make_interval(days => d)
+           group by 1
+        ) series
+    )
+    select jsonb_build_object(
+      'avg_cycle_hours', totals.avg_cycle_hours,
+      'open_count', totals.open_count,
+      'series', series.series
+    )
+      from totals, series
+  );
 end;
 $$;
 revoke all on function public.reporting_task_throughput(uuid, int) from public, anon;
@@ -81,7 +105,7 @@ begin
     (select jsonb_agg(jsonb_build_object('metric_key', metric_key, 'total', total) order by total desc)
        from (select metric_key, sum(value) as total
                from reporting.v_campaign_metric
-              where workspace_id = ws and measured_at >= current_date - d
+              where workspace_id = ws and measured_at >= now()::date - d
               group by metric_key) metrics),
     '[]'::jsonb);
 end;
