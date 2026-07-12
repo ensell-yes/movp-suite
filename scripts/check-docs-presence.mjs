@@ -1,6 +1,13 @@
 import { existsSync, lstatSync, readlinkSync } from 'node:fs'
 
-const required = ['LICENSE', 'README.md', 'CONTRIBUTING.md', 'SECURITY.md', 'CLAUDE.md']
+const required = [
+  'LICENSE',
+  'README.md',
+  'CONTRIBUTING.md',
+  'SECURITY.md',
+  'CLAUDE.md',
+  'docs/rest.md',
+]
 const missing = required.filter((file) => !existsSync(file))
 if (missing.length > 0) {
   console.error(`missing required docs: ${missing.join(', ')}`)
