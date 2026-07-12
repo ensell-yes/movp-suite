@@ -1,4 +1,4 @@
-export { emitCollectionSql, emitSharedInfraSql, emitSqlMigration } from './emit-sql.ts'
+export { emitCollectionSql, emitDeltaSql, emitSharedInfraSql, emitSqlMigration } from './emit-sql.ts'
 export { emitReportingSql, emitReportingViewSql } from './emit-reporting.ts'
 export { emitTypes } from './emit-types.ts'
 export { checkEventCatalog, type EventCatalogCheck } from './event-catalog.ts'

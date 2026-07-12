@@ -7,6 +7,16 @@ import { emitTypes } from './emit-types.ts'
 export interface GeneratedDelta {
   file: string
   emit: (schema: MovpSchema) => string
+  collections?: readonly string[]
+  events?: readonly string[]
+}
+
+function deltaOwnedCollections(deltas: readonly GeneratedDelta[]): string[] {
+  return deltas.flatMap((delta) => delta.collections ?? [])
+}
+
+function deltaOwnedEvents(deltas: readonly GeneratedDelta[]): string[] {
+  return deltas.flatMap((delta) => delta.events ?? [])
 }
 
 // Post-freeze generated objects ship as immutable, timestamped delta migrations.
@@ -116,7 +126,10 @@ export async function generate(
     }
   }
 
-  const baselineSql = emitSqlMigration(schema)
+  const baselineSql = emitSqlMigration(schema, {
+    excludeCollections: deltaOwnedCollections(deltas),
+    excludeEvents: deltaOwnedEvents(deltas),
+  })
   const existing = await readIfPresent(f, migrationPath)
   if (existing !== null && existing !== baselineSql) {
     throw new Error(

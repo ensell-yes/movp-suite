@@ -42,6 +42,23 @@ describe('generate() generated-delta strategy (C4a.1)', () => {
     expect(await readFile(join(migrationsDir, delta.file), 'utf8')).toBe('-- delta body')
   })
 
+  it('a delta that owns a collection excludes it from the baseline emit', async () => {
+    const { root, migrationsDir } = await freshRoot()
+    const delta = {
+      file: '20990101000001_movp_generated_owned.sql',
+      emit: () => '-- owned',
+      collections: ['note'],
+    }
+    await generate({ root, deltas: [delta] })
+    const baseline = await readFile(join(migrationsDir, BASELINE), 'utf8')
+    expect(baseline).not.toContain('create table if not exists public.note (')
+
+    const fresh = await freshRoot()
+    await generate({ root: fresh.root })
+    expect(await readFile(join(fresh.migrationsDir, BASELINE), 'utf8'))
+      .toContain('create table if not exists public.note (')
+  })
+
   it('cleanup removes a stale renamed baseline but never a registered delta', async () => {
     const { root, migrationsDir } = await freshRoot()
     await writeFile(join(migrationsDir, '20250101000000_movp_generated.sql'), '-- stale')
