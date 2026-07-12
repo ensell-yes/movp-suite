@@ -53,3 +53,15 @@ on conflict (collection_name, name) do update set
   searchable = excluded.searchable,
   embeddable = excluded.embeddable;
 
+
+create unique index if not exists event_type_key_unique on public.event_type (key);
+insert into public.event_type (key, domain, label, payload_schema, schema_version, active, description)
+values
+  ('external.record.upserted', 'lifecycle', 'External Record Upserted', '{"type":"object"}', 1, true, null)
+on conflict (key) do update set
+  domain = excluded.domain,
+  label = excluded.label,
+  payload_schema = excluded.payload_schema,
+  schema_version = excluded.schema_version,
+  active = excluded.active,
+  description = excluded.description;

@@ -25,8 +25,12 @@ export const GENERATED_DELTAS: readonly GeneratedDelta[] = [
   { file: '20260711000001_movp_generated_reporting.sql', emit: emitReportingSql },
   {
     file: '20260712000001_movp_generated_external_record.sql',
-    emit: (schema) => emitDeltaSql(schema, { collections: ['external_record'] }),
+    emit: (schema) => emitDeltaSql(schema, {
+      collections: ['external_record'],
+      events: ['external.record.upserted'],
+    }),
     collections: ['external_record'],
+    events: ['external.record.upserted'],
   },
 ]
 

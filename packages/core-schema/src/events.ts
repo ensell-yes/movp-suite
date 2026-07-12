@@ -9,6 +9,7 @@ function event(key: string, domain: EventDef['domain'], label: string, descripti
 
 export const events = [
   event('note.created', 'lifecycle', 'Note created'),
+  event('external.record.upserted', 'lifecycle', 'External Record Upserted'),
 
   event('comment.added', 'collaboration', 'Comment added'),
   event('comment.replied', 'collaboration', 'Comment replied'),
