@@ -36,7 +36,8 @@ export function validateIngestEvent(e: unknown):
   const rawProps = o['properties'];
   const properties = (rawProps && typeof rawProps === 'object' && !Array.isArray(rawProps))
     ? (rawProps as Record<string, unknown>) : {};
-  // measure the REAL serialized byte length (UTF-8), not char length.
+  // This is an early compact-JSON bound, not the final storage contract. PostgreSQL
+  // authoritatively measures canonical jsonb text, which can be larger at the same payload.
   // TextEncoder is a web standard in BOTH Node (vitest) and Deno — no Buffer, no polyfill.
   if (new TextEncoder().encode(JSON.stringify(properties)).length > INGEST_MAX_PROP_BYTES) {
     return { ok: false, error: 'oversized' };

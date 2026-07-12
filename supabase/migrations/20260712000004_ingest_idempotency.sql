@@ -84,6 +84,8 @@ begin
     if v_type is null or length(v_type) = 0
        or v_subject_ref is null or length(v_subject_ref) = 0
        or v_occurred is null
+       -- This canonical jsonb byte length is authoritative. The Edge's compact JSON check is
+       -- defense in depth and can admit a near-limit payload that this check reports as dropped.
        or octet_length(v_props::text) > 16384
        or (v_event ? 'idempotency_key' and jsonb_typeof(v_event->'idempotency_key') <> 'string')
        or (v_idem is not null and octet_length(v_idem) > 255) then

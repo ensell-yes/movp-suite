@@ -106,7 +106,9 @@ Deno.serve(async (req) => {
   // ── API-KEY path (service-to-service): an x-ingest-key header present (no JWT) ─
   if (ingestKey) {
     // Service-role client; the RPC resolves the workspace from the HASHED key.
-    // pre-filter/normalize on the edge (defense in depth; the RPC re-validates + is authoritative).
+    // Pre-filter/normalize on the edge (defense in depth). Its compact-JSON byte check can
+    // pass a payload PostgreSQL later rejects after canonical jsonb rendering; the RPC is
+    // authoritative and returns that rejection in dropped, which emits events_dropped below.
     // validateIngestEvent defaults a missing subject_type to 'user' (platform_event NOT NULL).
     const clean = rawEvents
       .map(validateIngestEvent)

@@ -49,4 +49,20 @@ describe('validateIngestEvent (require shape; measure serialized bytes)', () => 
       event_type: 'x', subject_ref: 's', occurred_at: '2026-07-01T00:00:00Z', properties: big,
     })).toEqual({ ok: false, error: 'oversized' });
   });
+  it('accepts properties at the compact JSON byte limit', () => {
+    const overhead = new TextEncoder().encode(JSON.stringify({ blob: '' })).length;
+    const properties = { blob: 'x'.repeat(INGEST_MAX_PROP_BYTES - overhead) };
+    expect(new TextEncoder().encode(JSON.stringify(properties))).toHaveLength(INGEST_MAX_PROP_BYTES);
+    expect(validateIngestEvent({
+      event_type: 'x', subject_ref: 's', occurred_at: '2026-07-01T00:00:00Z', properties,
+    }).ok).toBe(true);
+  });
+  it('rejects properties one byte above the compact JSON byte limit', () => {
+    const overhead = new TextEncoder().encode(JSON.stringify({ blob: '' })).length;
+    const properties = { blob: 'x'.repeat(INGEST_MAX_PROP_BYTES - overhead + 1) };
+    expect(new TextEncoder().encode(JSON.stringify(properties))).toHaveLength(INGEST_MAX_PROP_BYTES + 1);
+    expect(validateIngestEvent({
+      event_type: 'x', subject_ref: 's', occurred_at: '2026-07-01T00:00:00Z', properties,
+    })).toEqual({ ok: false, error: 'oversized' });
+  });
 });
