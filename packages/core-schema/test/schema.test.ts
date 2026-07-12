@@ -71,6 +71,7 @@ describe('defineSchema aggregate', () => {
       'campaign_metric',
       'campaign_segment',
       'platform_event',
+      'external_record',
       'segment',
       'segment_rule',
       'segment_membership',

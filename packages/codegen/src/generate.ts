@@ -1,18 +1,38 @@
 import { schema } from '@movp/core-schema'
 import type { MovpSchema } from '@movp/core-schema'
 import { emitReportingSql } from './emit-reporting.ts'
-import { emitSqlMigration } from './emit-sql.ts'
+import { emitDeltaSql, emitSqlMigration } from './emit-sql.ts'
 import { emitTypes } from './emit-types.ts'
 
 export interface GeneratedDelta {
   file: string
   emit: (schema: MovpSchema) => string
+  collections?: readonly string[]
+  events?: readonly string[]
+}
+
+const externalRecordDeltaOwnership = {
+  file: '20260712000001_movp_generated_external_record.sql',
+  collections: ['external_record'],
+  events: ['external.record.upserted', 'ingest.idempotency_conflict'],
+} satisfies Omit<GeneratedDelta, 'emit'>
+
+function deltaOwnedCollections(deltas: readonly GeneratedDelta[]): string[] {
+  return deltas.flatMap((delta) => delta.collections ?? [])
+}
+
+function deltaOwnedEvents(deltas: readonly GeneratedDelta[]): string[] {
+  return deltas.flatMap((delta) => delta.events ?? [])
 }
 
 // Post-freeze generated objects ship as immutable, timestamped delta migrations.
 // Once an entry merges, never remove or rename it; changed output gets a new entry.
 export const GENERATED_DELTAS: readonly GeneratedDelta[] = [
   { file: '20260711000001_movp_generated_reporting.sql', emit: emitReportingSql },
+  {
+    ...externalRecordDeltaOwnership,
+    emit: (schema) => emitDeltaSql(schema, externalRecordDeltaOwnership),
+  },
 ]
 
 export interface GenerateOptions {
@@ -116,7 +136,10 @@ export async function generate(
     }
   }
 
-  const baselineSql = emitSqlMigration(schema)
+  const baselineSql = emitSqlMigration(schema, {
+    excludeCollections: deltaOwnedCollections(deltas),
+    excludeEvents: deltaOwnedEvents(deltas),
+  })
   const existing = await readIfPresent(f, migrationPath)
   if (existing !== null && existing !== baselineSql) {
     throw new Error(

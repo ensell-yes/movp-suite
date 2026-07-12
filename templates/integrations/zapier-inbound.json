@@ -1,0 +1,26 @@
+{
+  "name": "MOVP - CRM contact to upsert_by_external_ref",
+  "trigger": {
+    "app": "hubspot",
+    "event": "contact.created"
+  },
+  "action": {
+    "app": "webhooks",
+    "method": "POST",
+    "url": "<MOVP_API_URL>/rest/v1/rpc/upsert_by_external_ref",
+    "headers": {
+      "apikey": "<MOVP_ANON_KEY>",
+      "Authorization": "Bearer <MOVP_PAT_SESSION_JWT>",
+      "content-type": "application/json"
+    },
+    "body": {
+      "ws": "<WORKSPACE_ID>",
+      "source": "hubspot",
+      "external_id": "{{contact.id}}",
+      "payload": {
+        "stage": "{{contact.properties.stage}}"
+      }
+    }
+  },
+  "notes": "Exchange <MOVP_PAT> through /functions/v1/auth-exchange, then store the returned short-lived access_token as <MOVP_PAT_SESSION_JWT>. Map CRM fields inside the payload object; do not replace it with a string interpolation. external_id is immutable; re-syncs update payload only."
+}

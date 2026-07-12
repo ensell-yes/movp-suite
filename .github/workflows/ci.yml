@@ -23,6 +23,19 @@ jobs:
       - run: pnpm build
       - run: pnpm typecheck
 
+  schema-codegen-unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v6
+        with: { version: 9.12.0 }
+      - uses: actions/setup-node@v6
+        with: { node-version: 22, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @movp/core-schema --filter @movp/codegen test
+      - run: pnpm codegen
+      - run: git diff --exit-code
+
   package-artifacts:
     runs-on: ubuntu-latest
     steps:
@@ -106,6 +119,45 @@ jobs:
       - run: supabase start
       - run: supabase db reset
       - run: node scripts/check-vector-scale.mjs
+
+  integration-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - uses: supabase/setup-cli@v2
+        with: { version: 2.109.1 }
+      - run: supabase start
+      - run: supabase db reset
+      - name: Serve functions and run integration smoke
+        run: |
+          eval "$(supabase status -o env | sed 's/^\([A-Z_]*\)=/export \1=/')"
+          printf 'MOVP_JWT_ISSUER=%s/auth/v1\n' "$API_URL" >/tmp/integration-smoke-functions.env
+          supabase functions serve --env-file /tmp/integration-smoke-functions.env >/tmp/integration-smoke-functions.log 2>&1 &
+          ready=0
+          for _ in $(seq 1 20); do
+            status="$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$API_URL/functions/v1/auth-exchange" \
+              -H "apikey: $ANON_KEY" -H 'Authorization: Bearer invalid' -H 'content-type: application/json' -d '{}' || true)"
+            if [ "$status" = '401' ]; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          if [ "$ready" -ne 1 ]; then
+            tail -n 100 /tmp/integration-smoke-functions.log || true
+            exit 1
+          fi
+          node scripts/check-integration-smoke.mjs
+
+  integration-templates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: node scripts/check-integration-templates.mjs
 
   graphql-shape:
     runs-on: ubuntu-latest

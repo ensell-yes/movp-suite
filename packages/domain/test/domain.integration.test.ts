@@ -93,6 +93,14 @@ describe('domain integration', () => {
     expect(note.workspace_id).toBe(workspaceId)
     expect((await domain.note.get(note.id))?.title).toBe('E2E note')
 
+    const externalRecord = await domain.external_record.create({
+      workspace_id: workspaceId,
+      source: 'hubspot',
+      external_id: 'domain-contact-1',
+      payload: { stage: 'lead' },
+    })
+    expect((await domain.external_record.get(externalRecord.id))?.payload).toEqual({ stage: 'lead' })
+
     const updated = await domain.note.update(note.id, { status: 'published' })
     expect(updated.status).toBe('published')
 

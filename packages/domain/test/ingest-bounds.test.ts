@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  validateIngestEvent, boundBatch, INGEST_MAX_BATCH, INGEST_MAX_PROP_BYTES,
+  validateIngestEvent, INGEST_MAX_PROP_BYTES,
 } from '../src/ingest-bounds';
 
 describe('validateIngestEvent (require shape; measure serialized bytes)', () => {
@@ -28,6 +28,13 @@ describe('validateIngestEvent (require shape; measure serialized bytes)', () => 
     expect(r.ok).toBe(true);
     if (r.ok) expect(r.value.subject_type).toBe('user');
   });
+  it('preserves a bounded string idempotency_key for API-key ingestion', () => {
+    const r = validateIngestEvent({
+      event_type: 'x', subject_ref: 's', occurred_at: '2026-07-01T00:00:00Z', idempotency_key: 'retry-1',
+    });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.value.idempotency_key).toBe('retry-1');
+  });
   it('rejects a missing subject_ref as malformed', () => {
     expect(validateIngestEvent({ event_type: 'x', occurred_at: '2026-07-01T00:00:00Z' }))
       .toEqual({ ok: false, error: 'malformed' });
@@ -42,17 +49,20 @@ describe('validateIngestEvent (require shape; measure serialized bytes)', () => 
       event_type: 'x', subject_ref: 's', occurred_at: '2026-07-01T00:00:00Z', properties: big,
     })).toEqual({ ok: false, error: 'oversized' });
   });
-});
-
-describe('boundBatch (cap element count; require an array)', () => {
-  it('rejects a non-array', () => {
-    expect(boundBatch({ events: 'nope' })).toEqual({ ok: false, error: 'not_array' });
+  it('accepts properties at the compact JSON byte limit', () => {
+    const overhead = new TextEncoder().encode(JSON.stringify({ blob: '' })).length;
+    const properties = { blob: 'x'.repeat(INGEST_MAX_PROP_BYTES - overhead) };
+    expect(new TextEncoder().encode(JSON.stringify(properties))).toHaveLength(INGEST_MAX_PROP_BYTES);
+    expect(validateIngestEvent({
+      event_type: 'x', subject_ref: 's', occurred_at: '2026-07-01T00:00:00Z', properties,
+    }).ok).toBe(true);
   });
-  it('rejects a batch over the cap', () => {
-    const over = Array.from({ length: INGEST_MAX_BATCH + 1 }, () => ({}));
-    expect(boundBatch(over)).toEqual({ ok: false, error: 'batch_too_large' });
-  });
-  it('accepts a within-bound array', () => {
-    expect(boundBatch([{}, {}]).ok).toBe(true);
+  it('rejects properties one byte above the compact JSON byte limit', () => {
+    const overhead = new TextEncoder().encode(JSON.stringify({ blob: '' })).length;
+    const properties = { blob: 'x'.repeat(INGEST_MAX_PROP_BYTES - overhead + 1) };
+    expect(new TextEncoder().encode(JSON.stringify(properties))).toHaveLength(INGEST_MAX_PROP_BYTES + 1);
+    expect(validateIngestEvent({
+      event_type: 'x', subject_ref: 's', occurred_at: '2026-07-01T00:00:00Z', properties,
+    })).toEqual({ ok: false, error: 'oversized' });
   });
 });

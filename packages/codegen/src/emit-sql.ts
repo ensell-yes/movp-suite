@@ -382,6 +382,33 @@ ${collectionMetadataSql(c)}
 `
 }
 
-export function emitSqlMigration(schema: MovpSchema): string {
-  return `${HEADER}\n\n${emitSharedInfraSql()}\n\n${schema.collections.map(emitCollectionSql).join('\n')}\n${eventCatalogSeedSql(schema.events)}`
+export function emitSqlMigration(
+  schema: MovpSchema,
+  opts: { excludeCollections?: readonly string[]; excludeEvents?: readonly string[] } = {},
+): string {
+  const excludedCollections = new Set(opts.excludeCollections ?? [])
+  const excludedEvents = new Set(opts.excludeEvents ?? [])
+  const collections = schema.collections.filter((collection) => !excludedCollections.has(collection.name))
+  const events = schema.events.filter((event) => !excludedEvents.has(event.key))
+  return `${HEADER}\n\n${emitSharedInfraSql()}\n\n${collections.map(emitCollectionSql).join('\n')}\n${eventCatalogSeedSql(events)}`
+}
+
+// Post-freeze collections and event catalog rows share the baseline emitters so their DDL stays identical.
+export function emitDeltaSql(
+  schema: MovpSchema,
+  owned: { collections?: readonly string[]; events?: readonly string[] },
+): string {
+  const collections = (owned.collections ?? []).map((name) => {
+    const collection = schema.collections.find((entry) => entry.name === name)
+    if (!collection) throw new Error(`delta collection not registered: ${name}`)
+    return emitCollectionSql(collection)
+  })
+  const eventKeys = new Set(owned.events ?? [])
+  const events = schema.events.filter((event) => eventKeys.has(event.key))
+  for (const key of owned.events ?? []) {
+    if (!events.some((event) => event.key === key)) {
+      throw new Error(`delta event not registered: ${key}`)
+    }
+  }
+  return `${HEADER}\n${collections.join('\n')}\n${eventCatalogSeedSql(events)}`
 }

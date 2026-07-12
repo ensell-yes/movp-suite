@@ -106,7 +106,9 @@ Deno.serve(async (req) => {
   // ── API-KEY path (service-to-service): an x-ingest-key header present (no JWT) ─
   if (ingestKey) {
     // Service-role client; the RPC resolves the workspace from the HASHED key.
-    // pre-filter/normalize on the edge (defense in depth; the RPC re-validates + is authoritative).
+    // Pre-filter/normalize on the edge (defense in depth). Its compact-JSON byte check can
+    // pass a payload PostgreSQL later rejects after canonical jsonb rendering; the RPC is
+    // authoritative and returns that rejection in dropped, which emits events_dropped below.
     // validateIngestEvent defaults a missing subject_type to 'user' (platform_event NOT NULL).
     const clean = rawEvents
       .map(validateIngestEvent)
@@ -120,14 +122,22 @@ Deno.serve(async (req) => {
       if (error.code === '54000') return fail(413, 'ingest_key', 'batch_too_large');
       return fail(500, 'ingest_key', 'ingest_failed');
     }
-    const result = data as { inserted: number; dropped: number };
+    const result = data as { inserted: number; dropped: number; duplicate: number; conflict: number };
     // The RPC counts its own drops; add the edge pre-filter's drops so the caller sees the total.
     const preDropped = rawEvents.length - clean.length;
-    const combined = { inserted: result.inserted, dropped: result.dropped + preDropped };
+    const combined = {
+      inserted: result.inserted,
+      dropped: result.dropped + preDropped,
+      duplicate: result.duplicate,
+      conflict: result.conflict,
+    };
     if (combined.dropped > 0) {
       emit({ trace_id, request_id, surface: 'ingest', operation: 'ingest_key', error_code: 'events_dropped', redaction_version: REDACTION_VERSION });
     }
-    return json(200, combined); // { inserted, dropped }
+    if (combined.conflict > 0) {
+      emit({ trace_id, request_id, surface: 'ingest', operation: 'ingest_key', error_code: 'idempotency_conflicts', redaction_version: REDACTION_VERSION });
+    }
+    return json(200, combined); // { inserted, dropped, duplicate, conflict }
   }
 
   // ── JWT path (first-party): Authorization: Bearer <jwt> ─────────────────────
@@ -153,6 +163,7 @@ Deno.serve(async (req) => {
       properties: v.value.properties,
       occurred_at: v.value.occurred_at,
       ingested_at: new Date().toISOString(),
+      // JWT ingestion is intentionally not deduplicated in v1; only API-key RPC ingest uses this key.
     });
   }
   if (rows.length === 0) {

@@ -42,6 +42,7 @@ function crud() {
 vi.mock('@movp/domain', () => ({
   createDomain: vi.fn(() => ({
     event_type: crud(),
+    external_record: crud(),
     note: crud(),
     tag: crud(),
     marketing_plan: crud(),
@@ -149,7 +150,18 @@ describe('buildMcpServer', () => {
     await Promise.all([server.connect(serverTransport), client.connect(clientTransport)])
 
     const tools = await client.listTools()
-    expect(tools.tools.map((t) => t.name)).toEqual(expect.arrayContaining(['note.create', 'note.search', 'tag.create']))
+    expect(tools.tools.map((t) => t.name)).toEqual(expect.arrayContaining([
+      'external_record.create',
+      'note.create',
+      'note.search',
+      'tag.create',
+    ]))
+
+    const externalRecordRes = await client.callTool({
+      name: 'external_record.create',
+      arguments: { workspace_id: 'w', source: 'hubspot', external_id: 'contact-1' },
+    })
+    expect(JSON.stringify(externalRecordRes.content)).toContain('Hello')
 
     const createRes = await client.callTool({
       name: 'note.create',

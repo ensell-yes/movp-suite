@@ -23,6 +23,9 @@ import type {
   EventTypeCreate,
   EventTypeRow,
   EventTypeUpdate,
+  ExternalRecordCreate,
+  ExternalRecordRow,
+  ExternalRecordUpdate,
   PlatformEventCreate,
   PlatformEventRow,
   PlatformEventUpdate,
@@ -82,6 +85,7 @@ import { makeWorkflowService } from './workflows.ts'
 export function createDomain(ctx: DomainCtx, opts: { embedder?: EmbeddingProvider } = {}): Domain {
   return {
     event_type: makeCollectionService<EventTypeRow, EventTypeCreate, EventTypeUpdate>(ctx, { table: 'event_type', workspaceScoped: false }),
+    external_record: makeCollectionService<ExternalRecordRow, ExternalRecordCreate, ExternalRecordUpdate>(ctx, { table: 'external_record' }),
     note: makeCollectionService<NoteRow, NoteCreate, NoteUpdate>(ctx, { table: 'note' }),
     tag: makeCollectionService<TagRow, TagCreate, TagUpdate>(ctx, { table: 'tag' }),
     marketing_plan: makeCollectionService<MarketingPlanRow, MarketingPlanCreate, MarketingPlanUpdate>(ctx, { table: 'marketing_plan' }),

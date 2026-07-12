@@ -13,6 +13,7 @@ export interface NormalizedEvent {
   actor_ref: string | null;
   properties: Record<string, unknown>;
   occurred_at: string;
+  idempotency_key?: string;
 }
 
 const asStr = (v: unknown): string | null => (typeof v === 'string' ? v : null);
@@ -24,13 +25,19 @@ export function validateIngestEvent(e: unknown):
   const event_type = asStr(o['event_type']);
   const subject_ref = asStr(o['subject_ref']);
   const occurred_at = asStr(o['occurred_at']);
+  const rawIdempotencyKey = o['idempotency_key'];
+  const idempotency_key = asStr(rawIdempotencyKey);
   if (!event_type || event_type.length === 0) return { ok: false, error: 'malformed' };
   if (!subject_ref || subject_ref.length === 0) return { ok: false, error: 'malformed' };
   if (!occurred_at || Number.isNaN(Date.parse(occurred_at))) return { ok: false, error: 'malformed' };
+  if (rawIdempotencyKey !== undefined && (
+    !idempotency_key || new TextEncoder().encode(idempotency_key).length > 255
+  )) return { ok: false, error: 'malformed' };
   const rawProps = o['properties'];
   const properties = (rawProps && typeof rawProps === 'object' && !Array.isArray(rawProps))
     ? (rawProps as Record<string, unknown>) : {};
-  // measure the REAL serialized byte length (UTF-8), not char length.
+  // This is an early compact-JSON bound, not the final storage contract. PostgreSQL
+  // authoritatively measures canonical jsonb text, which can be larger at the same payload.
   // TextEncoder is a web standard in BOTH Node (vitest) and Deno — no Buffer, no polyfill.
   if (new TextEncoder().encode(JSON.stringify(properties)).length > INGEST_MAX_PROP_BYTES) {
     return { ok: false, error: 'oversized' };
@@ -46,13 +53,7 @@ export function validateIngestEvent(e: unknown):
       actor_ref: asStr(o['actor_ref']),
       properties,
       occurred_at,
+      ...(idempotency_key ? { idempotency_key } : {}),
     },
   };
-}
-
-export function boundBatch(events: unknown):
-  { ok: true; value: unknown[] } | { ok: false; error: 'not_array' | 'batch_too_large' } {
-  if (!Array.isArray(events)) return { ok: false, error: 'not_array' };
-  if (events.length > INGEST_MAX_BATCH) return { ok: false, error: 'batch_too_large' };
-  return { ok: true, value: events };
 }

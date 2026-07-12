@@ -900,6 +900,52 @@ AGENTS_FUNCTION_LOG="$(cat /tmp/movp-functions.log)"
 case "$AGENTS_FUNCTION_LOG" in *"$AGENTS_PAT"*) echo "function log leaked the raw PAT (keys-only obs violated)"; exit 1;; esac
 rm -rf "$AGENTS_XDG"
 
+echo "== [integration] idempotent ingest and external-ref upsert round trip =="
+RAW_IK="slice-integration-key"
+psql "$DB_URL" -v ON_ERROR_STOP=1 -c \
+  "insert into movp_internal.ingest_key (workspace_id, key_hash, label, active)
+   values ('$WS', encode(extensions.digest('$RAW_IK','sha256'),'hex'), 'slice', true)
+   on conflict (key_hash) do nothing;" >/dev/null
+EV='{"events":[{"event_type":"signup.completed","subject_ref":"u-int","occurred_at":"2026-07-11T00:00:00Z","idempotency_key":"slice-k1"}]}'
+R1="$(curl -sS "$API_URL/functions/v1/ingest" -H "apikey: $ANON_KEY" -H "x-ingest-key: $RAW_IK" -H "content-type: application/json" -d "$EV")"
+echo "$R1" | json_get inserted | grep -q '^1$' || { echo "ingest did not insert one event"; exit 1; }
+R2="$(curl -sS "$API_URL/functions/v1/ingest" -H "apikey: $ANON_KEY" -H "x-ingest-key: $RAW_IK" -H "content-type: application/json" -d "$EV")"
+echo "$R2" | json_get duplicate | grep -q '^1$' || { echo "ingest replay was not deduplicated"; exit 1; }
+
+curl -sS "$API_URL/rest/v1/rpc/upsert_by_external_ref" -H "apikey: $ANON_KEY" -H "Authorization: Bearer $TOKEN" \
+  -H "content-type: application/json" \
+  -d "{\"ws\":\"$WS\",\"source\":\"slice\",\"external_id\":\"int-1\",\"payload\":{\"stage\":\"lead\"}}" >/dev/null
+UP="$(curl -sS "$API_URL/rest/v1/external_record?select=external_id&source=eq.slice&external_id=eq.int-1" \
+  -H "apikey: $ANON_KEY" -H "Authorization: Bearer $TOKEN")"
+echo "$UP" | grep -q 'int-1' || { echo "external record was not readable after upsert"; exit 1; }
+EVT="$(psql "$DB_URL" -tA -c "select count(*) from movp_internal.movp_events where type='external.record.upserted' and workspace_id='$WS';")"
+[ "$EVT" -ge 1 ] || { echo "external.record.upserted was not emitted"; exit 1; }
+
+echo "== [integration-exposure] PostgREST facade is RLS-guarded =="
+EX1="$(curl -sS -o /dev/null -w '%{http_code}' "$API_URL/rest/v1/ingest_idempotency" -H "apikey: $ANON_KEY")"
+[ "$EX1" = "404" ] || [ "$EX1" = "401" ] || { echo "ingest_idempotency reachable via REST ($EX1)"; exit 1; }
+
+curl -sS -X POST "$API_URL/rest/v1/external_record" \
+  -H "Authorization: Bearer $TOKEN" -H "apikey: $ANON_KEY" \
+  -H "content-type: application/json" -H "Prefer: return=minimal" \
+  -d "{\"workspace_id\":\"$WS\",\"source\":\"slice\",\"external_id\":\"er-1\",\"payload\":{}}" >/dev/null
+ER="$(curl -sS "$API_URL/rest/v1/external_record?select=external_id&source=eq.slice" \
+  -H "Authorization: Bearer $TOKEN" -H "apikey: $ANON_KEY")"
+echo "$ER" | grep -q 'er-1' || { echo "member could not read own external_record via REST: $ER"; exit 1; }
+
+PATCH="$(curl -sS -o /dev/null -w '%{http_code}' -X PATCH "$API_URL/rest/v1/external_record?source=eq.slice&external_id=eq.er-1" \
+  -H "Authorization: Bearer $TOKEN" -H "apikey: $ANON_KEY" -H "content-type: application/json" \
+  -d '{"external_id":"er-2"}')"
+[ "$PATCH" = "400" ] || [ "$PATCH" = "409" ] || [ "$PATCH" = "500" ] || { echo "identity PATCH not rejected ($PATCH)"; exit 1; }
+
+AN_STATUS="$(curl -sS -o /tmp/integration-exposure-anon.json -w '%{http_code}' \
+  "$API_URL/rest/v1/note?select=id" -H "apikey: $ANON_KEY")"
+case "$AN_STATUS" in
+  200) [ "$(cat /tmp/integration-exposure-anon.json)" = "[]" ] || { echo "anon read a workspace table via REST"; exit 1; } ;;
+  401|403) ;;
+  *) echo "unexpected anon REST status ($AN_STATUS)"; exit 1 ;;
+esac
+
 echo "== [8] internal not exposed via PostgREST API =="
 REST="$(curl -sS -o /dev/null -w '%{http_code}' "$API_URL/rest/v1/movp_jobs" -H "apikey: $ANON_KEY")"
 [ "$REST" = "404" ] || [ "$REST" = "401" ] || { echo "movp_jobs reachable via REST ($REST)"; exit 1; }

@@ -32,6 +32,9 @@ import type {
   EventTypeCreate,
   EventTypeRow,
   EventTypeUpdate,
+  ExternalRecordCreate,
+  ExternalRecordRow,
+  ExternalRecordUpdate,
   PlatformEventCreate,
   PlatformEventRow,
   PlatformEventUpdate,
@@ -397,6 +400,7 @@ export interface ReportingService {
 
 export interface Domain {
   event_type: CollectionService<EventTypeRow, EventTypeCreate, EventTypeUpdate>
+  external_record: CollectionService<ExternalRecordRow, ExternalRecordCreate, ExternalRecordUpdate>
   note: CollectionService<NoteRow, NoteCreate, NoteUpdate>
   tag: CollectionService<TagRow, TagCreate, TagUpdate>
   marketing_plan: CollectionService<MarketingPlanRow, MarketingPlanCreate, MarketingPlanUpdate>
