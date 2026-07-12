@@ -7,6 +7,7 @@ const required = [
   'SECURITY.md',
   'CLAUDE.md',
   'docs/rest.md',
+  'docs/integrations/crm-sync.md',
 ]
 const missing = required.filter((file) => !existsSync(file))
 if (missing.length > 0) {
