@@ -107,6 +107,21 @@ jobs:
       - run: supabase db reset
       - run: node scripts/check-vector-scale.mjs
 
+  integration-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - uses: supabase/setup-cli@v2
+        with: { version: 2.109.1 }
+      - run: supabase start
+      - run: supabase db reset
+      - name: Run integration smoke
+        run: |
+          eval "$(supabase status -o env | sed 's/^\([A-Z_]*\)=/export \1=/')"
+          node scripts/check-integration-smoke.mjs
+
   graphql-shape:
     runs-on: ubuntu-latest
     steps:
