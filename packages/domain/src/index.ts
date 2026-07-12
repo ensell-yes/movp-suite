@@ -78,6 +78,9 @@ export type {
   TaskStatusOptionRow,
   AutomationRuleRow,
   EventTypeRow,
+  ExternalRecordCreate,
+  ExternalRecordRow,
+  ExternalRecordUpdate,
   WebhookSubscriptionRow,
   WorkflowRunRow,
 } from './generated/types.ts'
