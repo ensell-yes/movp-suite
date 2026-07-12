@@ -35,6 +35,7 @@ declare
   n_ok int := 0;
   n_bad int := 0;
   n_dup int := 0;
+  n_conflict int := 0;
 begin
   select k.workspace_id into v_ws
     from movp_internal.ingest_key k
@@ -101,6 +102,7 @@ begin
           continue;
         end if;
         n_bad := n_bad + 1;
+        n_conflict := n_conflict + 1;
         perform public.emit_event(
           'ingest.idempotency_conflict',
           v_ws,
@@ -134,7 +136,12 @@ begin
     end;
   end loop;
 
-  return jsonb_build_object('inserted', n_ok, 'dropped', n_bad, 'duplicate', n_dup);
+  return jsonb_build_object(
+    'inserted', n_ok,
+    'dropped', n_bad,
+    'duplicate', n_dup,
+    'conflict', n_conflict
+  );
 end;
 $$;
 revoke all on function public.ingest_platform_event(text, jsonb) from public, anon, authenticated;

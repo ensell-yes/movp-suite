@@ -4,6 +4,7 @@
 alter table public.external_record
   add constraint external_record_identity_uk unique (workspace_id, source, external_id);
 
+-- The generated collection policy grants FOR ALL. Replace it here so no generic DELETE path remains.
 drop policy if exists external_record_rw on public.external_record;
 create policy external_record_select on public.external_record
   for select to authenticated using (public.is_workspace_member(workspace_id));

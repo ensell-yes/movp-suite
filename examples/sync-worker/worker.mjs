@@ -1,4 +1,4 @@
-export async function syncRecord({ crmUrl, apiUrl, anonKey, token, workspaceId, source }) {
+export async function syncRecord({ crmUrl, apiUrl, anonKey, sessionToken, workspaceId, source }) {
   const crmResponse = await fetch(`${crmUrl}/contacts/crm-1`)
   if (!crmResponse.ok) throw new Error(`mock CRM returned HTTP ${crmResponse.status}`)
   const record = await crmResponse.json()
@@ -10,7 +10,7 @@ export async function syncRecord({ crmUrl, apiUrl, anonKey, token, workspaceId, 
     method: 'POST',
     headers: {
       apikey: anonKey,
-      Authorization: `Bearer ${token}`,
+      Authorization: `Bearer ${sessionToken}`,
       'content-type': 'application/json',
     },
     body: JSON.stringify({ ws: workspaceId, source, external_id: record.id, payload: record.properties }),

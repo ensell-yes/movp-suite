@@ -23,6 +23,17 @@ jobs:
       - run: pnpm build
       - run: pnpm typecheck
 
+  schema-codegen-unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v6
+        with: { version: 9.12.0 }
+      - uses: actions/setup-node@v6
+        with: { node-version: 22, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @movp/core-schema --filter @movp/codegen test
+
   package-artifacts:
     runs-on: ubuntu-latest
     steps:
@@ -117,6 +128,10 @@ jobs:
         with: { version: 2.109.1 }
       - run: supabase start
       - run: supabase db reset
+      - name: Serve auth-exchange
+        run: |
+          printf 'MOVP_JWT_ISSUER=http://127.0.0.1:64321/auth/v1\n' >/tmp/integration-smoke-functions.env
+          supabase functions serve --env-file /tmp/integration-smoke-functions.env >/tmp/integration-smoke-functions.log 2>&1 &
       - name: Run integration smoke
         run: |
           eval "$(supabase status -o env | sed 's/^\([A-Z_]*\)=/export \1=/')"

@@ -24,6 +24,22 @@ async function responseJson(response, label) {
   return body
 }
 
+async function exchangePat(pat) {
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const response = await fetch(`${apiUrl}/functions/v1/auth-exchange`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${pat}`, apikey: anonKey, 'content-type': 'application/json' },
+      body: '{}',
+    })
+    if (response.status === 503 && attempt < 3) {
+      await new Promise((resolve) => setTimeout(resolve, 500))
+      continue
+    }
+    return responseJson(response, 'exchange smoke PAT')
+  }
+  throw new Error('exchange smoke PAT: function did not become ready')
+}
+
 let mock
 try {
   const created = await responseJson(await fetch(`${apiUrl}/auth/v1/admin/users`, {
@@ -36,8 +52,8 @@ try {
     headers: { apikey: anonKey, 'content-type': 'application/json' },
     body: JSON.stringify({ email, password }),
   }), 'mint smoke session')
-  const token = tokenResult.access_token
-  if (typeof token !== 'string') throw new Error('mint smoke session: missing access_token')
+  const bootstrapToken = tokenResult.access_token
+  if (typeof bootstrapToken !== 'string') throw new Error('mint smoke session: missing access_token')
   const userId = created.id
   if (typeof userId !== 'string') throw new Error('create smoke user: missing id')
 
@@ -46,8 +62,18 @@ try {
     '-c', `insert into public.workspace_membership (workspace_id, user_id, role) values ('${workspaceId}', '${userId}', 'member') on conflict do nothing;`],
   { stdio: 'ignore' })
 
+  const createdPat = await responseJson(await fetch(`${apiUrl}/rest/v1/rpc/create_personal_access_token`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${bootstrapToken}`, apikey: anonKey, 'content-type': 'application/json' },
+    body: JSON.stringify({ default_ws: workspaceId, name: 'integration-smoke' }),
+  }), 'create smoke PAT')
+  if (!createdPat || typeof createdPat.token !== 'string') throw new Error('create smoke PAT: missing token')
+  const exchanged = await exchangePat(createdPat.token)
+  const sessionToken = exchanged.access_token
+  if (typeof sessionToken !== 'string') throw new Error('exchange smoke PAT: missing access_token')
+
   mock = await startMockCrm()
-  const options = { crmUrl: mock.url, apiUrl, anonKey, token, workspaceId, source: 'mockcrm' }
+  const options = { crmUrl: mock.url, apiUrl, anonKey, sessionToken, workspaceId, source: 'mockcrm' }
   const first = await syncRecord(options)
   const second = await syncRecord(options)
   if (first.external_id !== 'crm-1' || first.id !== second.id) {

@@ -10,6 +10,17 @@ Map each CRM record to a stable source and source-specific record id, then call 
 with a member session JWT (including a session exchanged from a MOVP PAT):
 
 ```sh
+MOVP_PAT_SESSION_JWT="$(curl -sS "$API_URL/functions/v1/auth-exchange" \
+  -H "apikey: $ANON_KEY" \
+  -H "Authorization: Bearer <MOVP_PAT>" \
+  -H "content-type: application/json" \
+  -d '{}' | jq -r '.access_token')"
+```
+
+The raw `movp_pat_...` token is accepted only by the exchange endpoint. PostgREST requires the
+short-lived session JWT returned in `access_token`.
+
+```sh
 curl -sS "$API_URL/rest/v1/rpc/upsert_by_external_ref" \
   -H "apikey: $ANON_KEY" \
   -H "Authorization: Bearer <MOVP_PAT_SESSION_JWT>" \

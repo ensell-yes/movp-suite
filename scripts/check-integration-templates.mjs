@@ -44,8 +44,12 @@ for (const file of files) {
   }
   const values = strings(parsed)
   const serialized = JSON.stringify(parsed)
-  if (!serialized.includes('<MOVP_API_URL>') || !serialized.includes('<MOVP_PAT>')) {
+  if (!serialized.includes('<MOVP_API_URL>') || !serialized.includes('<MOVP_PAT_SESSION_JWT>')) {
     console.error(`integration templates: missing required placeholders in ${file}`)
+    process.exit(1)
+  }
+  if (serialized.includes('Bearer <MOVP_PAT>')) {
+    console.error(`integration templates: raw PAT cannot authenticate a PostgREST request in ${file}`)
     process.exit(1)
   }
   if (values.some((value) => secretPatterns.some((pattern) => pattern.test(value)))) {

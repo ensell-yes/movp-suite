@@ -14,7 +14,7 @@
         "url": "<MOVP_API_URL>/rest/v1/rpc/upsert_by_external_ref",
         "headers": {
           "apikey": "<MOVP_ANON_KEY>",
-          "Authorization": "Bearer <MOVP_PAT>",
+          "Authorization": "Bearer <MOVP_PAT_SESSION_JWT>",
           "content-type": "application/json"
         },
         "body": {
@@ -27,5 +27,5 @@
     }
   ],
   "connections": { "CRM Webhook": { "main": [[{ "node": "MOVP Upsert", "type": "main", "index": 0 }]] } },
-  "notes": "Set <MOVP_PAT> in n8n credentials, not inline production workflow JSON."
+  "notes": "Exchange <MOVP_PAT> through /functions/v1/auth-exchange, then store the returned short-lived access_token as <MOVP_PAT_SESSION_JWT> in n8n credentials."
 }
