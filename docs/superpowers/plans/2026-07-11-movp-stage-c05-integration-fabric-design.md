@@ -121,8 +121,12 @@ export const GENERATED_DELTAS: readonly GeneratedDelta[] = [
   - `AFTER UPDATE ... FOR EACH ROW WHEN (OLD.payload IS DISTINCT FROM NEW.payload)` → same emit.
   - Write-path-agnostic (RPC, generic, raw PostgREST) and idempotent: replay of identical
     `source+external_id+payload` produces **exactly one** event over its lifetime.
-- **Invariant:** segmentation/automation consume `external.record.upserted` with zero new
-  infra (the event stream is the seam).
+- **Invariant:** `emit_event` feeds the **automation** engine (app-06 automate enqueue) with
+  zero new infra. `external.record.upserted` is a delta-owned catalog event, domain **`lifecycle`**
+  (there is no `integration` domain in the `EventDef` union / `event_type` CHECK), seeded by the
+  generated delta so it stays out of the frozen baseline. **Segmentation** consumes the separate
+  `platform_event` stream, so segment-targeting on external records is a documented follow-up
+  (a `platform_event` bridge), not automatic via this movp_event.
 - **Tests (pgTAP):** upsert insert→1 row+1 event; replay same payload→still 1 row, **0 new
   events, 0 new dispatches**; changed payload→1 update, 1 new event; **generic update of
   `source`/`external_id`→rejected (`external_ref_identity_immutable`)**; **generic

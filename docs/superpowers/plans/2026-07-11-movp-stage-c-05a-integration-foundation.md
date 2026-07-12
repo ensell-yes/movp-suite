@@ -68,7 +68,7 @@ tests, `tsx`), Postgres 17 + pgTAP, Supabase CLI (`supabase db reset`, `supabase
 ## File Structure
 
 - `packages/codegen/src/generate.ts` — add `collections?` to `GeneratedDelta`; baseline excludes delta-owned.
-- `packages/codegen/src/emit-sql.ts` — `emitSqlMigration(schema, {exclude})`; new `emitDeltaCollectionSql`.
+- `packages/codegen/src/emit-sql.ts` — `emitSqlMigration(schema, {excludeCollections, excludeEvents})`; new `emitDeltaSql`.
 - `packages/core-schema/src/collections/external_record.ts` — new DSL collection.
 - `packages/core-schema/src/schema.ts`, `.../index.ts` — register + export it.
 - `supabase/migrations/20260712000001_movp_generated_external_record.sql` — generated delta (codegen output).
@@ -82,8 +82,11 @@ tests, `tsx`), Postgres 17 + pgTAP, Supabase CLI (`supabase db reset`, `supabase
 
 - `public.external_record(id, workspace_id, source, external_id, payload jsonb, created_at, updated_at)`,
   `unique(workspace_id, source, external_id)`.
-- Event `external.record.upserted` with payload `{id, source, external_id}` — consumed by
-  segmentation/automation (already listening on the event stream). Registered in the event catalog.
+- Event `external.record.upserted` (domain `lifecycle`) with payload `{id, source, external_id}`,
+  emitted via `emit_event` → consumed by the **automation** engine (app-06 automate enqueue).
+  Registered in `events.ts` and seeded by the delta migration (delta-owned event, out of the
+  frozen baseline). Segment-targeting on external records is a documented follow-up (needs a
+  `platform_event` bridge — segments consume `platform_event`, not movp_events).
 - `public.upsert_by_external_ref(ws uuid, source text, external_id text, payload jsonb) returns jsonb`
   (the upserted row as jsonb) — INVOKER, member-gated (42501), identity never mutated.
 - `public.ingest_platform_event(api_key text, events jsonb) returns jsonb` — return object gains
@@ -92,15 +95,23 @@ tests, `tsx`), Postgres 17 + pgTAP, Supabase CLI (`supabase db reset`, `supabase
 
 ---
 
-## Task C5a.1: Generated-delta registry owns collections
+## Task C5a.1: Generated-delta registry owns collections AND events
+
+A post-freeze collection also needs a post-freeze **event** (`external.record.upserted`, C5a.3):
+`check-event-catalog.mjs` requires every event literal used in a migration to be registered in
+`packages/core-schema/src/events.ts`, but the baseline emitter seeds
+`eventCatalogSeedSql(schema.events)` into the **frozen** baseline — so a new registered event
+would drift it. The delta registry therefore owns events too (symmetric with collections): the
+baseline excludes delta-owned events from its seed, and the delta emits them.
 
 **Files**
-- Modify: `packages/codegen/src/emit-sql.ts` (`emitSqlMigration` signature; add `emitDeltaCollectionSql`)
-- Modify: `packages/codegen/src/generate.ts` (`GeneratedDelta.collections`; baseline exclude)
+- Modify: `packages/codegen/src/emit-sql.ts` (`emitSqlMigration` signature; add `emitDeltaSql`)
+- Modify: `packages/codegen/src/generate.ts` (`GeneratedDelta.collections`/`.events`; baseline exclude)
 - Modify: `packages/codegen/test/generate.test.ts` (new failing test)
 
-**Interfaces (produced):** `emitSqlMigration(schema, opts?: { exclude?: readonly string[] })`;
-`emitDeltaCollectionSql(schema, name): string`; `GeneratedDelta.collections?: readonly string[]`.
+**Interfaces (produced):** `emitSqlMigration(schema, opts?: { excludeCollections?: readonly string[];
+excludeEvents?: readonly string[] })`; `emitDeltaSql(schema, { collections?, events? }): string`;
+`GeneratedDelta.collections?: readonly string[]`; `GeneratedDelta.events?: readonly string[]`.
 
 - [ ] **Step 1 — write the failing test.** Append to `packages/codegen/test/generate.test.ts` (inside the existing `describe`):
 
@@ -130,42 +141,66 @@ pnpm --filter @movp/codegen exec vitest run generate
 ```
 Expected: **FAIL** — the first assertion fails (baseline still contains `public.note`; `collections` is ignored).
 
-- [ ] **Step 3 — teach `emitSqlMigration` to exclude.** In `packages/codegen/src/emit-sql.ts`, replace the `emitSqlMigration` function (currently line ~385) with:
+- [ ] **Step 3 — teach `emitSqlMigration` to exclude, and add `emitDeltaSql`.** In `packages/codegen/src/emit-sql.ts`, replace the `emitSqlMigration` function (currently line ~385) with:
 
 ```ts
-export function emitSqlMigration(schema: MovpSchema, opts: { exclude?: readonly string[] } = {}): string {
-  const exclude = new Set(opts.exclude ?? [])
-  const collections = schema.collections.filter((c) => !exclude.has(c.name))
-  return `${HEADER}\n\n${emitSharedInfraSql()}\n\n${collections.map(emitCollectionSql).join('\n')}\n${eventCatalogSeedSql(schema.events)}`
+export function emitSqlMigration(
+  schema: MovpSchema,
+  opts: { excludeCollections?: readonly string[]; excludeEvents?: readonly string[] } = {},
+): string {
+  const exCols = new Set(opts.excludeCollections ?? [])
+  const exEvents = new Set(opts.excludeEvents ?? [])
+  const collections = schema.collections.filter((c) => !exCols.has(c.name))
+  const events = schema.events.filter((e) => !exEvents.has(e.key))
+  return `${HEADER}\n\n${emitSharedInfraSql()}\n\n${collections.map(emitCollectionSql).join('\n')}\n${eventCatalogSeedSql(events)}`
 }
 
-// Emit a single post-freeze collection's DDL for a generated-delta migration (reuses the
-// exact per-collection emitter so a delta collection is byte-for-byte a baseline collection).
-export function emitDeltaCollectionSql(schema: MovpSchema, name: string): string {
-  const c = schema.collections.find((x) => x.name === name)
-  if (!c) throw new Error(`delta collection not registered: ${name}`)
-  return `${HEADER}\n${emitCollectionSql(c)}`
+// Emit a post-freeze delta migration: named collections' DDL (reusing the exact per-collection
+// emitter so a delta collection is byte-for-byte a baseline collection) + named events' catalog
+// seed rows (so a new event stays out of the frozen baseline).
+export function emitDeltaSql(
+  schema: MovpSchema,
+  owned: { collections?: readonly string[]; events?: readonly string[] },
+): string {
+  const cols = (owned.collections ?? []).map((name) => {
+    const c = schema.collections.find((x) => x.name === name)
+    if (!c) throw new Error(`delta collection not registered: ${name}`)
+    return emitCollectionSql(c)
+  })
+  const evKeys = new Set(owned.events ?? [])
+  const events = schema.events.filter((e) => evKeys.has(e.key))
+  for (const key of owned.events ?? []) {
+    if (!events.some((e) => e.key === key)) throw new Error(`delta event not registered: ${key}`)
+  }
+  return `${HEADER}\n${cols.join('\n')}\n${eventCatalogSeedSql(events)}`
 }
 ```
 
-- [ ] **Step 4 — declare + apply delta-owned collections in `generate.ts`.** Change the `GeneratedDelta` interface (line ~7) to add `collections`, and derive the baseline exclusion set. Replace the interface and the `baselineSql` line:
+- [ ] **Step 4 — declare + apply delta ownership in `generate.ts`.** Change the `GeneratedDelta` interface (line ~7) to add `collections`/`events`, and derive both baseline exclusion sets. Replace the interface and the `baselineSql` line:
 
 ```ts
 export interface GeneratedDelta {
   file: string
   emit: (schema: MovpSchema) => string
-  collections?: readonly string[]   // collections this delta owns; excluded from the baseline
+  collections?: readonly string[]   // collections this delta owns; excluded from the baseline DDL
+  events?: readonly string[]        // event keys this delta owns; excluded from the baseline seed
 }
 
 function deltaOwnedCollections(deltas: readonly GeneratedDelta[]): string[] {
   return deltas.flatMap((d) => d.collections ?? [])
+}
+function deltaOwnedEvents(deltas: readonly GeneratedDelta[]): string[] {
+  return deltas.flatMap((d) => d.events ?? [])
 }
 ```
 
 Then inside `generate()`, change the baseline emit (currently `const baselineSql = emitSqlMigration(schema)`) to:
 
 ```ts
-  const baselineSql = emitSqlMigration(schema, { exclude: deltaOwnedCollections(deltas) })
+  const baselineSql = emitSqlMigration(schema, {
+    excludeCollections: deltaOwnedCollections(deltas),
+    excludeEvents: deltaOwnedEvents(deltas),
+  })
 ```
 
 (`deltas` is already resolved above as `options.deltas ?? GENERATED_DELTAS`.)
@@ -194,10 +229,10 @@ git commit -m "feat(codegen): C5a.1 generated-delta registry can own collections
 - Create: `packages/core-schema/src/collections/external_record.ts`
 - Modify: `packages/core-schema/src/schema.ts` (import + append to ordered array)
 - Modify: `packages/core-schema/src/index.ts` (export the const)
-- Modify: `packages/codegen/src/generate.ts` (import `emitDeltaCollectionSql`; register the delta)
+- Modify: `packages/codegen/src/generate.ts` (import `emitDeltaSql`; register the delta)
 - Create (codegen output): `supabase/migrations/20260712000001_movp_generated_external_record.sql`
 
-**Interfaces (consumed):** `emitDeltaCollectionSql` (C5a.1). **Produced:** the DSL const
+**Interfaces (consumed):** `emitDeltaSql` (C5a.1). **Produced:** the DSL const
 `externalRecord`; the delta migration file; auto `ExternalRecord` type + GraphQL/MCP/CLI surfaces.
 
 - [ ] **Step 1 — write the failing test.** Create `packages/core-schema/test/external_record.test.ts`:
@@ -205,7 +240,7 @@ git commit -m "feat(codegen): C5a.1 generated-delta registry can own collections
 ```ts
 import { describe, expect, it } from 'vitest'
 import { schema } from '../src/schema.ts'
-import { emitDeltaCollectionSql } from '@movp/codegen'
+import { emitDeltaSql } from '@movp/codegen'
 
 describe('external_record collection (C5a.2)', () => {
   it('is registered in the schema exactly once, workspace-scoped', () => {
@@ -216,7 +251,7 @@ describe('external_record collection (C5a.2)', () => {
   })
 
   it('emits a create table with source/external_id/payload as a delta collection', () => {
-    const sql = emitDeltaCollectionSql(schema, 'external_record')
+    const sql = emitDeltaSql(schema, { collections: ['external_record'] })
     expect(sql).toContain('create table if not exists public.external_record (')
     expect(sql).toContain('  source text not null')
     expect(sql).toContain('  external_id text not null')
@@ -231,7 +266,7 @@ describe('external_record collection (C5a.2)', () => {
 ```sh
 pnpm --filter @movp/core-schema exec vitest run external_record
 ```
-Expected: **FAIL** — `external_record` not in schema (found length 0); `emitDeltaCollectionSql` throws `delta collection not registered`.
+Expected: **FAIL** — `external_record` not in schema (found length 0); `emitDeltaSql` throws `delta collection not registered`.
 
 - [ ] **Step 3 — create the collection.** `packages/core-schema/src/collections/external_record.ts`:
 
@@ -272,14 +307,14 @@ export { externalRecord } from './collections/external_record.ts'
 - [ ] **Step 5 — register the delta.** In `packages/codegen/src/generate.ts`, add the import and the registry entry:
 
 ```ts
-import { emitDeltaCollectionSql } from './emit-sql.ts'
+import { emitDeltaSql } from './emit-sql.ts'
 ```
 ```ts
 export const GENERATED_DELTAS: readonly GeneratedDelta[] = [
   { file: '20260711000001_movp_generated_reporting.sql', emit: emitReportingSql },
   {
     file: '20260712000001_movp_generated_external_record.sql',
-    emit: (schema) => emitDeltaCollectionSql(schema, 'external_record'),
+    emit: (schema) => emitDeltaSql(schema, { collections: ['external_record'] }),
     collections: ['external_record'],
   },
 ]
@@ -312,9 +347,11 @@ git commit -m "feat(reporting): C5a.2 external_record landing collection via gen
 **Files**
 - Create: `supabase/migrations/20260712000002_external_record_guards.sql`
 - Create: `supabase/tests/external_record_test.sql`
-- Modify: `packages/core-schema/src/events.ts` (register the `external.record.upserted` event) — see Step 3 note.
+- Modify: `packages/core-schema/src/events.ts` (register `external.record.upserted`, domain `lifecycle`)
+- Modify: `packages/codegen/src/generate.ts` (external_record delta now also owns the event)
 
-**Interfaces (consumed):** the generated `public.external_record` table (C5a.2), `public.emit_event`.
+**Interfaces (consumed):** the generated `public.external_record` table (C5a.2), `public.emit_event`,
+`emitDeltaSql` event-ownership (C5a.1). Event domain MUST be an allowed value (`lifecycle`).
 **Produced:** `unique(workspace_id, source, external_id)`; split select/insert/update policies +
 no delete; `external_record_identity_immutable` trigger (P0001); `external.record.upserted` event.
 
@@ -411,24 +448,48 @@ supabase db reset && supabase test db 2>&1 | grep external_record
 ```
 Expected: **FAIL** — the guards/triggers/unique do not exist yet (identity update does not throw; delete removes the row; duplicate insert succeeds).
 
-- [ ] **Step 3 — register the event.** In `packages/core-schema/src/events.ts` add `external.record.upserted` to the event catalog following the existing `defineEvent` pattern (so `check-event-catalog.mjs` and the emitter agree). Example entry:
+- [ ] **Step 3 — register the event (delta-owned, valid domain).** Two edits, then re-run codegen:
 
-```ts
-defineEvent('external.record.upserted', { label: 'External Record Upserted', domain: 'integration' }),
-```
+  1. In `packages/core-schema/src/events.ts` register the event with `defineEvent`. **`domain` must be one of the seven allowed values** (`EventDef.domain` in `packages/core-schema/src/types.ts:47` AND the `event_type.domain` CHECK constraint) — there is NO `integration` domain; use **`lifecycle`** (a record upsert is a lifecycle event). Match the shape of the existing entries:
 
-Run codegen again (`pnpm codegen`) so the event-catalog seed in the baseline includes it — **NOTE:** if this changes the frozen baseline bytes, instead register the event via the guards migration's own `insert into public.event_type ... on conflict do nothing` (do NOT edit the frozen baseline). Confirm with `git diff --exit-code supabase/migrations/20260701000002_movp_generated.sql`. Prefer the migration-insert path to keep the baseline frozen.
+  ```ts
+  defineEvent('external.record.upserted', {
+    domain: 'lifecycle',
+    label: 'External Record Upserted',
+    payloadSchema: { id: 'uuid', source: 'text', external_id: 'text' },
+    version: 1,
+  }),
+  ```
+
+  2. In `packages/codegen/src/generate.ts`, make the external_record delta entry **own the event** so its `event_type` seed lands in the delta, NOT the frozen baseline (C5a.1 mechanism):
+
+  ```ts
+  {
+    file: '20260712000001_movp_generated_external_record.sql',
+    emit: (schema) => emitDeltaSql(schema, { collections: ['external_record'], events: ['external.record.upserted'] }),
+    collections: ['external_record'],
+    events: ['external.record.upserted'],
+  },
+  ```
+
+  Then re-run codegen and prove the baseline is still frozen:
+
+  ```sh
+  pnpm codegen
+  git diff --exit-code supabase/migrations/20260701000002_movp_generated.sql   # Expected: EXIT 0 (baseline unchanged)
+  ```
+  The regenerated `20260712000001_movp_generated_external_record.sql` now contains the
+  `external_record` table AND an `insert into public.event_type (...) values ('external.record.upserted', 'lifecycle', ...)`.
+  `node scripts/check-event-catalog.mjs` now passes (the literal used by the emit trigger below
+  is registered in `events.ts`).
 
 - [ ] **Step 4 — write the guards migration.** Create `supabase/migrations/20260712000002_external_record_guards.sql`:
 
 ```sql
 -- C5a.3 external_record guards: immutable external identity, no generic delete, idempotent
 -- event emission. Mirrors the platform_event hand-guards in 20260701000019_segmentation.sql.
-
--- Register the event type if the frozen baseline did not (keeps the baseline frozen).
-insert into public.event_type (key, domain)
-values ('external.record.upserted', 'integration')
-on conflict (key) do nothing;
+-- (The `external.record.upserted` event_type row is seeded by the generated delta
+-- 20260712000001, which OWNS the event — see Step 3; do not re-insert it here.)
 
 -- Stable external identity.
 alter table public.external_record
@@ -499,7 +560,7 @@ Expected: `external_record_test.sql ... ok`; overall `Result: PASS`.
 ```sh
 node scripts/check-forward-only-migrations.mjs   # Expected: ok
 node scripts/check-definer-audit.mjs             # Expected: pass (both new definer fns pin search_path)
-git add supabase/migrations/20260712000002_external_record_guards.sql supabase/tests/external_record_test.sql packages/core-schema/src/events.ts
+git add supabase/migrations/20260712000002_external_record_guards.sql supabase/migrations/20260712000001_movp_generated_external_record.sql supabase/tests/external_record_test.sql packages/core-schema/src/events.ts packages/codegen/src/generate.ts
 git commit -m "feat(reporting): C5a.3 external_record identity immutability + idempotent event emission"
 ```
 
