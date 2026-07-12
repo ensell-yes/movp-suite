@@ -61,7 +61,9 @@ Expected: **FAIL** — file missing.
 - [ ] **Step 3 — write `docs/integrations/crm-sync.md`.** Cover, with concrete `curl`/SQL:
   - **Inbound (CRM → MOVP):** a CRM webhook (HubSpot contact, Salesforce/Attio record) maps to
     `upsert_by_external_ref(ws, '<crm>', '<crm record id>', <payload jsonb>)` — idempotent, emits
-    `external.record.upserted` which segmentation/automation consume. Show the PostgREST RPC call:
+    `external.record.upserted` which the **automation** engine consumes directly (segment-targeting
+    on external records is a documented follow-up via a `platform_event` bridge — see Deferred).
+    Show the PostgREST RPC call:
 
     ```
     curl -sS "$API_URL/rest/v1/rpc/upsert_by_external_ref" \

@@ -450,15 +450,16 @@ Expected: **FAIL** — the guards/triggers/unique do not exist yet (identity upd
 
 - [ ] **Step 3 — register the event (delta-owned, valid domain).** Two edits, then re-run codegen:
 
-  1. In `packages/core-schema/src/events.ts` register the event with `defineEvent`. **`domain` must be one of the seven allowed values** (`EventDef.domain` in `packages/core-schema/src/types.ts:47` AND the `event_type.domain` CHECK constraint) — there is NO `integration` domain; use **`lifecycle`** (a record upsert is a lifecycle event). Match the shape of the existing entries:
+  1. In `packages/core-schema/src/events.ts`, add an entry to the exported `events` array using
+  the file's local `event(key, domain, label, description?)` helper (`events.ts:6`) — it calls
+  `defineEvent({ key, domain, label, description, payloadSchema, version: 1 })` for you (do NOT
+  call `defineEvent` positionally; `defineEvent(def: EventDef)` takes a single object). **`domain`
+  must be one of the seven allowed values** (`EventDef.domain` in `types.ts:47` AND the
+  `event_type.domain` CHECK) — there is NO `integration` domain; use **`lifecycle`** (matches the
+  existing `event('note.created', 'lifecycle', 'Note created')` precedent). Add:
 
   ```ts
-  defineEvent('external.record.upserted', {
-    domain: 'lifecycle',
-    label: 'External Record Upserted',
-    payloadSchema: { id: 'uuid', source: 'text', external_id: 'text' },
-    version: 1,
-  }),
+  event('external.record.upserted', 'lifecycle', 'External Record Upserted'),
   ```
 
   2. In `packages/codegen/src/generate.ts`, make the external_record delta entry **own the event** so its `event_type` seed lands in the delta, NOT the frozen baseline (C5a.1 mechanism):
