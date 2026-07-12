@@ -11,6 +11,12 @@ export interface GeneratedDelta {
   events?: readonly string[]
 }
 
+const externalRecordDeltaOwnership = {
+  file: '20260712000001_movp_generated_external_record.sql',
+  collections: ['external_record'],
+  events: ['external.record.upserted', 'ingest.idempotency_conflict'],
+} satisfies Omit<GeneratedDelta, 'emit'>
+
 function deltaOwnedCollections(deltas: readonly GeneratedDelta[]): string[] {
   return deltas.flatMap((delta) => delta.collections ?? [])
 }
@@ -24,13 +30,8 @@ function deltaOwnedEvents(deltas: readonly GeneratedDelta[]): string[] {
 export const GENERATED_DELTAS: readonly GeneratedDelta[] = [
   { file: '20260711000001_movp_generated_reporting.sql', emit: emitReportingSql },
   {
-    file: '20260712000001_movp_generated_external_record.sql',
-    emit: (schema) => emitDeltaSql(schema, {
-      collections: ['external_record'],
-      events: ['external.record.upserted', 'ingest.idempotency_conflict'],
-    }),
-    collections: ['external_record'],
-    events: ['external.record.upserted', 'ingest.idempotency_conflict'],
+    ...externalRecordDeltaOwnership,
+    emit: (schema) => emitDeltaSql(schema, externalRecordDeltaOwnership),
   },
 ]
 

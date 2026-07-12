@@ -21,11 +21,13 @@
           "ws": "<WORKSPACE_ID>",
           "source": "attio",
           "external_id": "{{$json.id}}",
-          "payload": "{{$json.properties}}"
+          "payload": {
+            "stage": "{{$json.properties.stage}}"
+          }
         }
       }
     }
   ],
   "connections": { "CRM Webhook": { "main": [[{ "node": "MOVP Upsert", "type": "main", "index": 0 }]] } },
-  "notes": "Exchange <MOVP_PAT> through /functions/v1/auth-exchange, then store the returned short-lived access_token as <MOVP_PAT_SESSION_JWT> in n8n credentials."
+  "notes": "Exchange <MOVP_PAT> through /functions/v1/auth-exchange, then store the returned short-lived access_token as <MOVP_PAT_SESSION_JWT> in n8n credentials. Map CRM fields inside the payload object; do not replace it with a string interpolation."
 }

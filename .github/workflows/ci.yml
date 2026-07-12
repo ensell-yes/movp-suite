@@ -33,6 +33,8 @@ jobs:
         with: { node-version: 22, cache: pnpm }
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @movp/core-schema --filter @movp/codegen test
+      - run: pnpm codegen
+      - run: git diff --exit-code
 
   package-artifacts:
     runs-on: ubuntu-latest
@@ -128,13 +130,25 @@ jobs:
         with: { version: 2.109.1 }
       - run: supabase start
       - run: supabase db reset
-      - name: Serve auth-exchange
-        run: |
-          printf 'MOVP_JWT_ISSUER=http://127.0.0.1:64321/auth/v1\n' >/tmp/integration-smoke-functions.env
-          supabase functions serve --env-file /tmp/integration-smoke-functions.env >/tmp/integration-smoke-functions.log 2>&1 &
-      - name: Run integration smoke
+      - name: Serve functions and run integration smoke
         run: |
           eval "$(supabase status -o env | sed 's/^\([A-Z_]*\)=/export \1=/')"
+          printf 'MOVP_JWT_ISSUER=%s/auth/v1\n' "$API_URL" >/tmp/integration-smoke-functions.env
+          supabase functions serve --env-file /tmp/integration-smoke-functions.env >/tmp/integration-smoke-functions.log 2>&1 &
+          ready=0
+          for _ in $(seq 1 20); do
+            status="$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$API_URL/functions/v1/auth-exchange" \
+              -H "apikey: $ANON_KEY" -H 'Authorization: Bearer invalid' -H 'content-type: application/json' -d '{}' || true)"
+            if [ "$status" = '401' ]; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          if [ "$ready" -ne 1 ]; then
+            tail -n 100 /tmp/integration-smoke-functions.log || true
+            exit 1
+          fi
           node scripts/check-integration-smoke.mjs
 
   integration-templates:

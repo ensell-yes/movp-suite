@@ -79,6 +79,9 @@ try {
   if (first.external_id !== 'crm-1' || first.id !== second.id) {
     throw new Error('upsert response was not idempotent')
   }
+  if (!first.payload || typeof first.payload !== 'object' || Array.isArray(first.payload) || first.payload.stage !== 'lead') {
+    throw new Error('upsert response did not preserve the CRM payload as an object')
+  }
   console.log('integration-smoke: PASS')
 } catch (error) {
   console.error(error instanceof Error ? error.message : 'integration smoke failed')

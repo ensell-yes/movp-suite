@@ -17,8 +17,26 @@ function strings(value) {
   return []
 }
 
+function isObject(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+function hasObjectPayload(file, parsed) {
+  if (file === 'zapier-inbound.json') {
+    return isObject(parsed) && isObject(parsed.action) && isObject(parsed.action.body) && isObject(parsed.action.body.payload)
+  }
+  if (file === 'n8n-inbound.json') {
+    if (!isObject(parsed) || !Array.isArray(parsed.nodes)) return false
+    const upsert = parsed.nodes.find((node) => isObject(node) && node.name === 'MOVP Upsert')
+    return isObject(upsert) && isObject(upsert.parameters) && isObject(upsert.parameters.body) && isObject(upsert.parameters.body.payload)
+  }
+  return true
+}
+
 let files
 try {
+  const directory = lstatSync(templatesDir)
+  if (directory.isSymbolicLink() || !directory.isDirectory()) throw new Error('unsafe templates directory')
   files = readdirSync(templatesDir).filter((file) => file.endsWith('.json')).sort()
 } catch {
   files = []
@@ -50,6 +68,10 @@ for (const file of files) {
   }
   if (serialized.includes('Bearer <MOVP_PAT>')) {
     console.error(`integration templates: raw PAT cannot authenticate a PostgREST request in ${file}`)
+    process.exit(1)
+  }
+  if (!hasObjectPayload(file, parsed)) {
+    console.error(`integration templates: payload must be a JSON object in ${file}`)
     process.exit(1)
   }
   if (values.some((value) => secretPatterns.some((pattern) => pattern.test(value)))) {

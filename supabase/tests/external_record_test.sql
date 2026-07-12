@@ -1,6 +1,6 @@
 -- C5a.3 external_record: identity immutability, no-delete, idempotent event emission.
 begin;
-select plan(9);
+select plan(10);
 
 insert into public.workspace (id, name) values
   ('c5a00000-0000-0000-0000-000000000001', 'ExtW1'),
@@ -77,6 +77,10 @@ set local request.jwt.claims = '{"sub":"c5a0bbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"}';
 select is(
   (select count(*)::int from public.external_record where workspace_id = 'c5a00000-0000-0000-0000-000000000001'),
   0, 'member B sees no W1 external records');
+select throws_ok(
+  $$ insert into public.external_record (workspace_id, source, external_id, payload)
+     values ('c5a00000-0000-0000-0000-000000000001', 'salesforce', 'contact-b', '{}'::jsonb) $$,
+  '42501', null, 'member B cannot insert a W1 external record');
 
 reset role;
 select * from finish();

@@ -11,11 +11,16 @@ describe('external_record collection (C5a.2)', () => {
   })
 
   it('emits a create table with source/external_id/payload as a delta collection', () => {
-    const sql = emitDeltaSql(schema, { collections: ['external_record'] })
+    const sql = emitDeltaSql(schema, {
+      collections: ['external_record'],
+      events: ['external.record.upserted', 'ingest.idempotency_conflict'],
+    })
     expect(sql).toContain('create table if not exists public.external_record (')
     expect(sql).toContain('  source text not null')
     expect(sql).toContain('  external_id text not null')
     expect(sql).toContain('  payload jsonb')
     expect(sql).toContain('create policy external_record_rw on public.external_record')
+    expect(sql).toContain("('external.record.upserted', 'lifecycle'")
+    expect(sql).toContain("('ingest.idempotency_conflict', 'workflow'")
   })
 })

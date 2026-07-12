@@ -197,7 +197,8 @@ git commit -m "feat(reporting): C5c.2 mock sync worker + integration smoke (inbo
 
 - [ ] **Step 1 — write the failing lint.** Create `scripts/check-integration-templates.mjs`: glob
 `templates/integrations/*.json`, `JSON.parse` each (fail on parse error), assert each contains the
-required placeholder keys (`<MOVP_API_URL>`, `<MOVP_PAT>`), and **fail if any value matches a
+required placeholder keys (`<MOVP_API_URL>`, `<MOVP_PAT_SESSION_JWT>`), require the RPC `payload`
+to be a JSON object (not a string interpolation), and **fail if any value matches a
 secret shape** — e.g. `/\bmovp_pat_[0-9a-f]{64}\b/`, `/eyJ[A-Za-z0-9_-]{20,}\./` (a JWT), or
 `/sk-[A-Za-z0-9]{20,}/`. Exit non-zero with the offending file+key on any violation; else print
 `integration-templates: PASS`.
@@ -220,10 +221,10 @@ Expected: **FAIL** — no template files found.
     "app": "webhooks",
     "method": "POST",
     "url": "<MOVP_API_URL>/rest/v1/rpc/upsert_by_external_ref",
-    "headers": { "apikey": "<MOVP_ANON_KEY>", "Authorization": "Bearer <MOVP_PAT>", "content-type": "application/json" },
-    "body": { "ws": "<WORKSPACE_ID>", "source": "hubspot", "external_id": "{{contact.id}}", "payload": "{{contact.properties}}" }
+    "headers": { "apikey": "<MOVP_ANON_KEY>", "Authorization": "Bearer <MOVP_PAT_SESSION_JWT>", "content-type": "application/json" },
+    "body": { "ws": "<WORKSPACE_ID>", "source": "hubspot", "external_id": "{{contact.id}}", "payload": { "stage": "{{contact.properties.stage}}" } }
   },
-  "notes": "external_id is immutable; re-syncs update payload only. Store <MOVP_PAT> as a Zapier secret, never inline."
+  "notes": "Exchange <MOVP_PAT> through /functions/v1/auth-exchange and store the returned access_token as <MOVP_PAT_SESSION_JWT>. Map CRM fields inside payload; external_id is immutable and re-syncs update payload only."
 }
 ```
 
@@ -239,7 +240,7 @@ like `boundary`) to `ci.yml`, or add `node scripts/check-integration-templates.m
 
 ```sh
 git add templates/integrations scripts/check-integration-templates.mjs .github/workflows/ci.yml
-git commit -m "feat(reporting): C5c.3 Zapier/n8n import templates + secret-safe lint"
+git commit -m "feat(integration): C5c.3 Zapier/n8n import templates + secret-safe lint"
 ```
 
 ---

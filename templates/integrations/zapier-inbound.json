@@ -17,8 +17,10 @@
       "ws": "<WORKSPACE_ID>",
       "source": "hubspot",
       "external_id": "{{contact.id}}",
-      "payload": "{{contact.properties}}"
+      "payload": {
+        "stage": "{{contact.properties.stage}}"
+      }
     }
   },
-  "notes": "Exchange <MOVP_PAT> through /functions/v1/auth-exchange, then store the returned short-lived access_token as <MOVP_PAT_SESSION_JWT>. external_id is immutable; re-syncs update payload only."
+  "notes": "Exchange <MOVP_PAT> through /functions/v1/auth-exchange, then store the returned short-lived access_token as <MOVP_PAT_SESSION_JWT>. Map CRM fields inside the payload object; do not replace it with a string interpolation. external_id is immutable; re-syncs update payload only."
 }

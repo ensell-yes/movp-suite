@@ -37,6 +37,9 @@ declare
   n_dup int := 0;
   n_conflict int := 0;
 begin
+  -- jsonb serialization of timestamptz follows the session timezone; hash in UTC so a retry
+  -- from another timezone compares the same effective payload.
+  perform set_config('TimeZone', 'UTC', true);
   select k.workspace_id into v_ws
     from movp_internal.ingest_key k
    where k.key_hash = encode(extensions.digest(api_key, 'sha256'), 'hex')
