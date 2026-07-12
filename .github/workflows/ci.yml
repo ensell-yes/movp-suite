@@ -122,6 +122,14 @@ jobs:
           eval "$(supabase status -o env | sed 's/^\([A-Z_]*\)=/export \1=/')"
           node scripts/check-integration-smoke.mjs
 
+  integration-templates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: node scripts/check-integration-templates.mjs
+
   graphql-shape:
     runs-on: ubuntu-latest
     steps:

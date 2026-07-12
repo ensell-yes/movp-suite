@@ -1,0 +1,24 @@
+{
+  "name": "MOVP - CRM contact to upsert_by_external_ref",
+  "trigger": {
+    "app": "hubspot",
+    "event": "contact.created"
+  },
+  "action": {
+    "app": "webhooks",
+    "method": "POST",
+    "url": "<MOVP_API_URL>/rest/v1/rpc/upsert_by_external_ref",
+    "headers": {
+      "apikey": "<MOVP_ANON_KEY>",
+      "Authorization": "Bearer <MOVP_PAT>",
+      "content-type": "application/json"
+    },
+    "body": {
+      "ws": "<WORKSPACE_ID>",
+      "source": "hubspot",
+      "external_id": "{{contact.id}}",
+      "payload": "{{contact.properties}}"
+    }
+  },
+  "notes": "external_id is immutable; re-syncs update payload only. Store <MOVP_PAT> as a Zapier secret."
+}

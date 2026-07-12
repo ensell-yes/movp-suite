@@ -1,0 +1,31 @@
+{
+  "name": "MOVP CRM contact to upsert_by_external_ref",
+  "nodes": [
+    {
+      "name": "CRM Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "parameters": { "path": "crm-contact" }
+    },
+    {
+      "name": "MOVP Upsert",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "<MOVP_API_URL>/rest/v1/rpc/upsert_by_external_ref",
+        "headers": {
+          "apikey": "<MOVP_ANON_KEY>",
+          "Authorization": "Bearer <MOVP_PAT>",
+          "content-type": "application/json"
+        },
+        "body": {
+          "ws": "<WORKSPACE_ID>",
+          "source": "attio",
+          "external_id": "{{$json.id}}",
+          "payload": "{{$json.properties}}"
+        }
+      }
+    }
+  ],
+  "connections": { "CRM Webhook": { "main": [[{ "node": "MOVP Upsert", "type": "main", "index": 0 }]] } },
+  "notes": "Set <MOVP_PAT> in n8n credentials, not inline production workflow JSON."
+}
