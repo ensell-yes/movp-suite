@@ -120,14 +120,18 @@ Deno.serve(async (req) => {
       if (error.code === '54000') return fail(413, 'ingest_key', 'batch_too_large');
       return fail(500, 'ingest_key', 'ingest_failed');
     }
-    const result = data as { inserted: number; dropped: number };
+    const result = data as { inserted: number; dropped: number; duplicate: number };
     // The RPC counts its own drops; add the edge pre-filter's drops so the caller sees the total.
     const preDropped = rawEvents.length - clean.length;
-    const combined = { inserted: result.inserted, dropped: result.dropped + preDropped };
+    const combined = {
+      inserted: result.inserted,
+      dropped: result.dropped + preDropped,
+      duplicate: result.duplicate,
+    };
     if (combined.dropped > 0) {
       emit({ trace_id, request_id, surface: 'ingest', operation: 'ingest_key', error_code: 'events_dropped', redaction_version: REDACTION_VERSION });
     }
-    return json(200, combined); // { inserted, dropped }
+    return json(200, combined); // { inserted, dropped, duplicate }
   }
 
   // ── JWT path (first-party): Authorization: Bearer <jwt> ─────────────────────
@@ -153,6 +157,7 @@ Deno.serve(async (req) => {
       properties: v.value.properties,
       occurred_at: v.value.occurred_at,
       ingested_at: new Date().toISOString(),
+      // JWT ingestion is intentionally not deduplicated in v1; only API-key RPC ingest uses this key.
     });
   }
   if (rows.length === 0) {

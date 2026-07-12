@@ -13,6 +13,7 @@ export interface NormalizedEvent {
   actor_ref: string | null;
   properties: Record<string, unknown>;
   occurred_at: string;
+  idempotency_key?: string;
 }
 
 const asStr = (v: unknown): string | null => (typeof v === 'string' ? v : null);
@@ -24,9 +25,14 @@ export function validateIngestEvent(e: unknown):
   const event_type = asStr(o['event_type']);
   const subject_ref = asStr(o['subject_ref']);
   const occurred_at = asStr(o['occurred_at']);
+  const rawIdempotencyKey = o['idempotency_key'];
+  const idempotency_key = asStr(rawIdempotencyKey);
   if (!event_type || event_type.length === 0) return { ok: false, error: 'malformed' };
   if (!subject_ref || subject_ref.length === 0) return { ok: false, error: 'malformed' };
   if (!occurred_at || Number.isNaN(Date.parse(occurred_at))) return { ok: false, error: 'malformed' };
+  if (rawIdempotencyKey !== undefined && (
+    !idempotency_key || new TextEncoder().encode(idempotency_key).length > 255
+  )) return { ok: false, error: 'malformed' };
   const rawProps = o['properties'];
   const properties = (rawProps && typeof rawProps === 'object' && !Array.isArray(rawProps))
     ? (rawProps as Record<string, unknown>) : {};
@@ -46,6 +52,7 @@ export function validateIngestEvent(e: unknown):
       actor_ref: asStr(o['actor_ref']),
       properties,
       occurred_at,
+      ...(idempotency_key ? { idempotency_key } : {}),
     },
   };
 }

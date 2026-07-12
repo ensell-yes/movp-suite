@@ -27,10 +27,10 @@ export const GENERATED_DELTAS: readonly GeneratedDelta[] = [
     file: '20260712000001_movp_generated_external_record.sql',
     emit: (schema) => emitDeltaSql(schema, {
       collections: ['external_record'],
-      events: ['external.record.upserted'],
+      events: ['external.record.upserted', 'ingest.idempotency_conflict'],
     }),
     collections: ['external_record'],
-    events: ['external.record.upserted'],
+    events: ['external.record.upserted', 'ingest.idempotency_conflict'],
   },
 ]
 

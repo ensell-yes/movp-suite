@@ -28,6 +28,13 @@ describe('validateIngestEvent (require shape; measure serialized bytes)', () => 
     expect(r.ok).toBe(true);
     if (r.ok) expect(r.value.subject_type).toBe('user');
   });
+  it('preserves a bounded string idempotency_key for API-key ingestion', () => {
+    const r = validateIngestEvent({
+      event_type: 'x', subject_ref: 's', occurred_at: '2026-07-01T00:00:00Z', idempotency_key: 'retry-1',
+    });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.value.idempotency_key).toBe('retry-1');
+  });
   it('rejects a missing subject_ref as malformed', () => {
     expect(validateIngestEvent({ event_type: 'x', occurred_at: '2026-07-01T00:00:00Z' }))
       .toEqual({ ok: false, error: 'malformed' });
