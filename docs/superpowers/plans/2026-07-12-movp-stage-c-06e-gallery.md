@@ -1553,28 +1553,54 @@ REAL_README_BEFORE="$(shasum -a 256 < templates/marketing-site/README.md)"
 **(a) An external-symlink template file makes staging FAIL without reading it.** Plant the symlink in the
 SYNTHETIC template (never in the repo) and confirm the shared copier aborts with its code, target unread:
 
-```
+> **GOTCHA — a verification block must FAIL, never merely PRINT "FAIL"** (INTERFACES round-8 F1).
+> `cmd && echo OK || echo FAIL` **always exits 0**: the `|| echo` swallows the failure, so a BROKEN
+> symlink guard would print `FAIL: …` and the gate would still go green — manufacturing evidence of a
+> safety property that does not hold. Every assertion below exits non-zero on violation. Same reason
+> an `&&` chain may never end in `; test $? -eq 1`.
+
+```sh
+set -euo pipefail
 printf 'TOPSECRET\n' > "$SYN/fake-secret"
 ln -s "$SYN/fake-secret" "$SYN/templates/marketing-site/notes.ts"
-node fixtures/verdaccio-gallery/stage-create-movp.mjs "$SYN" "$STAGE/a" marketing-site 2>&1 \
-  | grep -qF 'template_symlink_rejected' \
-  && echo 'symlink template rejected (unread)' || echo 'FAIL: staging did not reject the symlink'
-! grep -rqF 'TOPSECRET' "$STAGE/a" 2>/dev/null && echo 'secret never read into the staging tree'
+
+if ! node fixtures/verdaccio-gallery/stage-create-movp.mjs "$SYN" "$STAGE/a" marketing-site 2>&1 \
+     | grep -qF 'template_symlink_rejected'; then
+  echo 'FAIL: staging did not reject the symlinked template file' >&2; exit 1
+fi
+echo 'symlink template rejected (unread)'
+
+if grep -rqF 'TOPSECRET' "$STAGE/a" 2>/dev/null; then
+  echo 'FAIL: the symlink target was READ into the staging tree' >&2; exit 1
+fi
+echo 'secret never read into the staging tree'
+
 rm -f "$SYN/templates/marketing-site/notes.ts" "$SYN/fake-secret"
 ```
 
-**Expected:** `symlink template rejected (unread)` then `secret never read into the staging tree`.
-(`pack.sh` and `gate.sh` compose this exact script, so the pack inherits the rejection.)
+**Expected:** `symlink template rejected (unread)` then `secret never read into the staging tree`; a
+non-zero exit if either property fails. (`pack.sh` and `gate.sh` compose this exact script, so the pack
+inherits the rejection.)
 
 **(b) The snapshot is deterministic and one-byte sensitive.**
 
-```
+```sh
+set -euo pipefail
 node scripts/tree-snapshot.mjs "$SYN" > "$STAGE/snap-a"
 node scripts/tree-snapshot.mjs "$SYN" > "$STAGE/snap-b"
-diff -q "$STAGE/snap-a" "$STAGE/snap-b" >/dev/null && echo 'snapshot deterministic'
+if ! diff -q "$STAGE/snap-a" "$STAGE/snap-b" >/dev/null; then
+  echo 'FAIL: snapshot is not deterministic across two runs' >&2; exit 1
+fi
+echo 'snapshot deterministic'
+
 printf '\n' >> "$SYN/templates/marketing-site/README.md"
 node scripts/tree-snapshot.mjs "$SYN" > "$STAGE/snap-c"
-diff -q "$STAGE/snap-a" "$STAGE/snap-c" >/dev/null || echo 'snapshot detects a one-byte change'
+# INVERTED on purpose: `diff` exiting 0 here means the snapshot did NOT notice a one-byte append —
+# i.e. the sensitivity `pack.sh`/`gate.sh` depend on is broken. That must FAIL the gate, not pass it.
+if diff -q "$STAGE/snap-a" "$STAGE/snap-c" >/dev/null; then
+  echo 'FAIL: snapshot did not detect a one-byte change (not content-sensitive)' >&2; exit 1
+fi
+echo 'snapshot detects a one-byte change'
 ```
 
 **Expected:** `snapshot deterministic` then `snapshot detects a one-byte change`. This is the sensitivity
@@ -1587,7 +1613,13 @@ carries an untracked file *inside* `packages/create-movp/templates/` (the very p
 be absent); now add an unrelated WIP edit to a template file, then stage. It must PASS, and both files
 must survive byte-identical:
 
-```
+> **GOTCHA (INTERFACES round-8 F1):** `test <cond> && echo OK` **cannot fail** — on a mismatch the
+> `&&` simply skips the `echo`, prints nothing, and execution falls through to the next line, whose
+> success overwrites `$?`. A destroyed `preserve.txt` would pass in silence. Every assertion below is
+> an explicit `if … exit 1`, so its correctness does not depend on which line it sits on.
+
+```sh
+set -euo pipefail
 printf '\n<!-- local WIP -->\n' >> "$SYN/templates/marketing-site/README.md"
 SYN_README_BEFORE="$(shasum -a 256 < "$SYN/templates/marketing-site/README.md")"
 SYN_PRESERVE_BEFORE="$(shasum -a 256 < "$SYN/packages/create-movp/templates/preserve.txt")"
@@ -1596,13 +1628,20 @@ node scripts/tree-snapshot.mjs "$SYN" > "$STAGE/before.txt"
 node fixtures/verdaccio-gallery/stage-create-movp.mjs "$SYN" "$STAGE/c" marketing-site
 node scripts/tree-snapshot.mjs "$SYN" > "$STAGE/after.txt"
 
-diff -u "$STAGE/before.txt" "$STAGE/after.txt" \
-  && echo 'staging changed NOTHING in the source subtrees (dirty tree passes)' \
-  || { echo 'FAIL: staging mutated the source subtrees'; exit 1; }
-test "$(shasum -a 256 < "$SYN/packages/create-movp/templates/preserve.txt")" = "$SYN_PRESERVE_BEFORE" \
-  && echo 'pre-existing untracked file preserved byte-identical'
-test "$(shasum -a 256 < "$SYN/templates/marketing-site/README.md")" = "$SYN_README_BEFORE" \
-  && echo 'unrelated WIP edit preserved byte-identical'
+if ! diff -u "$STAGE/before.txt" "$STAGE/after.txt"; then
+  echo 'FAIL: staging mutated the source subtrees' >&2; exit 1
+fi
+echo 'staging changed NOTHING in the source subtrees (dirty tree passes)'
+
+if [ "$(shasum -a 256 < "$SYN/packages/create-movp/templates/preserve.txt")" != "$SYN_PRESERVE_BEFORE" ]; then
+  echo 'FAIL: a pre-existing untracked file was destroyed by staging' >&2; exit 1
+fi
+echo 'pre-existing untracked file preserved byte-identical'
+
+if [ "$(shasum -a 256 < "$SYN/templates/marketing-site/README.md")" != "$SYN_README_BEFORE" ]; then
+  echo 'FAIL: an unrelated WIP edit was destroyed by staging' >&2; exit 1
+fi
+echo 'unrelated WIP edit preserved byte-identical'
 ```
 
 **Expected:** `staging changed NOTHING in the source subtrees (dirty tree passes)`, then
