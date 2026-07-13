@@ -70,6 +70,19 @@ started and smoked. Only the domain files differ.
   already installed, purely to prove the schema composes and the baseline is immutable. The scaffolded
   project's codegen still runs strictly post-`npm install` in the Verdaccio gate (Task 4) — this gate
   never installs a scaffold, so it cannot and does not run codegen before install.
+  - **Every template read goes through 06d's guards (INTERFACES round-6 F2).** The gate reads the real
+    template tree, which is untrusted input at read time: it uses `copyFileGuarded` for the
+    `movp.deltas.json` copy, `readFileGuarded` for `seed.sql` and every page, and an `lstat`-reject
+    BEFORE the dynamic `import()` of the schema module (importing a symlink executes its target). All
+    three primitives are 06d's, imported from the BUILT `packages/create-movp/dist/index.js`; 06e defines
+    none of them. Only the baseline it re-reads out of its own `mkdtemp` scratch is unguarded — that is
+    its own output, not untrusted input.
+  - **`--templates-dir <dir>` (default `templates`) + `scripts/check-template-gallery-guards.sh`.** The
+    flag repoints the gate at a synthetic `mktemp -d` tree; the guards script plants a symlinked
+    `seed.sql` / page / schema module and an oversized file there and asserts each is rejected UNREAD,
+    that the real tree still passes, and that the real repository is byte-unchanged. **Behavioural, not a
+    grep** — a blanket `readFileSync` grep would false-positive on the legitimate scratch reads. **No
+    write under the real repository** (round-5 F1).
 - **CI matrix (Task 4).** A `pack-artifacts` job packs `@movp/*` + `@movp/platform` + `create-movp`
   ONCE and uploads the tarballs; a `template-smoke` matrix job (`matrix.template:
   [crm-lite, marketing-site, support-desk, knowledge-base]`) `needs:` it, downloads the tarballs, and
@@ -95,6 +108,16 @@ started and smoked. Only the domain files differ.
   CRM-lite template layout — all verbatim from the INTERFACES + 06d plan.
 - **No `any`.** `unknown` + narrowing, or a real type — in `scripts/check-template-gallery.ts` AND every
   Astro page (typed rows only).
+- **Untrusted I/O: guards on EVERY read path, and 06d owns them (INTERFACES round-6 F2).** Any read of a
+  path under a template tree — automatic OR explicit, in a fixture script OR in the gallery validator —
+  goes through **06d's** `copyTreeGuarded` / `copyFileGuarded` / `readFileGuarded` (`lstat`-reject
+  symlink + non-regular file, size-bound BEFORE buffering, path + reason in the error, never bytes),
+  imported from the BUILT `packages/create-movp/dist/index.js`. A dynamic `import()` of a template module
+  is a read path too — `lstat`-reject it FIRST, because `import()` of a symlink executes its target. 06e
+  **defines, renames, copies, and re-implements none of these** — a second implementation of one guard is
+  drift. The only unguarded reads permitted are of files the reading process itself just wrote into its
+  own `mkdtemp` scratch (its own output, not untrusted input), and each such site carries a comment
+  saying why. Per [[untrusted-io-and-resource-bounds]].
 - **No new dependencies.** `tsx`, `@movp/*`, Astro, `verdaccio` (06d adds it) already exist in the repo.
 - **Templates ship `package.json.template`, never a bare `package.json`.** The copier renames it at
   scaffold time; a committed `package.json` under `templates/*` would make pnpm try to link the
@@ -167,6 +190,10 @@ Create the gallery gate harness (registering `marketing-site`) and the full mark
 ### Files
 
 - **Create:** `scripts/check-template-gallery.ts`
+- **Create:** `scripts/check-template-gallery-guards.sh` (executable) — the BEHAVIOURAL guarded-read gate
+  (INTERFACES round-6 F2): it drives the validator at a synthetic `mktemp -d` template tree via
+  `--templates-dir` and asserts each hostile case is rejected unread. Consumed unchanged by Task 4's CI
+  job. It is an 06e-local gate, **not** a shared helper (06d owns every shared primitive).
 - **Copy the shell** from `templates/crm-lite/` into `templates/marketing-site/` (the template-agnostic
   files listed in Architecture), then author/overwrite the domain files below.
 - **Create/overwrite (domain):**
@@ -184,26 +211,49 @@ Create the gallery gate harness (registering `marketing-site`) and the full mark
   monorepo aggregate `schema` (as `platformSchema`) from `@movp/core-schema`; `schema.projectCollections`
   / `schema.platformCollections` / `CollectionDef.layer`. **(06b):** `schemaFingerprint`. **(06c):**
   project-mode `generate({ schema, migrationsDir, migrationName, deltasRegistryPath, manifestPath })`.
-  **(06d):** the CRM-lite shell + copier tokens.
+  **(06d):** the CRM-lite shell + copier tokens; the untrusted-io guards `copyFileGuarded(src, dest)`,
+  `readFileGuarded(src): Buffer`, and the exported constant `MAX_FILE_BYTES`, all imported from the BUILT
+  `packages/create-movp/dist/index.js` (the public seam — the exact compiled functions `npm create movp`
+  runs); and `scripts/tree-snapshot.mjs` in its stdout form (`node scripts/tree-snapshot.mjs <root>`).
+  **06e defines none of these** (INTERFACES round-6 F2 — one implementation, one owner).
 - **Platform collections reused (inherited `layer:'platform'`):** `content_item`, `content_type`,
   `content_revision`, `content_seo`, `content_schedule`, `content_publish_event`, `tag`, `asset`.
 - **Project extensions (this template owns, `layer:'project'`):** `author`, `newsletter_subscriber`.
-- **Produces:** `scripts/check-template-gallery.ts` (consumed unchanged by Tasks 2–4) and the
-  `marketing-site` scaffold.
+- **Produces:** `scripts/check-template-gallery.ts` (Tasks 2–3 only append to its `TEMPLATES` array),
+  `scripts/check-template-gallery-guards.sh` (consumed unchanged by Tasks 2–4 and by Task 4's CI job),
+  and the `marketing-site` scaffold.
 
 ### Steps
 
 **1. Write the gallery gate** `scripts/check-template-gallery.ts`. Data-driven; Tasks 2–3 only append to
-`TEMPLATES`. (Runtime foot-gun inlined: import the schema module via a `file://` URL so `tsx` resolves
-the workspace `@movp/*` deps the module imports.)
+`TEMPLATES`. Two foot-guns are inlined at their trigger sites in the sample:
+
+- **Schema-module resolution.** Import the schema module via a `file://` URL so `tsx` resolves the
+  workspace `@movp/*` deps the module imports.
+- **Untrusted-io (INTERFACES round-6 F2).** This gate reads the REAL template tree — untrusted input at
+  read time. Every read of a template path goes through **06d's** guards, imported from the BUILT
+  `packages/create-movp/dist/index.js`: `copyFileGuarded` for the `movp.deltas.json` copy,
+  `readFileGuarded` for `seed.sql` and every page, and an `lstat`-reject **before** the dynamic
+  `import()` of the schema module (an `import()` of a symlink EXECUTES its target). It defines **no
+  guard of its own** — 06d owns the one implementation. The two `readFileSync` calls that remain read
+  files this process itself just wrote into its own `mkdtemp` scratch; they are exempt, and the sample
+  says so at the site.
+- **`--templates-dir <dir>`** (default `templates`) repoints the gate at a synthetic tree so the hostile
+  cases can be exercised with **no write under the real repository** (round-5 F1) — see step 11.
 
 ```ts
-import { cpSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs'
+import { existsSync, lstatSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { generate } from '@movp/codegen'
 import { schemaFingerprint, type MovpSchema } from '@movp/core-schema'
+// 06d OWNS the untrusted-io guards; this gate CONSUMES them from the BUILT dist — the public seam, the
+// exact compiled functions `npm create movp` runs. GOTCHA: build first (`pnpm --filter create-movp
+// build`) or this import fails — `dist/index.js` + `dist/index.d.ts` are what supply the runtime AND the
+// types. NEVER re-implement an lstat/size guard here (INTERFACES round-6 F2: one implementation, one
+// owner); NEVER reach for `cpSync`/`readFileSync` on a template path.
+import { copyFileGuarded, readFileGuarded, MAX_FILE_BYTES } from '../packages/create-movp/dist/index.js'
 
 interface TemplateSpec {
   name: string
@@ -222,15 +272,61 @@ const TEMPLATES: TemplateSpec[] = [
   },
 ]
 
+// The real template tree (06d: the source of truth is the repo-root `templates/`; the package's own
+// `templates/` dir is only ever materialized in a TEMP pack-staging tree, never in the worktree).
+// `--templates-dir <dir>` repoints this gate at a synthetic `mktemp -d` tree, so the hostile cases
+// (symlinked / oversized template files) can be exercised WITHOUT any write under the real repository
+// (INTERFACES round-5 F1). It is the ONLY knob that changes which tree is read.
+const DEFAULT_TEMPLATES_DIR = 'templates'
+
 const HEX64 = /^[0-9a-f]{64}$/
 
 function fail(name: string, reason: string): never {
   throw new Error(`template_gallery_invalid: [${name}] ${reason}`)
 }
 
+/** `--flag=value` or `--flag value`; undefined when the flag is absent. */
+function argValue(flag: string): string | undefined {
+  const inline = process.argv.find((a) => a.startsWith(`${flag}=`))
+  if (inline !== undefined) return inline.slice(flag.length + 1)
+  const i = process.argv.indexOf(flag)
+  return i === -1 ? undefined : process.argv[i + 1]
+}
+
+/**
+ * lstat BEFORE any stat / read / import. `stat` and `readFile` FOLLOW symlinks, and — the sharp edge
+ * here — `import()` of a symlinked module EXECUTES its target, so the guard must run BEFORE the dynamic
+ * import, not after. Rejections carry 06d's stable copier codes + the path, NEVER the file's bytes.
+ */
+function assertRegularFile(name: string, path: string, what: string): void {
+  const info = lstatSync(path, { throwIfNoEntry: false })
+  if (info === undefined) fail(name, `missing ${what}: ${path}`)
+  if (info.isSymbolicLink()) fail(name, `${what} rejected unread — template_symlink_rejected: ${path}`)
+  if (!info.isFile()) fail(name, `${what} rejected unread — template_not_regular_file: ${path}`)
+  // Bound BEFORE any read: `import()` buffers the module itself, so cap it with the SAME limit the
+  // copier uses (MAX_FILE_BYTES, imported from 06d — do not hardcode a second constant).
+  if (info.size > MAX_FILE_BYTES) fail(name, `${what} rejected unread — template_file_too_large: ${path}`)
+}
+
+/**
+ * Guarded text read of an UNTRUSTED template file (real tree or synthetic). 06d's `readFileGuarded`
+ * lstat-rejects a symlink / non-regular file and size-bounds via `lstat.size` BEFORE buffering. A
+ * rejection fails the gate through `fail()`, so the error names the TEMPLATE and the REASON — the
+ * CopierError message is `<code>: <path>`, never file content.
+ */
+function readTemplateText(name: string, path: string, what: string): string {
+  try {
+    return readFileGuarded(path).toString('utf8')
+  } catch (err) {
+    fail(name, `${what} rejected by the guarded read — ${err instanceof Error ? err.message : String(err)}`)
+  }
+}
+
 async function loadSchema(dir: string, name: string): Promise<MovpSchema> {
   const modPath = join(dir, 'supabase', 'functions', '_shared', 'schema.ts')
-  if (!existsSync(modPath)) fail(name, `missing schema module ${modPath}`)
+  // GOTCHA: the lstat MUST precede `import()` — importing a symlinked module runs the TARGET, so a
+  // check afterwards is worthless. Guards apply on EVERY read path (untrusted-io-and-resource-bounds).
+  assertRegularFile(name, modPath, 'schema module')
   // tsx resolves the workspace @movp/* imports this module makes; import by file URL.
   const mod: unknown = await import(pathToFileURL(modPath).href)
   const schema = (mod as { schema?: unknown }).schema
@@ -266,12 +362,25 @@ async function assertProjectCodegen(name: string, dir: string, schema: MovpSchem
   try {
     const migrationsDir = join(scratch, 'supabase', 'migrations')
     const registryPath = join(scratch, 'movp.deltas.json')
-    cpSync(registrySrc, registryPath)
+    // 06d's guarded single-file copy — lstat-reject symlink/non-regular + size-bound BEFORE the read.
+    // NEVER `cpSync`/`copyFileSync` here: `registrySrc` lives in the UNTRUSTED template tree, and a raw
+    // copy would follow a symlinked `movp.deltas.json` straight out of the repo.
+    try {
+      copyFileGuarded(registrySrc, registryPath)
+    } catch (err) {
+      fail(name, `movp.deltas.json rejected by the guarded copy — ${err instanceof Error ? err.message : String(err)}`)
+    }
     const manifestPath = join(scratch, 'movp.schema.json')
     const baseline = '20260713000200_movp_generated.sql'
     const opts = { schema, migrationsDir, migrationName: baseline, deltasRegistryPath: registryPath, manifestPath }
 
     await generate(opts) // must NOT throw new_generated_delta_required for a well-formed template
+    // GUARD-EXEMPT ON PURPOSE — do NOT "fix" this to readFileGuarded. `baseline` was just written by
+    // generate() into THIS process's own `mkdtemp` scratch: it is our own output, not untrusted input,
+    // and nothing else can have interposed a symlink there. The guards belong on the TEMPLATE tree
+    // (readFileGuarded / copyFileGuarded above); applying them here would be cargo-cult, and a blanket
+    // `grep -v readFileSync` gate would false-positive on exactly these two lines — which is why the
+    // guarded-read gate is behavioural (`scripts/check-template-gallery-guards.sh`), not a grep.
     const first = readFileSync(join(migrationsDir, baseline), 'utf8')
     await generate(opts)
     const second = readFileSync(join(migrationsDir, baseline), 'utf8')
@@ -299,12 +408,13 @@ async function assertProjectCodegen(name: string, dir: string, schema: MovpSchem
 function assertAssets(name: string, dir: string, spec: TemplateSpec): void {
   const seed = join(dir, 'supabase', 'seed.sql')
   if (!existsSync(seed)) fail(name, 'missing supabase/seed.sql')
-  const seedText = readFileSync(seed, 'utf8')
+  // Guarded — `seed.sql` is untrusted template input. A symlinked or oversized seed is rejected UNREAD.
+  const seedText = readTemplateText(name, seed, 'supabase/seed.sql')
   if (/\.\.\/|\/Code\/supasuite|packages\/[a-z]/.test(seedText)) fail(name, 'seed.sql leaks a source-repo path')
   for (const page of spec.pages) {
     const p = join(dir, page)
     if (!existsSync(p)) fail(name, `missing page ${page}`)
-    const text = readFileSync(p, 'utf8')
+    const text = readTemplateText(name, p, `page ${page}`) // guarded — untrusted template input
     if (!/Base\.astro/.test(text)) fail(name, `page ${page} must import the Base layout`)
     if (/[:<]\s*any\b|\bas any\b/.test(text)) fail(name, `page ${page} uses the any type`)
   }
@@ -317,15 +427,20 @@ function assertAssets(name: string, dir: string, spec: TemplateSpec): void {
 }
 
 async function main(): Promise<void> {
-  const only = process.argv.find((a) => a.startsWith('--template='))?.split('=')[1]
+  const only = argValue('--template')
+  const templatesDir = argValue('--templates-dir') ?? DEFAULT_TEMPLATES_DIR
   const selected = only ? TEMPLATES.filter((t) => t.name === only) : TEMPLATES
   if (only && selected.length === 0) throw new Error(`unknown template: ${only}`)
+  console.log(`template-gallery: templates-dir=${templatesDir}`)
   for (const spec of selected) {
-    const dir = join('templates', spec.name)
-    const schema = await loadSchema(dir, spec.name)
+    const dir = join(templatesDir, spec.name)
+    // ORDER IS LOAD-BEARING: the cheap, fully-GUARDED structural checks run FIRST, so a hostile template
+    // (symlinked/oversized seed, page, or schema module) is rejected BEFORE any module is imported or
+    // executed. Do not reorder loadSchema ahead of assertAssets.
+    assertAssets(spec.name, dir, spec)
+    const schema = await loadSchema(dir, spec.name) // lstat-guards the module, then import()s it
     assertComposition(spec.name, schema, spec)
     await assertProjectCodegen(spec.name, dir, schema, spec)
-    assertAssets(spec.name, dir, spec)
     console.log(`template-gallery: ${spec.name} OK`)
   }
   console.log(`template-gallery: ${selected.length} template(s) verified`)
@@ -334,10 +449,12 @@ async function main(): Promise<void> {
 await main()
 ```
 
-Run it now — **Expected: FAIL** (`template_gallery_invalid: [marketing-site] missing schema module ...`):
+Run it now — **Expected: FAIL** (`template_gallery_invalid: [marketing-site] missing supabase/seed.sql` —
+`assertAssets` runs first, so a template that does not exist yet fails on its first guarded asset):
 
 ```
-pnpm exec tsx scripts/check-template-gallery.ts --template=marketing-site
+pnpm --filter create-movp build \
+  && pnpm exec tsx scripts/check-template-gallery.ts --template=marketing-site
 ```
 
 **2. Copy the CRM-lite shell** into the new template, then remove the domain files you will replace:
@@ -532,7 +649,8 @@ reset` — codegen strictly AFTER install, mirroring 06d's `create.ts` bootstrap
 **10. Re-run the gate — Expected: PASS**:
 
 ```
-pnpm exec tsx scripts/check-template-gallery.ts --template=marketing-site \
+pnpm --filter create-movp build \
+  && pnpm exec tsx scripts/check-template-gallery.ts --template=marketing-site \
   && pnpm install --frozen-lockfile
 ```
 
@@ -540,12 +658,140 @@ Expected tail: `template-gallery: marketing-site OK` then `template-gallery: 1 t
 `package.json.template` (not a bare `package.json`) keeps `templates/*` workspace globbing from linking
 the unpublished pins, so `pnpm install` stays green.
 
-**11. Commit** (`feat(c6e): marketing-site template + gallery gate`).
+**11. Write the BEHAVIOURAL guarded-read gate** `scripts/check-template-gallery-guards.sh` (INTERFACES
+round-6 F2), then `chmod +x` it. This is what proves the guards actually fire — a grep cannot: a blanket
+`grep -v readFileSync` over `check-template-gallery.ts` would false-positive on its two LEGITIMATE
+unguarded reads of its own `mkdtemp` scratch output (step 1). So the gate drives the validator at a
+**synthetic template tree** through `--templates-dir` and asserts each hostile case is REJECTED with 06d's
+stable copier code, **with the symlink target never read**.
+
+> **STOP — no write under the real repository** (INTERFACES round-5 F1). The synthetic tree is the only
+> thing this gate mutates: it `cp -R`s the real template OUT of the worktree into `$TDIR` and plants the
+> hostile case there. The real tree is only ever READ. **No `git checkout`, no `rm`, no `printf >>` under
+> `$REPO_ROOT`** — and the last check proves it, with 06d's `scripts/tree-snapshot.mjs` before/after.
+
+```bash
+#!/usr/bin/env bash
+# C6e guarded-read gate (INTERFACES round-6 F2). BEHAVIOURAL, not a grep: `check-template-gallery.ts`
+# legitimately `readFileSync`s the baseline IT wrote into its own mkdtemp scratch, so a blanket grep for
+# readFileSync would false-positive on correct code. Instead: point the validator at a SYNTHETIC template
+# tree (--templates-dir) and assert it rejects a symlinked seed.sql / page / schema module and an
+# oversized file — each unread — and still PASSES on the real, unmodified tree.
+#
+# ROUND-5 F1: nothing is written under the real repository. Every write goes to $TDIR (mktemp -d).
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$REPO_ROOT"
+
+TDIR="$(mktemp -d "${TMPDIR:-/tmp}/movp-gallery-guards.XXXXXX")"
+trap 'rm -rf "$TDIR"' EXIT
+SECRET="$TDIR/fake-secret"
+printf 'TOPSECRET-DO-NOT-READ\n' >"$SECRET"
+
+# The validator imports the guards from the BUILT dist. Build ONCE, BEFORE the before-snapshot — a build
+# between the two snapshots would rewrite `packages/create-movp/dist/` and read as a mutation.
+pnpm --filter create-movp build >/dev/null
+
+# Round-5 F1 acceptance, set up here and asserted at the end: the real worktree must be byte-identical
+# after this gate. 06d's ONE shared snapshot helper, stdout form (`<root> [outFile]` — round-6 F1).
+node scripts/tree-snapshot.mjs . >"$TDIR/repo-before.txt"
+
+seed_synthetic() {                       # a pristine copy of the REAL template, in $TDIR
+  rm -rf "$TDIR/marketing-site"
+  cp -R templates/marketing-site "$TDIR/marketing-site"   # READ-only against the real tree
+}
+
+run_gate() {                             # a rejection is the EXPECTED outcome, so never let -e kill us
+  pnpm exec tsx scripts/check-template-gallery.ts \
+    --template=marketing-site --templates-dir "$TDIR" 2>&1 || true
+}
+
+expect_reject() {                        # expect_reject <case> <stable-code> <what-fragment>
+  local case_name="$1" code="$2" what="$3" out
+  out="$(run_gate)"
+  if ! printf '%s' "$out" | grep -qF "$code"; then
+    echo "FAIL: $case_name was not rejected with $code"; printf '%s\n' "$out"; exit 1
+  fi
+  if ! printf '%s' "$out" | grep -qF "$what"; then
+    echo "FAIL: $case_name rejected, but not at the expected read path ($what)"; printf '%s\n' "$out"; exit 1
+  fi
+  if printf '%s' "$out" | grep -qF 'TOPSECRET-DO-NOT-READ'; then
+    echo "FAIL: $case_name — the symlink TARGET was read"; exit 1
+  fi
+  echo "guarded-reads: $case_name rejected ($code), target unread"
+}
+
+# (a) symlinked seed.sql -> readFileGuarded lstat-rejects it before buffering.
+seed_synthetic
+rm -f "$TDIR/marketing-site/supabase/seed.sql"
+ln -s "$SECRET" "$TDIR/marketing-site/supabase/seed.sql"
+expect_reject 'symlinked seed.sql' 'template_symlink_rejected' 'supabase/seed.sql'
+
+# (b) symlinked page -> same guard on the page read path.
+seed_synthetic
+rm -f "$TDIR/marketing-site/src/pages/blog/index.astro"
+ln -s "$SECRET" "$TDIR/marketing-site/src/pages/blog/index.astro"
+expect_reject 'symlinked page' 'template_symlink_rejected' 'src/pages/blog/index.astro'
+
+# (c) symlinked schema module -> the lstat MUST precede import(). This case also PROVES the ordering:
+#     $TDIR has no node_modules, so had the import() run first it would have died on an @movp/*
+#     module-resolution error, not on our code. Seeing the copier code means import() never ran.
+seed_synthetic
+rm -f "$TDIR/marketing-site/supabase/functions/_shared/schema.ts"
+ln -s "$SECRET" "$TDIR/marketing-site/supabase/functions/_shared/schema.ts"
+expect_reject 'symlinked schema module' 'template_symlink_rejected' 'schema module'
+
+# (d) oversized file (> MAX_FILE_BYTES = 5 MiB, 06d) -> bounded BEFORE buffering, so it never resides.
+seed_synthetic
+head -c 6291456 /dev/zero | tr '\0' 'x' >"$TDIR/marketing-site/supabase/seed.sql"
+expect_reject 'oversized seed.sql' 'template_file_too_large' 'supabase/seed.sql'
+
+# (e) the REAL, unmodified template tree still PASSES on the default --templates-dir (read-only).
+pnpm exec tsx scripts/check-template-gallery.ts >/dev/null
+echo 'guarded-reads: real template tree still passes (default --templates-dir)'
+
+# (f) round-5 F1 acceptance: the real repository is byte-unchanged — no check above wrote under it. A
+#     dirty worktree (your WIP) is fine: it appears identically in BOTH manifests.
+node scripts/tree-snapshot.mjs . >"$TDIR/repo-after.txt"
+if ! diff -u "$TDIR/repo-before.txt" "$TDIR/repo-after.txt"; then
+  echo 'FAIL: the guards gate wrote under the real repository'; exit 1
+fi
+echo 'guarded-reads: real repository byte-unchanged'
+
+echo 'guarded-reads: hostile-tree gate PASS'
+```
+
+Run it — **Expected** (six lines, then PASS):
+
+```
+chmod +x scripts/check-template-gallery-guards.sh
+bash scripts/check-template-gallery-guards.sh
+```
+
+```
+guarded-reads: symlinked seed.sql rejected (template_symlink_rejected), target unread
+guarded-reads: symlinked page rejected (template_symlink_rejected), target unread
+guarded-reads: symlinked schema module rejected (template_symlink_rejected), target unread
+guarded-reads: oversized seed.sql rejected (template_file_too_large), target unread
+guarded-reads: real template tree still passes (default --templates-dir)
+guarded-reads: real repository byte-unchanged
+guarded-reads: hostile-tree gate PASS
+```
+
+**12. Commit** (`feat(c6e): marketing-site template + gallery gate`).
 
 ### Gate (machine-checkable)
 
 ```
-pnpm exec tsx scripts/check-template-gallery.ts --template=marketing-site \
+pnpm --filter create-movp build \
+  && pnpm exec tsx scripts/check-template-gallery.ts --template=marketing-site \
+  && bash scripts/check-template-gallery-guards.sh \
+  && test -x scripts/check-template-gallery-guards.sh \
+  && ! grep -Eq 'cpSync|copyFileSync' scripts/check-template-gallery.ts \
+  && grep -qF 'readFileGuarded' scripts/check-template-gallery.ts \
+  && grep -qF 'copyFileGuarded' scripts/check-template-gallery.ts \
+  && ! grep -REq 'git checkout' scripts/check-template-gallery-guards.sh \
   && test -f templates/marketing-site/package.json.template \
   && test ! -f templates/marketing-site/package.json \
   && grep -q '__PROJECT_NAME__' templates/marketing-site/supabase/config.toml \
@@ -555,8 +801,16 @@ pnpm exec tsx scripts/check-template-gallery.ts --template=marketing-site \
   && pnpm install --frozen-lockfile
 ```
 
-**Expected:** `template-gallery: marketing-site OK`; tokens present in config/seed; the `+300` db port;
-no `@movp/mcp-bridge`; workspace install green.
+**Expected:** `template-gallery: marketing-site OK`; `guarded-reads: hostile-tree gate PASS` (every
+hostile case rejected unread, the real tree still passing, the real repo byte-unchanged); the validator
+carries **no `cpSync`/`copyFileSync`** and consumes 06d's `readFileGuarded` + `copyFileGuarded`; no `git
+checkout` anywhere in the guards gate (round-5 F1); tokens present in config/seed; the `+300` db port; no
+`@movp/mcp-bridge`; workspace install green.
+
+> **Note on the two `grep` lines above:** they are a cheap *anti-regression* tripwire on the import seam,
+> NOT the guard's proof — the proof is `check-template-gallery-guards.sh` running the hostile tree. The
+> greps are safe here because they assert the ABSENCE of `cpSync`/`copyFileSync` (which the validator must
+> never use), never the absence of `readFileSync` (which it legitimately uses on its own scratch output).
 
 ---
 
@@ -597,10 +851,12 @@ Add the support-desk scaffold and register it in the gallery gate.
   },
 ```
 
-Run — **Expected: FAIL** (`template_gallery_invalid: [support-desk] missing schema module ...`):
+Run — **Expected: FAIL** (`template_gallery_invalid: [support-desk] missing supabase/seed.sql` — the
+guarded asset checks run before the schema import):
 
 ```
-pnpm exec tsx scripts/check-template-gallery.ts --template=support-desk
+pnpm --filter create-movp build \
+  && pnpm exec tsx scripts/check-template-gallery.ts --template=support-desk
 ```
 
 **2. Copy the shell** as in Task 1 step 2 (into `templates/support-desk/`, removing the domain files).
@@ -786,7 +1042,8 @@ start`, `npm run codegen`, `supabase db reset` — codegen strictly AFTER instal
 **9. Re-run the gate — Expected: PASS** (`template-gallery: support-desk OK`):
 
 ```
-pnpm exec tsx scripts/check-template-gallery.ts --template=support-desk
+pnpm --filter create-movp build \
+  && pnpm exec tsx scripts/check-template-gallery.ts --template=support-desk
 ```
 
 **10. Commit** (`feat(c6e): support-desk template (tickets-as-tasks + SLA)`).
@@ -794,14 +1051,18 @@ pnpm exec tsx scripts/check-template-gallery.ts --template=support-desk
 ### Gate (machine-checkable)
 
 ```
-pnpm exec tsx scripts/check-template-gallery.ts --template=support-desk \
+pnpm --filter create-movp build \
+  && pnpm exec tsx scripts/check-template-gallery.ts --template=support-desk \
+  && bash scripts/check-template-gallery-guards.sh \
   && test -f templates/support-desk/package.json.template \
   && test ! -f templates/support-desk/package.json \
   && grep -q '64722' templates/support-desk/supabase/config.toml \
   && grep -q '__WORKSPACE_ID__' templates/support-desk/supabase/seed.sql
 ```
 
-**Expected:** `template-gallery: support-desk OK`; the `+400` db port; tokens present.
+**Expected:** `template-gallery: support-desk OK`; `guarded-reads: hostile-tree gate PASS` (its step (e)
+now runs BOTH registered templates through the guarded reads on the real tree); the `+400` db port;
+tokens present.
 
 ---
 
@@ -841,10 +1102,12 @@ Add the knowledge-base scaffold and register it in the gallery gate.
   },
 ```
 
-Run — **Expected: FAIL** (`template_gallery_invalid: [knowledge-base] missing schema module ...`):
+Run — **Expected: FAIL** (`template_gallery_invalid: [knowledge-base] missing supabase/seed.sql` — the
+guarded asset checks run before the schema import):
 
 ```
-pnpm exec tsx scripts/check-template-gallery.ts --template=knowledge-base
+pnpm --filter create-movp build \
+  && pnpm exec tsx scripts/check-template-gallery.ts --template=knowledge-base
 ```
 
 **2. Copy the shell** as in Task 1 step 2 (into `templates/knowledge-base/`).
@@ -1006,7 +1269,8 @@ install`, `supabase start`, `npm run codegen`, `supabase db reset` — codegen s
 **9. Re-run the gate — Expected: PASS** (`template-gallery: knowledge-base OK`):
 
 ```
-pnpm exec tsx scripts/check-template-gallery.ts --template=knowledge-base \
+pnpm --filter create-movp build \
+  && pnpm exec tsx scripts/check-template-gallery.ts --template=knowledge-base \
   && pnpm exec tsx scripts/check-template-gallery.ts
 ```
 
@@ -1017,13 +1281,16 @@ The all-templates run reports `template-gallery: 3 template(s) verified`.
 ### Gate (machine-checkable)
 
 ```
-pnpm exec tsx scripts/check-template-gallery.ts \
+pnpm --filter create-movp build \
+  && pnpm exec tsx scripts/check-template-gallery.ts \
+  && bash scripts/check-template-gallery-guards.sh \
   && test -f templates/knowledge-base/package.json.template \
   && test ! -f templates/knowledge-base/package.json \
   && grep -q '64822' templates/knowledge-base/supabase/config.toml
 ```
 
-**Expected:** `template-gallery: 3 template(s) verified`; the `+500` db port; token discipline holds.
+**Expected:** `template-gallery: 3 template(s) verified`; `guarded-reads: hostile-tree gate PASS` (all
+three templates now pass the guarded reads on the real tree); the `+500` db port; token discipline holds.
 
 ---
 
@@ -1050,7 +1317,9 @@ and fan out across all four templates, plus the Docker-free gallery gate.
 - **Create:** `fixtures/verdaccio-gallery/pack.sh` (executable) — the CI pack-once producer authored
   inline in Step 1 (stages every template into a TEMP `create-movp` copy — never mutating the source
   worktree — then packs the whole bundle to `<outdir>`).
-- **Modify:** `.github/workflows/ci.yml` (add `template-gallery`, `pack-artifacts`, `template-smoke`).
+- **Modify:** `.github/workflows/ci.yml` (add `template-gallery` — which runs BOTH
+  `scripts/check-template-gallery.ts` and Task 1's `scripts/check-template-gallery-guards.sh` —
+  plus `pack-artifacts` and `template-smoke`).
 - **Modify:** root `package.json` (add `check:verdaccio-gallery` script alongside 06d's `check:verdaccio-crm`).
 - **Modify:** `docs/superpowers/plans/README.md` (Stage C EXECUTION STATUS — mark C6e landed).
 
@@ -1077,7 +1346,10 @@ and fan out across all four templates, plus the Docker-free gallery gate.
   two implementations of the same guard = drift). 06d also owns their unit tests; 06e pins only the
   gallery-level pack invariants (Step 1d).
 - **Consumes (06d) — the ONE shared snapshot helper `scripts/tree-snapshot.mjs`** (INTERFACES round-5
-  F2). Invoked as `node scripts/tree-snapshot.mjs <repoRoot>`; prints to stdout a deterministic manifest
+  F2). Its CLI contract is **`node scripts/tree-snapshot.mjs <root> [outFile]`** — with `outFile` omitted
+  it emits to **stdout** (INTERFACES round-6 F1). EVERY 06e call site (here, `pack.sh`, `gate.sh`, Step 1d,
+  and `scripts/check-template-gallery-guards.sh`) uses the stdout form and redirects; none passes an
+  `outFile`. Invoked as `node scripts/tree-snapshot.mjs <repoRoot>`; prints to stdout a deterministic manifest
   of the subtrees the pack stages FROM (`packages/create-movp/` + `templates/`), one path-sorted row per
   entry. Contract 06d owns and 06e relies on: `lstat`-based (a symlink is RECORDED by its target string,
   never followed), file bytes hashed in **bounded chunks** (never buffers a whole file — a large
@@ -1597,7 +1869,8 @@ for t in crm-lite marketing-site support-desk knowledge-base; do ARTIFACTS_DIR=/
 ```
 
 **4. Add the Docker-free gallery gate as a CI job** in `.github/workflows/ci.yml` (mirrors the existing
-`schema-codegen-unit` job's setup):
+`schema-codegen-unit` job's setup). It runs BOTH halves: the composition/immutability gate over the real
+templates, and the behavioural guarded-read gate over a synthetic hostile tree (Task 1 step 11):
 
 ```yaml
   template-gallery:
@@ -1609,7 +1882,11 @@ for t in crm-lite marketing-site support-desk knowledge-base; do ARTIFACTS_DIR=/
       - uses: actions/setup-node@v6
         with: { node-version: 22, cache: pnpm }
       - run: pnpm install --frozen-lockfile
+      # check-template-gallery.ts imports the untrusted-io guards from the BUILT create-movp dist —
+      # build before running it (INTERFACES round-6 F2). The guards gate rebuilds it itself, harmlessly.
+      - run: pnpm --filter create-movp build
       - run: pnpm exec tsx scripts/check-template-gallery.ts
+      - run: bash scripts/check-template-gallery-guards.sh
 ```
 
 **5. Add the pack-once + matrix jobs** in `.github/workflows/ci.yml`. `pack-artifacts` packs the whole
@@ -1671,17 +1948,25 @@ the SAME commit (Phase Completion Signal rule), noting the three templates + the
 `bash fixtures/verdaccio-gallery/gate.sh <template>` where Docker + Verdaccio are available):
 
 ```
-pnpm exec tsx scripts/check-template-gallery.ts
+pnpm --filter create-movp build \
+  && pnpm exec tsx scripts/check-template-gallery.ts \
+  && bash scripts/check-template-gallery-guards.sh
 ```
 
-**Expected:** `template-gallery: 3 template(s) verified`.
+**Expected:** `template-gallery: 3 template(s) verified`, then `guarded-reads: hostile-tree gate PASS`.
 
 **9. Commit** (`ci(c6e): 4-way template matrix + template-gallery gate`).
 
 ### Gate (machine-checkable)
 
 ```
-pnpm exec tsx scripts/check-template-gallery.ts \
+pnpm --filter create-movp build \
+  && pnpm exec tsx scripts/check-template-gallery.ts \
+  && bash scripts/check-template-gallery-guards.sh \
+  && test -x scripts/check-template-gallery-guards.sh \
+  && ! grep -Eq 'cpSync|copyFileSync' scripts/check-template-gallery.ts \
+  && grep -qF 'readFileGuarded' scripts/check-template-gallery.ts \
+  && grep -qF 'copyFileGuarded' scripts/check-template-gallery.ts \
   && test -x fixtures/verdaccio-gallery/gate.sh \
   && test -x fixtures/verdaccio-gallery/pack.sh \
   && test -f fixtures/verdaccio-gallery/stage-create-movp.mjs \
@@ -1693,26 +1978,34 @@ pnpm exec tsx scripts/check-template-gallery.ts \
   && grep -qF 'scripts/tree-snapshot.mjs' fixtures/verdaccio-gallery/pack.sh \
   && grep -qF 'scripts/tree-snapshot.mjs' fixtures/verdaccio-gallery/gate.sh \
   && ! grep -REq 'git status --porcelain' fixtures/verdaccio-gallery/ \
-  && ! grep -REq 'git checkout' fixtures/verdaccio-gallery/ .github/workflows/ci.yml \
+  && ! grep -REq 'git checkout' fixtures/verdaccio-gallery/ scripts/check-template-gallery-guards.sh .github/workflows/ci.yml \
   && ! grep -REq 'rm -rf .*packages/create-movp/templates|cp -R .*packages/create-movp' fixtures/verdaccio-gallery/ \
-  && node -e "const y=require('node:fs').readFileSync('.github/workflows/ci.yml','utf8'); if(!['crm-lite','marketing-site','support-desk','knowledge-base'].every(t=>y.includes(t))) throw new Error('matrix missing a template'); for(const j of ['template-gallery:','pack-artifacts:','template-smoke:']) if(!y.includes(j)) throw new Error('missing job '+j); if(!y.includes('2.109.1')) throw new Error('template-smoke setup-cli not pinned to 2.109.1'); console.log('ok')"
+  && node -e "const y=require('node:fs').readFileSync('.github/workflows/ci.yml','utf8'); if(!['crm-lite','marketing-site','support-desk','knowledge-base'].every(t=>y.includes(t))) throw new Error('matrix missing a template'); for(const j of ['template-gallery:','pack-artifacts:','template-smoke:']) if(!y.includes(j)) throw new Error('missing job '+j); for(const s of ['scripts/check-template-gallery.ts','scripts/check-template-gallery-guards.sh']) if(!y.includes(s)) throw new Error('template-gallery job does not run '+s); if(!y.includes('2.109.1')) throw new Error('template-smoke setup-cli not pinned to 2.109.1'); console.log('ok')"
 ```
 
-**Expected:** gallery gate reports 3 templates verified; the three fixture scripts exist (gate/pack
-executable); the staging script routes EVERY copy through the SHARED `copyTreeGuarded` /
-`copyFileGuarded` with **no raw `copyFileSync`/`readFileSync` left on any source path** (round-4 F1);
+**Expected:** gallery gate reports 3 templates verified and the guarded-read gate reports
+`guarded-reads: hostile-tree gate PASS` (a symlinked `seed.sql` / page / schema module and an oversized
+file are each rejected UNREAD against a synthetic tree; the real tree still passes; the real repo is
+byte-unchanged — round-6 F2 + round-5 F1); the validator carries **no `cpSync`/`copyFileSync`** and
+consumes 06d's `readFileGuarded` + `copyFileGuarded` (the greps assert the ABSENCE of the unguarded
+copiers, never the absence of `readFileSync` — the validator legitimately reads back its OWN `mkdtemp`
+scratch output); the three fixture scripts exist (gate/pack executable); the staging script routes EVERY
+copy through the SHARED `copyTreeGuarded` / `copyFileGuarded` with **no raw
+`copyFileSync`/`readFileSync` left on any source path** (round-4 F1);
 `pack.sh` AND `gate.sh` gate on 06d's shared **`scripts/tree-snapshot.mjs`** before/after manifest, the
 duplicate `fixtures/verdaccio-gallery/snapshot-tree.mjs` is GONE (round-5 F2 — one helper, 06d owns it),
 and neither gates on `git status --porcelain` (round-4 F2 — a dirty worktree is legal); **no `git
-checkout` appears in any fixture or in `ci.yml`** (round-5 F1 — a "restore" would discard a developer's
-uncommitted edits; every demo runs on a `mktemp -d` synthetic tree instead, and the plan's Step 1d
-snippets contain none either); and NO fixture reintroduces
+checkout` appears in any fixture, in the guards gate, or in `ci.yml`** (round-5 F1 — a "restore" would
+discard a developer's uncommitted edits; every demo runs on a `mktemp -d` synthetic tree instead, and the
+plan's Step 1d snippets contain none either); and NO fixture reintroduces
 a raw `cp -R`/`rm -rf` into `packages/create-movp`. `ci.yml` contains all four template names, the three
-new jobs, and the pinned `2.109.1` CLI. The pack invariants (symlink-reject unread; snapshot
-deterministic + one-byte sensitive; staging changed nothing; dirty tree preserved and passing; the REAL
-repo byte-unchanged) are pinned by Step 1d. In CI, `template-smoke` runs each of the four templates'
-scaffold → reset → real-surface smoke against the once-packed tarballs; `template-gallery` runs the
-Docker-free composition gate.
+new jobs, both gallery gate scripts in the `template-gallery` job, and the pinned `2.109.1` CLI. The pack
+invariants (symlink-reject unread; snapshot deterministic + one-byte sensitive; staging changed nothing;
+dirty tree preserved and passing; the REAL repo byte-unchanged) are pinned by Step 1d; the
+guarded-read invariants are pinned by `scripts/check-template-gallery-guards.sh` (Task 1 step 11). In CI,
+`template-smoke` runs each of the four templates' scaffold → reset → real-surface smoke against the
+once-packed tarballs; `template-gallery` runs the Docker-free composition gate **and** the hostile-tree
+guarded-read gate.
 
 ---
 
@@ -1751,3 +2044,18 @@ Docker-free composition gate.
 8. **The gallery gate runs via `tsx`** (already a root dependency), importing each template's `.ts` schema
    module by `file://` URL so `tsx` resolves the workspace `@movp/*` deps. No new dependency, no
    per-template test wiring under `templates/<name>/`.
+9. **The guards come from 06d's BUILT dist, so `create-movp` must be built before the gallery gate runs.**
+   `scripts/check-template-gallery.ts` imports `copyFileGuarded`, `readFileGuarded`, and `MAX_FILE_BYTES`
+   from `../packages/create-movp/dist/index.js` (relative path — no new root dependency; the same seam
+   `fixtures/verdaccio-gallery/stage-create-movp.mjs` already uses). Every invocation in this plan and in
+   CI is therefore preceded by `pnpm --filter create-movp build`. **06d must re-export `readFileGuarded`
+   from `packages/create-movp/src/index.ts`** alongside `copyTreeGuarded` / `copyFileGuarded` (INTERFACES
+   round-6 F2 requires exactly this); if the built `dist/index.js` does not export it, STOP — do not add a
+   local guard here, fix the export in 06d.
+10. **`--templates-dir` defaults to the repo-root `templates/`.** INTERFACES round-6 F2 writes the default
+    as `packages/create-movp/templates`, but that directory is *never materialized in the worktree*:
+    round-3 F1 requires templates to be staged only into a TEMP publish tree, and 06d states the source of
+    truth is the repo-root `templates/<name>/`. Defaulting to the package path would make every gate
+    invocation in Tasks 1–4 read a non-existent directory. The default is therefore `templates` — which is
+    what round-6 F2 *means* by "the real template tree". The flag's purpose (point the hostile cases at a
+    synthetic `mktemp -d` tree instead) is unchanged.

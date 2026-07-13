@@ -79,11 +79,14 @@ Ship the last runnable piece of the C6 productization seam:
   and reject symlinks BEFORE any `stat`/`read`; bound file size (`MAX_FILE_BYTES`) with `lstat.size`
   BEFORE `readFileSync`; enforce a running total cap (`MAX_TOTAL_BYTES`); never log file CONTENTS
   (path + reason only). These gotchas are commented at their trigger sites in Task 2.
-  **Guards apply on EVERY read path — the walk AND every explicit one-off copy, the tree ROOT AND
-  every recursed subdirectory** (INTERFACES F1). `readdirSync` FOLLOWS a symlink, so a directory —
-  including the initial root — is `lstat`ed BEFORE it is `readdir`ed; and no `copyFileSync` /
-  `readFileSync` may touch a path that has not gone through `copyFileGuarded`. There is exactly one
-  implementation of each guard (`packages/create-movp/src/copier.ts`); no script reimplements them.
+  **Guards apply on EVERY read path — the walk AND every explicit one-off copy AND every explicit
+  one-off read, the tree ROOT AND every recursed subdirectory** (INTERFACES F1 + round-6 F2).
+  `readdirSync` FOLLOWS a symlink, so a directory — including the initial root — is `lstat`ed BEFORE
+  it is `readdir`ed; no explicit `copyFileSync` may touch a path that has not gone through
+  `copyFileGuarded`; and no explicit `readFileSync` of a template source may bypass `readFileGuarded`
+  (06e's gallery validator reads real template files — a guard on the copy path but not the read path
+  is not a guard). There is exactly one implementation of each guard
+  (`packages/create-movp/src/copier.ts`); no script reimplements them.
 - **Standalone install contract.** The scaffold pins `@movp/* @^0.1.0`, sets `packageManager`, Node +
   Supabase versions, and **defaults agent connectivity to the hosted MCP** (`/functions/v1/mcp`)
   because `@movp/mcp-bridge` is **private/unpublished** (`packages/mcp-bridge/package.json` has
@@ -98,9 +101,11 @@ Ship the last runnable piece of the C6 productization seam:
   approval first (global rule: no new dependencies without approval).
 - **Stable error codes (this part):** copier — `target_exists`, `invalid_project_name`,
   `template_symlink_rejected` (a symlinked or non-directory tree ROOT, a symlinked entry inside the
-  tree, or a symlinked explicit-copy source), `template_not_regular_file` (an explicit-copy source
-  that is not a regular file), `template_file_too_large`, `template_total_too_large`, `unknown_token`,
-  `unresolved_token`. Reused from 06a: `platform_artifact_invalid`.
+  tree, or a symlinked explicit-copy/explicit-read source), `template_not_regular_file` (an
+  explicit-copy or explicit-read source that is not a regular file), `template_file_too_large`,
+  `template_total_too_large`, `unknown_token`, `unresolved_token`. Reused from 06a:
+  `platform_artifact_invalid`. **This list is CLOSED** — `readFileGuarded` reuses these codes; invent
+  no new one (the INTERFACES stable-error-code list is fixed).
 
 ---
 
@@ -285,7 +290,10 @@ here; the CLI/orchestration lands in Task 3.
     - **module:** `export async function snapshotTree(root: string, roots?: string[]): Promise<string>`
       (default `roots` = `DEFAULT_ROOTS` = `['packages/create-movp', 'templates']`; pass `['.']` to
       snapshot an arbitrary tree whole). Types ship in `scripts/tree-snapshot.d.mts`.
-    - **CLI:** `node scripts/tree-snapshot.mjs <root> <outFile>` — writes the manifest to `<outFile>`.
+    - **CLI:** `node scripts/tree-snapshot.mjs <root> [outFile]` — writes the manifest to `<outFile>`
+      when one is supplied, otherwise emits it to **stdout**. `<outFile>` is OPTIONAL and BOTH forms
+      emit byte-identical bytes (INTERFACES round-6 F1): 06d's `gate.sh` passes an `<outFile>`; 06e's
+      six call sites pass `<root>` only and redirect stdout. A missing `<root>` is still `exit 2`.
     Deterministic, path-sorted `<kind> <sha256|target|-> <relpath>` manifest. **Bounded:** every file
     is hashed by streaming 64 KiB chunks (`createReadStream` + `createHash`) — never `readFileSync`,
     so a large untracked file cannot OOM the gate that exists to tolerate a dirty worktree.
@@ -312,6 +320,15 @@ here; the CLI/orchestration lands in Task 3.
     file copy in a pack-staging script (`packages/create-movp/package.json`) goes through this
     (INTERFACES F1) — a raw `copyFileSync` on an unguarded path would follow a symlinked
     `package.json` straight out of the repo and pack whatever it points at.
+  - `function readFileGuarded(src: string): Buffer` — a guarded **single-file READ** (INTERFACES
+    round-6 F2): the same guards as `copyFileGuarded` (`lstat` BEFORE any stat/read → reject a symlink
+    with `template_symlink_rejected` and a non-regular file with `template_not_regular_file`;
+    size-bound via `lstat.size` BEFORE buffering → `template_file_too_large`; path + reason in the
+    error, NEVER the bytes) but it returns the Buffer instead of writing it. Callers do
+    `.toString('utf8')`. This is the read-only half of the seam: **06e's
+    `scripts/check-template-gallery.ts` consumes it** for `seed.sql` and every template page, and
+    `copyFileGuarded` for the `movp.deltas.json` copy — a guard on the copy path but not the read path
+    is not a guard. 06d owns the ONE implementation; 06e does not define its own.
   - Exported constants `MAX_FILE_BYTES`, `MAX_TOTAL_BYTES`, `TOKEN_PATTERN`.
 
 ### Steps
@@ -407,6 +424,7 @@ large untracked one.
 **5a. `packages/create-movp/test/tree-snapshot.test.ts`** — the failing test:
 
 ```ts
+import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -488,6 +506,32 @@ describe('snapshotTree (the ONE shared bounded snapshot — INTERFACES F2)', () 
     const manifest = await snapshotTree(templates, ['.'])
     expect(manifest).toContain('file ')
     expect(manifest).toContain('README.md')
+  })
+
+  // INTERFACES round-6 F1: the CLI contract is `<root> [outFile]` and BOTH forms have real consumers
+  // — 06d's gate.sh writes a file, 06e's six call sites redirect stdout. The two forms are diffed
+  // against each other by those gates, so a one-byte divergence (e.g. a `console.log` trailing
+  // newline on the stdout path) would break them. Pin byte-identity.
+  it('CLI: the stdout form and the <outFile> form emit BYTE-IDENTICAL manifests', () => {
+    writeFileSync(join(templates, 'README.md'), '# crm-lite\n')
+    // The out file sits at the synthetic root — OUTSIDE the snapshotted roots (`packages/create-movp`,
+    // `templates`) — so writing it cannot change what the second run hashes.
+    const outFile = join(root, 'manifest.txt')
+
+    const piped = spawnSync(process.execPath, [snapshotScript, root], { encoding: 'buffer' })
+    expect(piped.status).toBe(0)
+    const written = spawnSync(process.execPath, [snapshotScript, root, outFile], { encoding: 'buffer' })
+    expect(written.status).toBe(0)
+
+    expect(readFileSync(outFile)).toEqual(piped.stdout) // byte-for-byte, not merely "equivalent"
+    expect(written.stdout.length).toBe(0) // the file form prints nothing to stdout
+    expect(piped.stdout.toString('utf8')).toContain(join('templates', 'crm-lite', 'README.md'))
+  })
+
+  it('CLI: a missing <root> still exits 2', () => {
+    const res = spawnSync(process.execPath, [snapshotScript], { encoding: 'utf8' })
+    expect(res.status).toBe(2)
+    expect(res.stderr).toContain('usage: tree-snapshot.mjs <root> [outFile]')
   })
 })
 ```
@@ -581,13 +625,21 @@ export async function snapshotTree(root, roots = DEFAULT_ROOTS) {
   return `${lines.join('\n')}\n`
 }
 
+// CLI: `<root> [outFile]` (INTERFACES round-6 F1). `outFile` is OPTIONAL — 06d's `gate.sh` passes one
+// (`... "$REPO_ROOT" "$WORK/snapshot-before.txt"`); 06e's six call sites pass `<root>` only and
+// redirect stdout. Both forms have real consumers and BOTH must emit byte-identical bytes.
+// GOTCHA: use `process.stdout.write`, NEVER `console.log` — console.log appends a trailing newline
+// that the file form does not write, so the two forms would differ by one byte and the diff-based
+// gates that compare a piped manifest against a written one would fail spuriously.
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   const [root, outFile] = process.argv.slice(2)
-  if (!root || !outFile) {
-    console.error('usage: tree-snapshot.mjs <root> <outFile>')
+  if (!root) {
+    console.error('usage: tree-snapshot.mjs <root> [outFile]')
     process.exit(2)
   }
-  await writeFile(outFile, await snapshotTree(root))
+  const manifest = await snapshotTree(root)
+  if (outFile) await writeFile(outFile, manifest)
+  else process.stdout.write(manifest)
 }
 ```
 
@@ -604,7 +656,7 @@ export declare const DEFAULT_ROOTS: string[]
 export declare function snapshotTree(root: string, roots?: string[]): Promise<string>
 ```
 
-Re-run — **Expected: PASS** (7 tests):
+Re-run — **Expected: PASS** (9 tests):
 
 ```
 pnpm --filter create-movp exec vitest run tree-snapshot
@@ -621,7 +673,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { snapshotTree } from '../../../scripts/tree-snapshot.mjs'
-import { copyFileGuarded, copyTemplate, copyTreeGuarded, resolveTargetDir } from '../src/copier.ts'
+import {
+  copyFileGuarded, copyTemplate, copyTreeGuarded, readFileGuarded, resolveTargetDir,
+} from '../src/copier.ts'
 
 let work: string
 let templateDir: string
@@ -834,6 +888,42 @@ describe('copyFileGuarded (explicit single-file copy — INTERFACES F1(b))', () 
   it('rejects a non-regular-file source (a directory)', () => {
     expect(() => copyFileGuarded(templateDir, join(work, 'staged', 'nope')))
       .toThrow(/template_not_regular_file/)
+  })
+})
+
+// INTERFACES round-6 F2: the READ path needs the same guards as the COPY path. 06e's gallery
+// validator reads REAL template sources (`seed.sql`, pages) — a raw `readFileSync` there would
+// follow a symlinked `seed.sql` straight to ~/.ssh/id_rsa and print/validate its bytes.
+describe('readFileGuarded (explicit single-file read — INTERFACES round-6 F2)', () => {
+  it('returns the exact bytes of a regular file', () => {
+    const bytes = Buffer.from('insert into company (name) values (\'Acme Corp\');\n')
+    writeFileSync(join(templateDir, 'seed.sql'), bytes)
+    const out = readFileGuarded(join(templateDir, 'seed.sql'))
+    expect(out).toEqual(bytes)
+    expect(out.toString('utf8')).toContain('Acme Corp')
+  })
+
+  it('rejects a symlinked source WITHOUT reading its target', () => {
+    writeFileSync(join(work, 'secret'), 'ssh-key\n')
+    const src = join(templateDir, 'seed.sql')
+    symlinkSync(join(work, 'secret'), src) // a symlinked seed.sql in the template tree
+    let msg = ''
+    expect(() => {
+      try { readFileGuarded(src) } catch (e) { msg = String(e); throw e }
+    }).toThrow(/template_symlink_rejected/)
+    // The throw fired on the lstat RESULT — the target was never opened, and the error carries the
+    // path + reason only, never the target's bytes.
+    expect(msg).toContain('seed.sql')
+    expect(msg).not.toContain('ssh-key')
+  })
+
+  it('rejects a non-regular-file source (a directory)', () => {
+    expect(() => readFileGuarded(templateDir)).toThrow(/template_not_regular_file/)
+  })
+
+  it('rejects an oversized source before buffering it', () => {
+    writeFileSync(join(templateDir, 'big.sql'), 'x'.repeat(6 * 1024 * 1024))
+    expect(() => readFileGuarded(join(templateDir, 'big.sql'))).toThrow(/template_file_too_large/)
   })
 })
 ```
@@ -1059,17 +1149,38 @@ export function copyFileGuarded(src: string, dest: string): { bytesCopied: numbe
   writeFileSync(dest, buf) // byte-for-byte; NO substitution
   return { bytesCopied: buf.length }
 }
+
+// Guarded EXPLICIT single-file READ — the read-only half of `copyFileGuarded` (INTERFACES round-6 F2).
+// Copying is not the only read path: 06e's `scripts/check-template-gallery.ts` READS real template
+// sources (`seed.sql`, every Astro page) to validate them. A raw `readFileSync` there FOLLOWS a
+// symlink — a symlinked `seed.sql -> ~/.ssh/id_rsa` would be read (and its bytes surfaced in a
+// validation error) by the very tool that is supposed to police the templates. A guard on the copy
+// path but not the read path is not a guard. Every explicit one-off read of a template source goes
+// through THIS function; callers do `.toString('utf8')`.
+export function readFileGuarded(src: string): Buffer {
+  // lstat BEFORE any stat/read — the throw fires on the lstat RESULT, so the target of a symlinked
+  // `src` is NEVER opened. `lstatSync` throws ENOENT if `src` is absent (loud, not silent).
+  const info = lstatSync(src)
+  if (info.isSymbolicLink()) throw new CopierError('template_symlink_rejected', src)
+  if (!info.isFile()) throw new CopierError('template_not_regular_file', src)
+  // Bound BEFORE buffering: an oversized file is rejected without being read into memory.
+  if (info.size > MAX_FILE_BYTES) throw new CopierError('template_file_too_large', src)
+
+  return readFileSync(src) // path + reason in every error above — never these bytes
+}
 ```
 
 **8. `packages/create-movp/src/index.ts`:**
 
 ```ts
-// The pack-staging scripts (Task 5, and 06e's CI matrix) import `copyTreeGuarded` + `copyFileGuarded`
-// from the BUILT dist — this is the public seam, so both MUST be re-exported here.
+// The pack-staging scripts (Task 5, and 06e's CI matrix + gallery validator) import `copyTreeGuarded`,
+// `copyFileGuarded` and `readFileGuarded` from the BUILT dist — this is the public seam, so all three
+// MUST be re-exported here (INTERFACES F1 + round-6 F2).
 export {
   copyFileGuarded,
   copyTemplate,
   copyTreeGuarded,
+  readFileGuarded,
   resolveTargetDir,
   MAX_FILE_BYTES,
   MAX_TOTAL_BYTES,
@@ -1078,8 +1189,9 @@ export {
 } from './copier.ts'
 ```
 
-Re-run — **Expected: PASS** (7 `snapshotTree` + 4 `resolveTargetDir` + 9 `copyTemplate` +
-5 `copyTreeGuarded` + 4 `copyFileGuarded` = 29 tests across the described cases). Then typecheck:
+Re-run — **Expected: PASS** (9 `snapshotTree` + 4 `resolveTargetDir` + 9 `copyTemplate` +
+5 `copyTreeGuarded` + 4 `copyFileGuarded` + 4 `readFileGuarded` = 35 tests across the described
+cases). Then typecheck:
 
 ```
 pnpm --filter create-movp exec vitest run
@@ -1096,16 +1208,19 @@ pnpm --filter create-movp exec vitest run \
   && test -z "$(grep -rlE '\breadFileSync\(' scripts/tree-snapshot.mjs)"
 ```
 
-**Expected:** suite green (29 tests); every unsafe input (`..`, bad charset, existing target,
+**Expected:** suite green (35 tests); every unsafe input (`..`, bad charset, existing target,
 symlink, **symlinked tree ROOT**, oversized file, total-cap, unknown token, unresolved token) throws
 its stable code; a binary file is copied byte-identically; `copyTreeGuarded` rejects an external
 symlink (entry OR root) without reading its target, copies verbatim (no substitution/rename), bounds
 size, and leaves the SOURCE tree byte-unchanged (shared `snapshotTree` over a synthetic tree);
 `copyFileGuarded` refuses a symlinked / non-regular / oversized source and copies a regular file
-byte-for-byte; `snapshotTree` hashes a multi-chunk file correctly, detects a one-byte change, records
-a symlink without following it, and contains **no `readFileSync`** (the grep must return empty — it
-is the bounded-memory pin); typecheck clean. **No test in this task reads or writes anything under
-the real repo** (INTERFACES F1): every fixture tree is a `mkdtemp` under `$TMPDIR`.
+byte-for-byte; `readFileGuarded` refuses the same three and returns the exact bytes of a regular file
+(round-6 F2 — the read path is guarded, not just the copy path); `snapshotTree` hashes a multi-chunk
+file correctly, detects a one-byte change, records a symlink without following it, emits
+**byte-identical** manifests from its `<root>` (stdout) and `<root> <outFile>` forms while still
+`exit 2`-ing on a missing `<root>` (round-6 F1), and contains **no `readFileSync`** (the grep must
+return empty — it is the bounded-memory pin); typecheck clean. **No test in this task reads or writes
+anything under the real repo** (INTERFACES F1): every fixture tree is a `mkdtemp` under `$TMPDIR`.
 
 > The matching **no-unguarded-copy grep gate** runs in Task 5, once both consumers of these
 > primitives exist (`src/scaffold.ts` from Task 3 and `stage-create-movp.mjs` from Task 5).
@@ -1825,8 +1940,10 @@ no workspace links, and drive the real edge surfaces + CLI + `verify-schema-runt
   The `stage` step (guarded staging into a TEMP tree, INTERFACES F1) is the shared,
   source-worktree-safe pack mechanism 06e reuses, and **`scripts/tree-snapshot.mjs`** (Task 2,
   INTERFACES F2) is the shared staging-safety assertion: **"staging changed nothing", never "the tree
-  is pristine"**. 06e reuses BOTH — `node scripts/tree-snapshot.mjs <root> <outFile>` from a shell
-  gate, or `import { snapshotTree } from '<repo>/scripts/tree-snapshot.mjs'` from JS/TS — and must not
+  is pristine"**. 06e reuses BOTH — the CLI `node scripts/tree-snapshot.mjs <root> [outFile]` from a
+  shell gate (with `<outFile>`, as this gate does, **or** with `<root>` alone and a stdout redirect,
+  as 06e's call sites do — both forms emit byte-identical bytes, round-6 F1), or
+  `import { snapshotTree } from '<repo>/scripts/tree-snapshot.mjs'` from JS/TS — and must not
   write a second snapshot script, nor reimplement a `git status --porcelain` / `test ! -e templates`
   check: those fail (and tempt an executor to DELETE the work of) a developer who merely has
   unrelated WIP.
@@ -1912,8 +2029,10 @@ console.log(`staged create-movp → ${stagingDir}`)
 **1c. The staging-safety snapshot is `scripts/tree-snapshot.mjs` — built in Task 2, CONSUMED here.**
 Do not create a second one under `fixtures/` (INTERFACES F2: ONE implementation, `lstat`-based,
 chunk-streamed, path-sorted, symlinks recorded-not-followed, `node_modules` skipped, content never
-printed). `gate.sh` uses its CLI (`node scripts/tree-snapshot.mjs <root> <outFile>`); the test below
-uses its module export (`snapshotTree(root, roots?)`). 06e consumes this same file.
+printed). `gate.sh` uses its CLI in the two-arg form (`node scripts/tree-snapshot.mjs <root>
+<outFile>`) — valid under the `<root> [outFile]` contract, where omitting `<outFile>` emits the same
+bytes to stdout instead (round-6 F1); the test below uses its module export
+(`snapshotTree(root, roots?)`). 06e consumes this same file.
 
 The invariant it encodes is **"staging changed nothing"**, NOT "the worktree is pristine": a developer
 routinely runs this gate with unrelated WIP edits and pre-existing untracked files, and a

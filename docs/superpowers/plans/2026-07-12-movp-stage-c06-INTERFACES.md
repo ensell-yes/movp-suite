@@ -217,6 +217,45 @@ Both are APPROVED — the executor does NOT stop on them:
   (never buffers a whole file), path-sorted manifest, records symlinks WITHOUT following, skips
   `node_modules`, never prints content. 06e imports it; delete the duplicate.
 
+## Plan review round 6 — locked resolutions (2026-07-13)
+
+- **F1 (HIGH) `tree-snapshot.mjs` CLI contract is `<root> [outFile]` (06d owns; 06e consumes).**
+  Round-5 collapsed the two snapshot scripts into one but reconciled only the MODULE export
+  (`snapshotTree(root, roots?)`), not the CLI. 06d's CLI hard-requires `<root> <outFile>` and
+  `process.exit(2)`s without both; all six 06e call sites pass `<root>` only and redirect stdout —
+  so every gallery pack/gate/example fails before staging. Both forms have real consumers, so the
+  contract is:
+
+  > `node scripts/tree-snapshot.mjs <root> [outFile]` — writes the manifest to `<outFile>` when
+  > supplied, otherwise emits it to **stdout**. Missing `<root>` is still `exit 2`.
+
+  Both forms MUST produce byte-identical output. 06d owns the implementation and pins it with a test
+  running both forms and `diff`ing them. Lesson (4th drift): consolidating a shared helper reconciles
+  the module export AND the CLI — they are two contracts, not one.
+- **F2 (MEDIUM) the gallery validator reads template sources through the guards (06d owns the
+  primitive; 06e consumes).** `scripts/check-template-gallery.ts` reads the REAL template tree with
+  raw `cpSync` (`movp.deltas.json`) and `readFileSync` (`seed.sql`, pages), and dynamically imports
+  the schema module — all bypassing the lstat/size guards the staging harness enforces. A guard on one
+  read path and not another is not a guard. Fix:
+  - **06d adds `readFileGuarded(src: string): Buffer`** to `packages/create-movp/src/copier.ts`
+    (lstat BEFORE any stat/read → reject symlink + non-regular-file, size-bound via `lstat.size`
+    BEFORE buffering; path + reason in the error, NEVER the bytes) and re-exports it from
+    `src/index.ts` alongside `copyTreeGuarded` / `copyFileGuarded`. One implementation, one owner.
+  - **06e consumes it**: `copyFileGuarded` for the registry copy, `readFileGuarded` for `seed.sql`
+    and every page, and an `lstat`-reject on the schema module BEFORE the dynamic `import()`. Reads
+    of files the validator itself just wrote into its `mkdtemp` scratch stay unguarded (it authored
+    them; they are not untrusted input).
+  - **Gate is behavioural, not a grep.** `check-template-gallery.ts` takes `--templates-dir <dir>`
+    (default **`templates`**, the repo root — NOT `packages/create-movp/templates`, which round-3 F1
+    forbids materializing in the worktree: it exists only inside the temp staging tree at pack time)
+    so the symlink/oversize cases run against a **synthetic `mktemp -d` tree** — per round-5 F1, NO
+    writes under the real repo. Assert: a symlinked `seed.sql` / page / schema module is rejected
+    without the target being read, and an oversized file is rejected.
+  - A grep for `cpSync`/`copyFileSync` in the validator is a **tripwire on the import seam, not the
+    proof** — the proof is the behavioural case above. Never grep for the ABSENCE of `readFileSync`:
+    the validator legitimately reads back the baseline it just generated into its own `mkdtemp`
+    scratch, and that read is guard-exempt by design (it authored those bytes).
+
 ## Stable error codes (all parts)
 
 `schema_runtime_mismatch` · `new_generated_delta_required` · `platform_artifact_invalid` ·
