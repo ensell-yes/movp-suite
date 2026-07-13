@@ -268,10 +268,10 @@ resolve), and prove no in-repo consumer pins the literal `0.0.0`.
     still passes (reproduced). **06e pins the CLI with `steps`:**
     `steps: [['uses: supabase/setup-cli@v2', 'with: { version: 2.109.1 }']]` (round-11 F1).
 
-    A step block begins at a `- ` list item at the job's step indent; every subsequent non-list-item line
-    belongs to that step until the next list item (or a key at same-or-shallower indent). Comment-only
-    lines normalize to `''` and are DROPPED, so a comment sitting between `- uses:` and `with:` is
-    harmless.
+    Step extraction first anchors on the job-level `steps:` key, then treats each direct `- ` child as a
+    step block; every deeper line belongs to that step until the next direct list item. A block-style
+    matrix or `needs` list before `steps:` is therefore outside every step. Comment-only lines normalize
+    to `''` and are DROPPED, so a comment sitting between `- uses:` and `with:` is harmless.
 
     **Deliberately step-scoped, NOT strict adjacency / a `sequences` field — do NOT "upgrade" it later.**
     Both were verified against the real YAML: adjacency catches the decoy case BUT goes falsely RED the
@@ -1131,6 +1131,28 @@ describe('checkCiWiring — `steps` proves the pin is OWNED by the setup-cli ste
     )
     assert.deepEqual(checkCiWiring(fixture('steps-id-name', yaml), STEP_TABLE), [])
   })
+
+  // A block-style matrix is an ordinary equivalent spelling of the flow-style matrix 06e currently
+  // ships. It creates list items before `steps:` at a different indent; step extraction must anchor on
+  // the `steps:` key rather than treating the first list item in the whole job as a step.
+  it('PASSES when a block-style matrix list appears before `steps:`', () => {
+    const yaml = withSmoke(
+      `      - uses: supabase/setup-cli@v2
+        with: { version: 2.109.1 }
+      - run: supabase --version | grep -qF '2.109.1'
+`,
+    ).replace(
+      '    runs-on: ubuntu-latest\n    steps:',
+      `    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        template:
+          - crm-lite
+          - support-desk
+    steps:`,
+    )
+    assert.deepEqual(checkCiWiring(fixture('steps-block-matrix', yaml), STEP_TABLE), [])
+  })
 })
 
 // ==============================================================================================
@@ -1435,11 +1457,10 @@ function unquote(value) {
  * Split a job's RAW block lines into STEP CHUNKS of normalized lines — the unit the `steps` OWNERSHIP
  * requirement is matched against (round-11 F1).
  *
- * A step begins at a `- ` list item at the job's STEP INDENT (the indent of the block's FIRST list item —
- * in a GitHub workflow, the `steps:` sequence). Every following line that is not itself a list item
- * belongs to that step, until a key at same-or-shallower indent closes the sequence. Lines BEFORE the
- * first list item (`runs-on:`, `needs:`, `strategy:`/`matrix:` and its entries) belong to NO step — which
- * is exactly why 06e's 4-way matrix line stays a `lines` requirement and not a `steps` one.
+ * First locate the job-level `steps:` key, then bound its child block. A step begins at a direct `- `
+ * list item inside that block; every deeper line belongs to that step until the next direct list item.
+ * Anchoring on `steps:` matters: a block-style `strategy.matrix` or `needs` list may be the first list
+ * item in the job, but it is not a step and must not determine the step indent.
  *
  * Comment-only lines are already dropped by the caller, so a comment sitting between `- uses:` and
  * `with:` cannot split a step.
@@ -1449,7 +1470,20 @@ function unquote(value) {
  * @returns {string[][]} one array of normalized lines per step
  */
 function stepChunks(rawJobLines) {
-  const firstItem = rawJobLines.find((line) => /^\s*- /.test(line))
+  if (rawJobLines.length === 0) return []
+  const jobPropertyIndent = Math.min(...rawJobLines.map(indentOf))
+  const stepsIndex = rawJobLines.findIndex(
+    (line) => indentOf(line) === jobPropertyIndent && stripComment(line).trim() === 'steps:',
+  )
+  if (stepsIndex === -1) return []
+
+  const stepsIndent = indentOf(rawJobLines[stepsIndex])
+  const stepLines = []
+  for (let i = stepsIndex + 1; i < rawJobLines.length; i += 1) {
+    if (indentOf(rawJobLines[i]) <= stepsIndent) break
+    stepLines.push(rawJobLines[i])
+  }
+  const firstItem = stepLines.find((line) => /^\s*- /.test(line))
   if (firstItem === undefined) return []
   const stepIndent = indentOf(firstItem)
 
@@ -1457,7 +1491,7 @@ function stepChunks(rawJobLines) {
   const chunks = []
   /** @type {string[] | null} */
   let current = null
-  for (const raw of rawJobLines) {
+  for (const raw of stepLines) {
     const indent = indentOf(raw)
     if (indent === stepIndent && /^\s*- /.test(raw)) {
       current = []
@@ -1700,8 +1734,8 @@ node --test scripts/test/guarded-read.test.mjs scripts/test/check-publishable-ve
 > false-greened on a commented-out job. `node scripts/check-ci-wiring.mjs` reads through `readTextGuarded`
 > and checks the STRUCTURE. Do not inline it back.
 
-**Expected:** `node --test` prints `pass 42 / fail 0` — 14 guarded-read (6 `readTextGuarded` + 8
-`readJsonGuarded`) + 9 version-gate + 19 ci-wiring. The version gate's three git branches are each
+**Expected:** `node --test` prints `pass 43 / fail 0` — 14 guarded-read (6 `readTextGuarded` + 8
+`readJsonGuarded`) + 9 version-gate + 20 ci-wiring. The version gate's three git branches are each
 pinned (status 0 with a match FAILS, status 1 PASSES, status 2 / spawn-error THROWS rather than
 reporting "no pins"); the ci-wiring checker's four hostile workflows each FAIL (comments-only,
 right-commands-wrong-job, one-command-missing, duplicate-job-name) and the intended job PASSES; `lines`
@@ -1711,10 +1745,11 @@ required line in a COMMENT or in a NEIGHBOURING job also FAILS); `steps` is prov
 not existence (a DECOY step owning `with: { version: 2.109.1 }` while setup-cli runs on `latest` FAILS
 with `ci_wiring_step_missing` — and the round-10 `lines`-only form is shown to PASS that same fixture,
 which is the regression proof; adding `id:`/`name:` to the setup-cli step still PASSES, which is why
-adjacency was rejected — round-11 F1); and — the acceptance test —
+adjacency was rejected; a block-style matrix list before `steps:` also PASSES, proving step extraction
+is anchored to the `steps:` block rather than the job's first list item — round-11 F1); and — the acceptance test —
 **06e's real four-job workflow, pasted verbatim, PASSES with ZERO problems**, while deleting its
 multi-key `- env:`/`run:` gate step turns it RED. On a root/win32 runner the two EACCES cases self-skip →
-`pass 40 / skip 2`, still `fail 0`.
+`pass 41 / skip 2`, still `fail 0`.
 
 > **Why the verbatim-06e test is the load-bearing one (round-10 F1).** The round-9 checker passed five
 > hand-made fixtures and would still have REJECTED the real workflow — its parser matched only the
