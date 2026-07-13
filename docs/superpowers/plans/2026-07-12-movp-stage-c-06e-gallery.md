@@ -1995,9 +1995,15 @@ requires its `runs:` / `lines:` entries **inside that job's own block**, matched
 >
 > `lines` fixes the MECHANISM: an EXACT match against a normalized line inside the job block (trailing
 > comments stripped quote-aware, whitespace collapsed). A comment cannot satisfy it, a `grep` argument
-> cannot satisfy it, another job cannot satisfy it. **Residual limit, stated not papered over:** `lines`
-> proves the `uses:` and the pinned `with:` both exist in this job, not that they are *adjacent* —
-> adjacency needs a real YAML parser, which the checker's scope limit forbids.
+> cannot satisfy it, another job cannot satisfy it.
+>
+> `steps` then fixes OWNERSHIP (round-11 F1). `lines` alone proved the `uses:` and the pinned `with:`
+> each exist *somewhere* in the job — not that the `with:` belongs to the setup-cli action. Supabase
+> could sit on `latest` while a decoy action owned `with: { version: 2.109.1 }`, and the gate passed.
+> `steps: [[...]]` requires every listed line to appear **within one step block**, which is the actual
+> invariant. It is deliberately step-scoped rather than strictly adjacent: adjacency also catches the
+> decoy, but goes **falsely red** the moment someone adds `id:` or `name:` to the step — and a gate that
+> cries wolf gets turned off, after which it protects nothing. Still a line scan; still no YAML parser.
 
 Append these three entries to `REQUIRED_JOBS` in `scripts/check-ci-wiring.mjs` (this file is the ONE
 shared CI-wiring checker — nothing else in it changes). Note `template-smoke`'s gate step is a
@@ -2021,13 +2027,13 @@ the checker accepts both (round-10 F1):
       // The multi-key `- env:` / `run:` step — an indented `run:` property, NOT a `- run:` list item.
       'bash fixtures/verdaccio-gallery/gate.sh ${{ matrix.template }}',
     ],
-    // EXACT normalized lines — this is the job that actually owns the CLI pin AND the 4-way matrix.
+    // The 4-way matrix sits under `strategy:`, NOT inside a step — so it stays a `lines` requirement.
     // (Round 9 wrongly put the matrix on `template-gallery`; it lives here.)
-    lines: [
-      'uses: supabase/setup-cli@v2',
-      'with: { version: 2.109.1 }',
-      'template: [crm-lite, marketing-site, support-desk, knowledge-base]',
-    ],
+    lines: ['template: [crm-lite, marketing-site, support-desk, knowledge-base]'],
+    // OWNERSHIP (round-11 F1): the pin must live in the SAME STEP as the setup-cli action. As a bare
+    // `lines` pair these only proved both strings exist SOMEWHERE in the job — so setup-cli could sit
+    // on `latest` while a decoy action owned the pinned line, and the gate would pass.
+    steps: [['uses: supabase/setup-cli@v2', 'with: { version: 2.109.1 }']],
   },
 ```
 

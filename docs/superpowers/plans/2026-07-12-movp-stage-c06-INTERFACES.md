@@ -392,6 +392,31 @@ Both findings are defects in the round-9 fix itself. The CI-wiring checker was w
   limit forbids. That gap is acceptable and must be stated, not silently papered over.
   This stays inside the scope limit: an indentation-scoped, exact-line match is not a YAML parser.
 
+## Plan review round 11 — locked resolutions (2026-07-13)
+
+- **F1 (LOW, reliability) `lines` proves existence, not OWNERSHIP — add step-scoped matching (06d + 06e).**
+  Round-10's `lines` is an unordered set match over the job block, so it proves
+  `uses: supabase/setup-cli@v2` and `with: { version: 2.109.1 }` each occur *somewhere* in
+  `template-smoke` — not that the `with:` belongs to that action. Supabase could be on `latest` while a
+  different action owns the pinned line, and the gate passes. This was the stated residual limit; it is
+  now closed.
+  Fix: add **`steps?: string[][]`** to `JobRequirement`. Each inner array is a set of normalized lines
+  that must ALL appear **within a single step block** of that job (a step begins at a `- ` list item at
+  step indent; comment-only lines normalize to `''` and are dropped).
+  ```js
+  'template-smoke': {
+    steps: [['uses: supabase/setup-cli@v2', 'with: { version: 2.109.1 }']],  // the pin is OWNED by setup-cli
+  }
+  ```
+  **Deliberately step-scoped, NOT the reviewer's suggested strict `sequences`/adjacency.** Verified
+  against the real YAML: adjacency catches the hostile case but goes **falsely RED** the moment anyone
+  adds `id:` or `name:` to that step — and a gate that cries wolf gets disabled, after which it protects
+  nothing. Step-scoping expresses the actual invariant ("the `with:` belongs to this step") directly,
+  tolerates any step property, and is still a line scan — the no-YAML-parser scope limit holds.
+  The 4-way matrix line stays in `lines` (it sits under `strategy:`, not inside a step).
+  Tests: real YAML → PASS; the same step with `id:`/`name:` added → PASS; setup-cli on `latest` with a
+  decoy action owning `with: { version: 2.109.1 }` → **FAIL**.
+
 ## Stable error codes (all parts)
 
 `schema_runtime_mismatch` · `new_generated_delta_required` · `platform_artifact_invalid` ·
