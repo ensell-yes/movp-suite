@@ -256,6 +256,37 @@ Both are APPROVED — the executor does NOT stop on them:
     the validator legitimately reads back the baseline it just generated into its own `mkdtemp`
     scratch, and that read is guard-exempt by design (it authored those bytes).
 
+## Plan review round 7 — locked resolutions (2026-07-13)
+
+- **F1 (MEDIUM, reliability) the version gate must distinguish "no matches" from "git failed" (06d).**
+  `pinnedZeroConsumers()` wraps `execFileSync('git', ['grep', …])` in a bare `catch { return [] }`.
+  `git grep` exits **1** for no-match (benign) but **2** for an operational failure (not a repo, git
+  absent, unreadable object, bad pathspec) — the catch-all swallows both, so a broken gate reports
+  "no 0.0.0 pins" and passes. Fix: `spawnSync`, then discriminate on `status` — `0` → parse matches,
+  `1` → no matches, **anything else (or `error`) → throw**, loud. Per [[eight-dimension-review]]
+  Reliability: fail hard and loud, never a silent swallow.
+  **Also DELETE the throwaway `.catch?.(() => []) ?? []` sketch entirely.** It is not merely fragile:
+  `.trim().split('\n').filter(Boolean)` yields an Array, which has no `.catch`, so the expression
+  collapses to `[]` and discards *real* hits. A plan's code fences are near-authoritative — an
+  executor pastes them. A sample whose own prose says "delete this" must not be in a fence.
+- **F2 (MEDIUM, safety) package manifests are read through a guard (06d owns `readJsonGuarded`).**
+  The version gate `JSON.parse(readFileSync(pkgPath))`s twelve worktree `package.json` files with no
+  `lstat`, no size bound, and no structural validation. A symlinked manifest is followed outside the
+  repo — and Node's `JSON.parse` error message **embeds a snippet of the input**, so a symlink to
+  `~/.aws/credentials` leaks secret bytes into CI logs via the failure path. Fix: **06d creates
+  `scripts/lib/guarded-read.mjs`** exporting `readJsonGuarded(path)` — `lstat` first (reject symlink
+  / non-regular), size-bound BEFORE buffering, `JSON.parse` inside a try/catch that throws
+  **path + reason ONLY, never the parse error's content-bearing message**, then structurally validate
+  (`name`, `version` are strings) before any field is dereferenced. Quarantine-or-throw, never
+  dereference an unvalidated shape. Per [[untrusted-io-and-resource-bounds]].
+  **This is deliberately NOT the same implementation as `create-movp`'s `readFileGuarded`, and the two
+  must not be "consolidated".** `create-movp` is a *published npm package* and cannot import repo-root
+  `scripts/`; repo-root gates cannot depend on `create-movp`'s build output (the version gate must run
+  before anything is built). Two consumers, two module boundaries — one guard each, same semantics.
+- **F3 (NIT) 06e Assumption 10 is stale.** It explains a deviation from an INTERFACES default that
+  round-6 already corrected. INTERFACES now says `templates` (repo root); 06e must simply state it
+  follows the locked default, not argue against it.
+
 ## Stable error codes (all parts)
 
 `schema_runtime_mismatch` · `new_generated_delta_required` · `platform_artifact_invalid` ·
