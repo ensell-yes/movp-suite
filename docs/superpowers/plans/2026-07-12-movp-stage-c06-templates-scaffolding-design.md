@@ -56,26 +56,34 @@ monorepo becomes their first consumer (dogfooding) and must stay 100% green thro
 ### C6a — Platform release artifact + schema composition
 
 - **One immutable platform release.** Ship the *entire ordered frozen migration stream* at the
-  release point (hand + generated, interleaved) as one artifact — a `@movp/platform` package
-  carrying the ordered `.sql` files, OR a tested squashed platform snapshot — pinned by a
-  `platformVersion` + content digest. The scaffold materializes this ahead of any project migration.
+  release point (hand + generated, interleaved) as a **`@movp/platform` package** carrying the
+  ordered `.sql` files plus an **ordered manifest with per-file digests** (chosen over a squashed
+  snapshot: preserves migration history, matches the Verdaccio publish flow, and enables later
+  *additive* platform releases), pinned by a `platformVersion` + content digest. The scaffold
+  materializes this ahead of any project migration.
 - **Schema composition API.** A project schema is `platformSchema + projectExtensions`, not a fresh
   aggregate. The **platform layer owns** platform collections' metadata, events, and migrations;
   the **project layer owns only its extension collections**. Project codegen emits DDL/metadata for
-  **extensions only**, never re-emitting or deleting platform objects. (Current `defineSchema`
-  produces a single aggregate, `schema.ts:50`, and codegen emits every supplied collection,
-  `generate.ts:139` — this part adds the platform/extension split.)
-- Gates: (1) a fresh install-only scaffold `db reset` green with **no source-repo paths**; (2) a
-  negative test rejects reordered / missing / digest-mismatched platform artifacts; (3) a CRM-lite
-  extension emits only contact/company/deal DDL while platform tables + metadata stay intact.
+  **extensions only**, never re-emitting or deleting platform objects. To make ownership
+  enforceable, `movp_collections`/`movp_fields` gain a **`layer` marker** (`platform` | `project`)
+  so codegen can distinguish the two tiers at the row level (consumed by C6c's stale-row rule).
+  (Current `defineSchema` produces a single aggregate, `schema.ts:50`, and codegen emits every
+  supplied collection, `generate.ts:139` — this part adds the platform/extension split + marker.)
+- Gates: (1) a **committed minimal consumer fixture** (installs `@movp/platform` + a tiny
+  extension, no scaffolder) runs `db reset` green with **no source-repo paths**; (2) a negative
+  test rejects reordered / missing / digest-mismatched platform artifacts; (3) the fixture's
+  extension emits only its own DDL while platform tables + metadata stay intact. (C6d later proves
+  `create-movp` produces the same fixture shape — C6a must not depend on the scaffolder.)
 
 ### C6b — Single cross-runtime schema loader + schema-derived domain surfaces
 
 - **One schema authority.** A single Node-AND-Deno-loadable ESM schema module is the sole source.
   `movp.config.mjs` (Node tooling) **re-exports** it; Deno edge functions import the **same** module.
-  A `schema_runtime_mismatch` guard compares the manifest fingerprint (C6c) across runtimes and
-  fails **before startup** if Node and Deno see different schemas — no split-brain where codegen
-  migrates one DB while GraphQL/MCP exposes another.
+- **Canonical fingerprint = pure utility, defined here** (not in C6c). A shared pure function hashes
+  the canonical schema projection; the `schema_runtime_mismatch` guard hashes the Node- and
+  Deno-loaded schemas **directly** and fails **before startup** if they differ — with no dependency
+  on the C6c manifest (C6c later *serializes* this same fingerprint). This prevents the split-brain
+  where codegen migrates one DB while GraphQL/MCP exposes another.
 - **Injection:** `generate({schema})`, `createDomain(ctx,{schema})`, and the CLI accept the loaded
   schema (drop the static imports); MCP/GraphQL builders unchanged. Deno `deno.json` resolves
   `@movp/*` via `npm:@movp/<pkg>@^0.1.0` (the map already uses `npm:` for third-party deps).
@@ -94,11 +102,15 @@ monorepo becomes their first consumer (dogfooding) and must stay 100% green thro
   compare-before-write / fail-on-drift; codegen **never deletes** generated migrations in a normal
   run. Ship a project-local forward-only guard in every scaffold.
 - **Versioned manifest** `movp.schema.json`: `{manifestVersion, generatorVersion, schemaFingerprint,
-  collections:[{name, internal, fields:[{name,type,cardinality,reporting_role,searchable,
-  embeddable}]}]}`, deterministic; fingerprint = stable hash over the canonical projection.
-- **Consistency contract.** The projection matches `movp_fields` columns exactly (`emit-sql.ts:11`).
-  Because codegen upserts metadata without deleting stale rows (`emit-sql.ts:9`), the emitter MUST
-  additionally **delete** `movp_fields`/`movp_collections` rows absent from the current schema.
+  collections:[{name, internal, layer, fields:[{name,type,cardinality,reporting_role,searchable,
+  embeddable}]}]}`, deterministic. `schemaFingerprint` is the **C6b canonical-projection hash**,
+  serialized here (not defined here) so runtime and manifest agree by construction.
+- **Consistency contract (ownership-scoped).** The projection matches `movp_fields` columns exactly
+  (`emit-sql.ts:11`). Because codegen upserts metadata without deleting stale rows (`emit-sql.ts:9`),
+  the emitter MUST additionally **delete only `layer='project'` rows** absent from the current
+  project schema — **platform rows (`layer='platform'`) are never touched** by project codegen (per
+  C6a). Removing a *platform* field/collection is rejected (it belongs to a platform release), not a
+  project-codegen deletion.
 - Gates: scaffold → `db reset` → add a collection → regenerate → baseline + **every prior delta**
   byte-identical, exactly one additive migration added, none removed; manifest snapshot; a `db reset`
   consistency assertion where missing / altered / EXTRA(stale) rows each fail with a **stable error id**.
@@ -142,8 +154,8 @@ monorepo becomes their first consumer (dogfooding) and must stay 100% green thro
 
 | Part | Gate |
 |---|---|
-| C6a | Install-only scaffold `db reset` green, no source-repo paths; reordered/missing/digest-mismatch platform artifact rejected; CRM-lite extension emits only its DDL, platform intact |
-| C6b | Monorepo green with injected schema; novel-public + internal:true fixture → only public reaches generic CLI/GraphQL/MCP; Deno-only schema change → `schema_runtime_mismatch` before startup |
+| C6a | Committed consumer fixture `db reset` green, no source-repo paths; reordered/missing/digest-mismatch platform artifact rejected; fixture extension emits only its own DDL, platform metadata (`layer='platform'`) byte-intact after removing an extension field |
+| C6b | Monorepo green with injected schema; novel-public + internal:true fixture → only public reaches generic CLI/GraphQL/MCP; Deno-only schema change → `schema_runtime_mismatch` before startup, computed by the pure fingerprint utility with **no manifest** |
 | C6c | Regenerate keeps baseline + every delta byte-identical, one additive migration, none removed; manifest snapshot + `movp_fields` consistency (incl. stale-row delete) with stable error ids |
 | C6d | Scaffold CRM-lite → Verdaccio install (no workspace links) → `db reset` → start real GraphQL + MCP edge fns → authenticated HTTP GraphQL + streamable-MCP + CLI create/list green; copier rejects unsafe inputs |
 | C6e | CI matrix over all 4 templates green (pack once) |
@@ -151,9 +163,10 @@ monorepo becomes their first consumer (dogfooding) and must stay 100% green thro
 
 ## Risks / open questions
 
-- **Platform release form** (C6a): `@movp/platform` package of ordered `.sql` vs a tested squashed
-  snapshot. Squashing loses migration history but simplifies the release digest; the package keeps
-  history but must preserve exact ordering incl. interleaved generated artifacts. Decide in the C6a plan.
+- **The `layer` marker is itself a platform migration** (C6a): adding `layer` to
+  `movp_collections`/`movp_fields` is a new forward-only platform migration that backfills existing
+  rows to `layer='platform'`; sequence it into the platform release stream before the C6c stale-row
+  rule can rely on it.
 - **Deno `npm:@movp/*` resolution** needs an actual edge-runtime smoke (not typecheck): some deps
   (Node built-ins) may not resolve under Deno `npm:` compat — validate early in C6b.
 - **Version bump blast radius.** `0.0.0 → 0.1.0` across publishable packages + `check-release-preflight`;
