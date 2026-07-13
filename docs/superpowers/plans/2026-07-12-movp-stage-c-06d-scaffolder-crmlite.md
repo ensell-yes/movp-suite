@@ -51,6 +51,9 @@ Ship the last runnable piece of the C6 productization seam:
   lines**, not substrings (a block-scoped substring still false-greened the `2.109.1` pin, because the
   job greps for that same literal at runtime), and it recognizes a `run:` step at **either** position —
   list item or multi-key property — so it accepts the real workflow it exists to verify (round-10 F1/F2).
+  Its `steps` requirement goes one further and proves **OWNERSHIP**, not mere existence: the
+  `with: { version: 2.109.1 }` pin must sit in the **same step block** as `uses: supabase/setup-cli@v2`,
+  so a decoy action carrying the pinned line while Supabase runs on `latest` FAILS (round-11 F1).
   It is validated against **06e's actual four-job YAML, pasted verbatim**, not a hand-made fixture.
 - **`create-movp` (Tasks 2–3, `packages/create-movp/`).** Unscoped published package. `src/copier.ts`
   is a **pure, synchronous, untrusted-I/O-hardened** file copier (no prompts, no network). `src/scaffold.ts`
@@ -139,8 +142,9 @@ Ship the last runnable piece of the C6 productization seam:
     status, or could not be spawned at all).
   - `scripts/check-ci-wiring.mjs` — `ci_wiring_jobs_block_missing`, `ci_wiring_job_missing`,
     `ci_wiring_job_duplicated`, `ci_wiring_run_missing`, `ci_wiring_line_missing` (a required EXACT
-    normalized line is absent from THAT job's block). (Its `workflow_*` read faults come from
-    `readTextGuarded` above.)
+    normalized line is absent from THAT job's block), `ci_wiring_step_missing` (no SINGLE step block of
+    that job contains every line of a required `steps` group — the OWNERSHIP assertion, round-11 F1).
+    (Its `workflow_*` read faults come from `readTextGuarded` above.)
 
   These are deliberately NOT the copier's `template_*` codes: the repo-root gate and the published
   `create-movp` package are two different module boundaries that must not import each other (INTERFACES
@@ -171,8 +175,10 @@ resolve), and prove no in-repo consumer pins the literal `0.0.0`.
   each gate job is armed in `ci.yml` (INTERFACES round-9 F2, step 5d).
 - **Test (create):** `scripts/test/guarded-read.test.mjs` (14 tests — 6 `readTextGuarded` + 8 `readJsonGuarded`)
 - **Test (create):** `scripts/test/check-publishable-versions.test.mjs` (9 tests)
-- **Test (create):** `scripts/test/check-ci-wiring.test.mjs` (16 tests — the 4 hostile workflows, the
-  intended one, the guarded-read seam, the 4 exact-line `lines` cases, and — the acceptance test —
+- **Test (create):** `scripts/test/check-ci-wiring.test.mjs` (19 tests — the 4 hostile workflows, the
+  intended one, the guarded-read seam, the 4 exact-line `lines` cases, the 3 step-OWNERSHIP cases (the
+  decoy-step hostile fixture, the proof that the `lines`-only form would have PASSED that same fixture,
+  and the `id:`/`name:` tolerance case that is why we did NOT use adjacency), and — the acceptance test —
   **06e's real four-job workflow pasted VERBATIM**, which the round-9 checker REJECTED)
 - **Modify (scripts block only):** root `package.json` — add `check:publishable-versions`,
   `check:ci-wiring` + `test:version-gate` (step 5). Its `version` stays `0.0.0`.
@@ -218,7 +224,7 @@ resolve), and prove no in-repo consumer pins the literal `0.0.0`.
   **`REQUIRED_JOBS` table**, `Record<string, JobRequirement>` where:
 
   ```js
-  /** @typedef {{ runs: string[], lines?: string[] }} JobRequirement */
+  /** @typedef {{ runs: string[], lines?: string[], steps?: string[][] }} JobRequirement */
   export const REQUIRED_JOBS = {
     'publishable-versions': {
       runs: ['pnpm test:version-gate', 'pnpm check:publishable-versions'],
@@ -227,7 +233,7 @@ resolve), and prove no in-repo consumer pins the literal `0.0.0`.
   }
   ```
 
-  Both fields are matched against the job block's **NORMALIZED** lines. Normalizing a line means: strip a
+  All three fields are matched against **NORMALIZED** lines. Normalizing a line means: strip a
   trailing `#` comment **quote-aware** (a `#` inside `'…'`/`"…"` is a literal, not a comment, so
   `grep -qF '2.109.1'` survives intact) → collapse runs of whitespace → trim → strip a leading list-item
   `- `.
@@ -239,9 +245,11 @@ resolve), and prove no in-repo consumer pins the literal `0.0.0`.
     `template-smoke` gate step is written). Both normalize to `run: <cmd>`. Matching only the list-item
     form is what made the round-9 checker REJECT the very workflow it exists to verify (round-10 F1).
   - **`lines`** (optional) — exact NORMALIZED lines that must appear inside **that job's OWN block**
-    (bounded by the next key at same-or-shallower indent). For assertions that are NOT `run:` commands:
-    **06e uses it to pin `supabase/setup-cli` to `2.109.1` and to name all four templates in the
-    `template-smoke` matrix** (the matrix lives in `template-smoke`, not `template-gallery`).
+    (bounded by the next key at same-or-shallower indent). For JOB-LEVEL assertions that are neither a
+    `run:` command nor a property of any step: **06e uses it to name all four templates in the
+    `template-smoke` matrix** — that line sits under `strategy:`, OUTSIDE every step block, so a
+    job-scoped match is exactly the right shape for it. (The matrix lives in `template-smoke`, not
+    `template-gallery`.) Anything that belongs to a specific step goes in **`steps`** instead.
 
     **This is an EXACT LINE match, not a substring scan — that distinction is the whole point** (round-10
     F2). The round-9 design used `contains: ['2.109.1']`, a substring search merely *scoped* to the job
@@ -251,11 +259,26 @@ resolve), and prove no in-repo consumer pins the literal `0.0.0`.
     (reproduced). Shrinking the haystack does not turn a substring search into an assertion. Requiring the
     exact line `with: { version: 2.109.1 }` cannot be satisfied by a comment, by a `grep` argument, or by
     another job.
+  - **`steps`** (optional, `string[][]`) — each inner array is a set of exact NORMALIZED lines that must
+    ALL appear **within a SINGLE step block** of that job. This proves **OWNERSHIP**, which `lines` cannot:
+    `lines` is an unordered set match over the WHOLE job block, so it proves `uses: supabase/setup-cli@v2`
+    and `with: { version: 2.109.1 }` each occur *somewhere* in `template-smoke` — **not that the `with:`
+    belongs to that action**. Supabase could be pinned to `latest` while a DECOY step
+    (`- uses: some/other-action@v1` / `with: { version: 2.109.1 }`) owns the pinned line, and `lines`
+    still passes (reproduced). **06e pins the CLI with `steps`:**
+    `steps: [['uses: supabase/setup-cli@v2', 'with: { version: 2.109.1 }']]` (round-11 F1).
 
-    **Stated residual limit — do not overclaim:** `lines` proves that `uses: supabase/setup-cli@v2` and
-    `with: { version: 2.109.1 }` both EXIST in the job, **not that they are adjacent** (i.e. not that the
-    `with:` belongs to that `uses:`). Proving adjacency needs a real YAML parser, which the SCOPE LIMIT
-    forbids. That gap is accepted deliberately and stated here rather than papered over.
+    A step block begins at a `- ` list item at the job's step indent; every subsequent non-list-item line
+    belongs to that step until the next list item (or a key at same-or-shallower indent). Comment-only
+    lines normalize to `''` and are DROPPED, so a comment sitting between `- uses:` and `with:` is
+    harmless.
+
+    **Deliberately step-scoped, NOT strict adjacency / a `sequences` field — do NOT "upgrade" it later.**
+    Both were verified against the real YAML: adjacency catches the decoy case BUT goes falsely RED the
+    moment anyone adds an `id:` or a `name:` to that step — and a gate that cries wolf gets disabled,
+    after which it protects nothing. Step-scoping expresses the actual invariant ("the `with:` belongs to
+    this step"), tolerates any step property, and is still a line scan — the no-YAML-parser SCOPE LIMIT
+    holds. A test pins the `id:`/`name:` tolerance so nobody regresses to adjacency.
 
   **06d OWNS this script and seeds the table with `publishable-versions`; later parts only APPEND an
   entry** — 06e appends `pack-artifacts` + `template-gallery` + `template-smoke` and changes nothing else
@@ -954,15 +977,10 @@ describe('checkCiWiring — hostile workflows that MUST fail (each false-greened
   })
 })
 
-// `lines` is what 06e uses for assertions that are NOT `run:` commands — the `supabase/setup-cli`
-// version pin, the four-template matrix. It is an EXACT match against a NORMALIZED line, NOT a substring
-// scan. That distinction is the entire point of round-10 F2: `template-smoke` carries the literal
-// `2.109.1` TWICE (the real pin AND a `grep -qF '2.109.1'` drift check), so the round-9
-// `contains: ['2.109.1']` substring scan PASSED even with `version: latest` — satisfied purely by the
-// grep argument. These four cases pin the exact-line semantics that make it a real assertion.
-describe('checkCiWiring — `lines` is an EXACT normalized-line match inside the job BLOCK', () => {
-  /** A `template-smoke` job that pins the Supabase CLI, plus a neighbour that also mentions a version. */
-  const withSmoke = (smokeBody, neighbourBody = '      - run: pnpm lint\n') => `name: ci
+/** A `template-smoke` job that pins the Supabase CLI, plus a neighbour that also mentions a version.
+ *  Shared by the `lines` cases below and the `steps` OWNERSHIP cases after them.
+ *  @param {string} smokeBody @param {string} [neighbourBody] */
+const withSmoke = (smokeBody, neighbourBody = '      - run: pnpm lint\n') => `name: ci
 on:
   push:
     branches: [main]
@@ -977,6 +995,15 @@ ${smokeBody}
     steps:
 ${neighbourBody}`
 
+// `lines` is a JOB-scoped exact match against a NORMALIZED line, NOT a substring scan. That distinction
+// is the entire point of round-10 F2: `template-smoke` carries the literal `2.109.1` TWICE (the real pin
+// AND a `grep -qF '2.109.1'` drift check), so the round-9 `contains: ['2.109.1']` substring scan PASSED
+// even with `version: latest` — satisfied purely by the grep argument. These four cases pin the
+// exact-line semantics that make `lines` a real assertion; they exercise the MECHANISM with the pin
+// strings as a convenient payload. (06e's REAL table pins the CLI through `steps`, not `lines`, because
+// job-scoped existence is not OWNERSHIP — see the `steps` describe block below. `lines` keeps a real
+// consumer: 06e's four-template matrix line, which sits under `strategy:` and belongs to no step.)
+describe('checkCiWiring — `lines` is an EXACT normalized-line match inside the job BLOCK', () => {
   const TABLE = {
     'template-smoke': {
       runs: ["supabase --version | grep -qF '2.109.1'"],
@@ -1035,6 +1062,74 @@ ${neighbourBody}`
     const problems = checkCiWiring(fixture('lines-wrong-job', yaml), TABLE)
     assert.equal(problems.length, 1)
     assert.match(problems[0], /ci_wiring_line_missing: .* job "template-smoke" has no line `with: \{ version: 2\.109\.1 \}`/)
+  })
+})
+
+// ROUND-11 F1. `lines` proves EXISTENCE; `steps` proves OWNERSHIP. `lines` is an unordered set match over
+// the WHOLE job block, so it proves `uses: supabase/setup-cli@v2` and `with: { version: 2.109.1 }` each
+// occur SOMEWHERE in `template-smoke` — NOT that the `with:` belongs to that action. A DECOY step can own
+// the pinned line while Supabase itself runs on `latest`, and `lines` still greens (the second test below
+// reproduces exactly that). `steps` requires every line of a group inside ONE step block.
+describe('checkCiWiring — `steps` proves the pin is OWNED by the setup-cli step (round-11 F1)', () => {
+  /** What 06e actually ships: the pin must live in the SAME step as the action. */
+  const STEP_TABLE = {
+    'template-smoke': {
+      runs: [],
+      steps: [['uses: supabase/setup-cli@v2', 'with: { version: 2.109.1 }']],
+    },
+  }
+
+  /** The round-10 shape, kept ONLY to prove it would have missed the decoy below. */
+  const LINES_ONLY_TABLE = {
+    'template-smoke': {
+      runs: [],
+      lines: ['uses: supabase/setup-cli@v2', 'with: { version: 2.109.1 }'],
+    },
+  }
+
+  /** setup-cli on `latest`; a DECOY action owns the pinned line. BOTH required lines exist in the job —
+   *  which is precisely why a job-scoped set match is not enough. */
+  const DECOY = withSmoke(
+    `      - uses: supabase/setup-cli@v2
+        with: { version: latest }
+      - uses: some/other-action@v1
+        with: { version: 2.109.1 }
+      - run: supabase --version | grep -qF '2.109.1'
+`,
+  )
+
+  it('FAILS the decoy: no SINGLE step owns both the action and the pin', () => {
+    const problems = checkCiWiring(fixture('steps-decoy', DECOY), STEP_TABLE)
+    assert.equal(problems.length, 1)
+    assert.match(
+      problems[0],
+      /ci_wiring_step_missing: .* job "template-smoke" has no single step containing all of/,
+    )
+    assert.match(problems[0], /with: \{ version: 2\.109\.1 \}/) // the message NAMES the required lines
+  })
+
+  // THE REGRESSION PROOF. The round-10 `lines`-only requirement PASSES this same hostile fixture: both
+  // literals are present in the block, just not in the same step. That gap — existence, not ownership —
+  // is exactly what `steps` closes. If this test ever goes RED, `lines` has silently become step-scoped
+  // and the two mechanisms have been conflated; fix the code, not the test.
+  it('the round-10 `lines`-only requirement PASSES that same decoy — the gap `steps` closes', () => {
+    assert.deepEqual(checkCiWiring(fixture('steps-decoy-lines', DECOY), LINES_ONLY_TABLE), [])
+  })
+
+  // WHY NOT ADJACENCY: a strict `uses:`-then-`with:` sequence catches the decoy too, but goes falsely RED
+  // the moment anyone adds an `id:` or a `name:` to that step — and a gate that cries wolf gets disabled,
+  // after which it protects nothing. Step-scoping tolerates ANY step property. This test PINS that
+  // tolerance so nobody "upgrades" the checker to adjacency later.
+  it('PASSES when the setup-cli step also carries `id:` and `name:` (why adjacency was rejected)', () => {
+    const yaml = withSmoke(
+      `      - uses: supabase/setup-cli@v2
+        id: setup-supabase
+        name: Pin the Supabase CLI
+        with: { version: 2.109.1 }
+      - run: supabase --version | grep -qF '2.109.1'
+`,
+    )
+    assert.deepEqual(checkCiWiring(fixture('steps-id-name', yaml), STEP_TABLE), [])
   })
 })
 
@@ -1139,13 +1234,12 @@ const FULL_TABLE = {
   'template-smoke': {
     runs: [
       "supabase --version | grep -qF '2.109.1'",
-      'bash fixtures/verdaccio-gallery/gate.sh ${{ matrix.template }}', // the MULTI-KEY step
+      'bash fixtures/verdaccio-gallery/gate.sh ${{ matrix.template }}',   // multi-key `- env:` / `run:` step
     ],
-    lines: [
-      'uses: supabase/setup-cli@v2',
-      'with: { version: 2.109.1 }',
-      'template: [crm-lite, marketing-site, support-desk, knowledge-base]',
-    ],
+    // The 4-way matrix sits under `strategy:`, NOT inside a step — so it stays a `lines` requirement.
+    lines: ['template: [crm-lite, marketing-site, support-desk, knowledge-base]'],
+    // OWNERSHIP: the pin must live in the SAME STEP as the setup-cli action (round-11 F1).
+    steps: [['uses: supabase/setup-cli@v2', 'with: { version: 2.109.1 }']],
   },
 }
 
@@ -1217,13 +1311,14 @@ only has to prove each job exists and invokes its commands.
 //
 // SCOPE LIMIT — this is NOT a YAML parser and must never grow into one. It is an indentation-aware
 // LINE SCAN with exactly one job: prove that each named job key exists under the top-level `jobs:`
-// mapping, and that each required NORMALIZED LINE appears INSIDE that job's own block. An
-// indentation-scoped EXACT-LINE match is still not a YAML parser — it is merely not restricted to
-// `run:` lines. GitHub remains the authoritative YAML parser (a malformed workflow fails there,
-// loudly). No YAML dependency is added: none is resolvable in this repo (`yaml` appears in the root
-// `package.json` only as a pnpm override) and a new dependency needs approval. If you find yourself
-// adding key/value lookups, path expressions, anchors, flow scalars, or block scalars here, STOP — the
-// check has outgrown its purpose.
+// mapping, that each required NORMALIZED LINE appears INSIDE that job's own block, and that each
+// required STEP GROUP appears inside a SINGLE step block of it (the ownership assertion, round-11 F1).
+// An indentation-scoped EXACT-LINE match, chunked by list item, is still not a YAML parser — it is
+// merely not restricted to `run:` lines. GitHub remains the authoritative YAML parser (a malformed
+// workflow fails there, loudly). No YAML dependency is added: none is resolvable in this repo (`yaml`
+// appears in the root `package.json` only as a pnpm override) and a new dependency needs approval. If
+// you find yourself adding key/value lookups, path expressions, anchors, flow scalars, or block scalars
+// here, STOP — the check has outgrown its purpose.
 //
 // It replaces a substring scan (`y.includes('publishable-versions:') && …`), which FALSE-GREENS when
 // those strings appear only inside `#` comments or under an unrelated job (INTERFACES round-9 F2).
@@ -1243,16 +1338,27 @@ import { MAX_WORKFLOW_BYTES, readTextGuarded } from './lib/guarded-read.mjs'
  *   Matching only the list-item form is what made the round-9 checker REJECT 06e's real `template-smoke`
  *   gate step — the checker rejecting the very workflow it verifies (round-10 F1).
  * @property {string[]} [lines] OPTIONAL exact NORMALIZED lines that must appear inside the job's OWN
- *   block — for assertions that are not `run:` commands (a pinned action version, a matrix entry).
+ *   block — for JOB-LEVEL assertions that are neither a `run:` command nor a property of any step (06e's
+ *   four-template matrix line lives under `strategy:`, outside every step). Anything that BELONGS to a
+ *   step goes in `steps` instead — `lines` proves existence, not ownership.
  *   This is an EXACT LINE match, NOT a substring scan. The round-9 design used a block-scoped substring
  *   (`contains`), but `template-smoke` carries `2.109.1` TWICE — the real pin AND a `grep -qF '2.109.1'`
  *   drift check — so it PASSED with `version: latest`, satisfied purely by the grep argument. Shrinking
  *   the haystack does not turn a substring search into an assertion (round-10 F2).
- *   STILL WITHIN THE SCOPE LIMIT: an indentation-scoped exact-line match is not a YAML parser.
- *   STATED RESIDUAL LIMIT — do not overclaim: `lines` proves `uses: supabase/setup-cli@v2` and
- *   `with: { version: 2.109.1 }` both EXIST in the job, NOT that they are adjacent (not that the `with:`
- *   belongs to that `uses:`). Proving adjacency needs a real YAML parser, which the SCOPE LIMIT forbids.
- *   That gap is accepted deliberately. Do NOT grow this into key/value lookups or anchor resolution.
+ * @property {string[][]} [steps] OPTIONAL. Each inner array is a set of exact NORMALIZED lines that must
+ *   ALL appear WITHIN A SINGLE STEP BLOCK of the job. This is the OWNERSHIP assertion (round-11 F1):
+ *   `lines` is an unordered set match over the whole job block, so it proves `uses: supabase/setup-cli@v2`
+ *   and `with: { version: 2.109.1 }` each occur SOMEWHERE in `template-smoke` — not that the `with:`
+ *   belongs to that action. Supabase could run on `latest` while a DECOY step owns the pinned line, and
+ *   `lines` still greens (reproduced). `steps: [['uses: supabase/setup-cli@v2', 'with: { version: 2.109.1 }']]`
+ *   closes that.
+ *   DELIBERATELY STEP-SCOPED, NOT STRICT ADJACENCY — do NOT "upgrade" this to a `sequences` field. Both
+ *   were verified against the real YAML: adjacency catches the decoy too, but goes falsely RED as soon as
+ *   anyone adds an `id:` or a `name:` to that step — and a gate that cries wolf gets disabled, after which
+ *   it protects nothing. Step-scoping expresses the actual invariant ("the `with:` belongs to this step"),
+ *   tolerates any step property (a test pins that), and is still a line scan.
+ *   STILL WITHIN THE SCOPE LIMIT: an indentation-scoped exact-line match, step-chunked by list item, is
+ *   not a YAML parser. Do NOT grow this into key/value lookups or anchor resolution.
  */
 
 /**
@@ -1267,11 +1373,13 @@ export const REQUIRED_JOBS = {
     runs: ['pnpm test:version-gate', 'pnpm check:publishable-versions'],
   },
   // 06e APPENDS its three entries here; nothing else in this file changes. For example, 06e's
-  // `template-smoke` pins the Supabase CLI, which is NOT a `run:` command — that is what `lines` is for:
+  // `template-smoke` pins the Supabase CLI — not a `run:` command, and the pin must be OWNED by the
+  // setup-cli step (`steps`), while the 4-way matrix sits under `strategy:`, outside every step (`lines`):
   //   'template-smoke': {
   //     runs: ["supabase --version | grep -qF '2.109.1'",
   //            'bash fixtures/verdaccio-gallery/gate.sh ${{ matrix.template }}'],
-  //     lines: ['uses: supabase/setup-cli@v2', 'with: { version: 2.109.1 }'],
+  //     lines: ['template: [crm-lite, marketing-site, support-desk, knowledge-base]'],
+  //     steps: [['uses: supabase/setup-cli@v2', 'with: { version: 2.109.1 }']],
   //   },
 }
 
@@ -1321,6 +1429,47 @@ function unquote(value) {
     return value.slice(1, -1)
   }
   return value
+}
+
+/**
+ * Split a job's RAW block lines into STEP CHUNKS of normalized lines — the unit the `steps` OWNERSHIP
+ * requirement is matched against (round-11 F1).
+ *
+ * A step begins at a `- ` list item at the job's STEP INDENT (the indent of the block's FIRST list item —
+ * in a GitHub workflow, the `steps:` sequence). Every following line that is not itself a list item
+ * belongs to that step, until a key at same-or-shallower indent closes the sequence. Lines BEFORE the
+ * first list item (`runs-on:`, `needs:`, `strategy:`/`matrix:` and its entries) belong to NO step — which
+ * is exactly why 06e's 4-way matrix line stays a `lines` requirement and not a `steps` one.
+ *
+ * Comment-only lines are already dropped by the caller, so a comment sitting between `- uses:` and
+ * `with:` cannot split a step.
+ *
+ * SCOPE LIMIT holds: chunking by list item is still a LINE SCAN, not YAML parsing. Do NOT grow it into one.
+ * @param {string[]} rawJobLines
+ * @returns {string[][]} one array of normalized lines per step
+ */
+function stepChunks(rawJobLines) {
+  const firstItem = rawJobLines.find((line) => /^\s*- /.test(line))
+  if (firstItem === undefined) return []
+  const stepIndent = indentOf(firstItem)
+
+  /** @type {string[][]} */
+  const chunks = []
+  /** @type {string[] | null} */
+  let current = null
+  for (const raw of rawJobLines) {
+    const indent = indentOf(raw)
+    if (indent === stepIndent && /^\s*- /.test(raw)) {
+      current = []
+      chunks.push(current)
+    } else if (current !== null && indent <= stepIndent) {
+      current = null // a key at same-or-shallower indent ends the step sequence
+    }
+    if (current === null) continue
+    const normalized = normalizeLine(raw)
+    if (normalized !== '') current.push(normalized)
+  }
+  return chunks
 }
 
 /**
@@ -1388,10 +1537,13 @@ export function checkCiWiring(workflowPath = DEFAULT_WORKFLOW, requiredJobs = RE
     // `run:` (or any other line) in a NEIGHBOURING job is outside it — which is the whole point.
     // Comment-only lines were dropped above, so a commented-out line is outside it too.
     /** @type {string[]} */
-    const jobLines = []
+    const jobRaw = []
     for (let i = starts[0] + 1; i < block.length && indentOf(block[i]) > jobIndent; i += 1) {
-      jobLines.push(normalizeLine(block[i]))
+      jobRaw.push(block[i])
     }
+    // RAW is kept alongside NORMALIZED: `stepChunks` needs the original indentation to find step
+    // boundaries, and normalizing first would destroy it (`normalizeLine` trims).
+    const jobLines = jobRaw.map(normalizeLine)
 
     // A `run:` step at EITHER position: `- run: X` (list item) and a multi-key step's indented `run: X`
     // BOTH normalize to `run: X`, so ONE match handles both (round-10 F1). The matched command is the
@@ -1423,14 +1575,33 @@ export function checkCiWiring(workflowPath = DEFAULT_WORKFLOW, requiredJobs = RE
         )
       }
     }
+
+    // `steps`: OWNERSHIP, not existence (round-11 F1). The `lines` check above is an unordered set match
+    // over the WHOLE job block, so it cannot tell `with: { version: 2.109.1 }` OWNED by
+    // `uses: supabase/setup-cli@v2` apart from the same line owned by a DECOY action while setup-cli runs
+    // on `latest`. Every line of a `steps` group must land inside ONE step chunk.
+    // NOT strict adjacency, deliberately — do NOT "upgrade" this: adjacency catches the decoy too, but
+    // goes falsely RED the moment a step gains an `id:` or a `name:`, and a gate that cries wolf gets
+    // disabled, after which it protects nothing. A test pins the `id:`/`name:` tolerance.
+    const chunks = stepChunks(jobRaw)
+    for (const required of requirement.steps ?? []) {
+      const owned = chunks.some((chunk) => required.every((line) => chunk.includes(line)))
+      if (!owned) {
+        const wanted = required.map((line) => `\`${line}\``).join(', ')
+        problems.push(
+          `ci_wiring_step_missing: ${workflowPath} job "${jobName}" has no single step containing all of [${wanted}] (each line may EXIST somewhere in the job while belonging to a DIFFERENT step — that is not ownership)`,
+        )
+      }
+    }
   }
 
   return problems
 }
 
-// Exit-code contract: 0 = every required job is armed · 1 = a real finding (a job, a `run:`, or a
-// required `lines` entry is missing/duplicated) · 2 = OPERATIONAL failure (the workflow is a symlink,
-// oversized, or unreadable). An operational failure is NEVER 0 — automation reads the code.
+// Exit-code contract: 0 = every required job is armed · 1 = a real finding (a job, a `run:`, a required
+// `lines` entry, or a required `steps` group is missing/duplicated) · 2 = OPERATIONAL failure (the
+// workflow is a symlink, oversized, or unreadable). An operational failure is NEVER 0 — automation reads
+// the code.
 //
 // GOTCHA: guard `process.argv[1]` before `pathToFileURL` — it is UNDEFINED when this module is imported
 // from an eval context (`node -e`, the REPL), and `pathToFileURL(undefined)` THROWS `ERR_INVALID_ARG_TYPE`
@@ -1455,7 +1626,7 @@ if (import.meta.url === entryPoint) {
 }
 ```
 
-Re-run the test — **Expected: PASS**, `pass 16 / fail 0`. Then run the checker against the real `ci.yml`
+Re-run the test — **Expected: PASS**, `pass 19 / fail 0`. Then run the checker against the real `ci.yml`
 you just edited in 5b:
 
 ```
@@ -1529,17 +1700,21 @@ node --test scripts/test/guarded-read.test.mjs scripts/test/check-publishable-ve
 > false-greened on a commented-out job. `node scripts/check-ci-wiring.mjs` reads through `readTextGuarded`
 > and checks the STRUCTURE. Do not inline it back.
 
-**Expected:** `node --test` prints `pass 39 / fail 0` — 14 guarded-read (6 `readTextGuarded` + 8
-`readJsonGuarded`) + 9 version-gate + 16 ci-wiring. The version gate's three git branches are each
+**Expected:** `node --test` prints `pass 42 / fail 0` — 14 guarded-read (6 `readTextGuarded` + 8
+`readJsonGuarded`) + 9 version-gate + 19 ci-wiring. The version gate's three git branches are each
 pinned (status 0 with a match FAILS, status 1 PASSES, status 2 / spawn-error THROWS rather than
 reporting "no pins"); the ci-wiring checker's four hostile workflows each FAIL (comments-only,
 right-commands-wrong-job, one-command-missing, duplicate-job-name) and the intended job PASSES; `lines`
 is proven to be an EXACT normalized-line match, not a substring scan (a `version: latest` pin FAILS even
 though a `grep -qF '2.109.1'` run line keeps the literal in the block — the round-10 F2 regression; a
-required line in a COMMENT or in a NEIGHBOURING job also FAILS); and — the acceptance test —
+required line in a COMMENT or in a NEIGHBOURING job also FAILS); `steps` is proven to assert OWNERSHIP,
+not existence (a DECOY step owning `with: { version: 2.109.1 }` while setup-cli runs on `latest` FAILS
+with `ci_wiring_step_missing` — and the round-10 `lines`-only form is shown to PASS that same fixture,
+which is the regression proof; adding `id:`/`name:` to the setup-cli step still PASSES, which is why
+adjacency was rejected — round-11 F1); and — the acceptance test —
 **06e's real four-job workflow, pasted verbatim, PASSES with ZERO problems**, while deleting its
 multi-key `- env:`/`run:` gate step turns it RED. On a root/win32 runner the two EACCES cases self-skip →
-`pass 37 / skip 2`, still `fail 0`.
+`pass 40 / skip 2`, still `fail 0`.
 
 > **Why the verbatim-06e test is the load-bearing one (round-10 F1).** The round-9 checker passed five
 > hand-made fixtures and would still have REJECTED the real workflow — its parser matched only the
@@ -1552,8 +1727,8 @@ The version script prints its success line — exit 0, and it FAILS this chain w
 finding (a wrong version or a `0.0.0` consumer pin) or **2** on an operational failure, never 0. The
 platform build prints `platformVersion 0.1.0`. The ci-wiring gate prints
 `ci wiring: 1 gate job(s) armed in .github/workflows/ci.yml — publishable-versions` (exit 0); it exits
-**1** if step 5b's job is missing/duplicated or either `run:` is absent, and **2** if `ci.yml` is a
-symlink, oversized, or unreadable.
+**1** if step 5b's job is missing/duplicated, either `run:` is absent, or (once 06e appends its entries)
+a required `lines`/`steps` assertion fails, and **2** if `ci.yml` is a symlink, oversized, or unreadable.
 
 `check-release-preflight.mjs` is unchanged **(N/A with evidence: it reads no version — it only shells
 `npm org --help`, `npm whoami`, `npm org ls movp`).**
