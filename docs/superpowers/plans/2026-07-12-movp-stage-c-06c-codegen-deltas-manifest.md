@@ -1558,7 +1558,7 @@ Add to `package.json` `scripts`:
 
 - [ ] **Step 2: Wire the CI job**
 
-Add to `.github/workflows/ci.yml` (mirror the existing `quickstart` job's setup — `pnpm/action-setup@v6 { version: 9.12.0 }` + `actions/setup-node@v6 { node-version: 22, cache: pnpm }` + `supabase/setup-cli@v2 { version: latest }` per ci-deploy-patterns; `pnpm install` is required because the gate runs `tsx` + imports `@movp/*` workspace packages):
+Add to `.github/workflows/ci.yml` (mirror the existing `quickstart` job's setup — `pnpm/action-setup@v6 { version: 9.12.0 }` + `actions/setup-node@v6 { node-version: 22, cache: pnpm }` + `supabase/setup-cli@v2 { version: 2.109.1 }`; pin the EXACT version matching the existing `integration-smoke` job (ci.yml:130) which runs the same `supabase start`/`db reset` class of work — per ci-deploy-patterns, do not float DB gates on `latest`; `pnpm install` is required because the gate runs `tsx` + imports `@movp/*` workspace packages):
 
 ```yaml
   metadata-consistency:
@@ -1570,7 +1570,8 @@ Add to `.github/workflows/ci.yml` (mirror the existing `quickstart` job's setup 
       - uses: actions/setup-node@v6
         with: { node-version: 22, cache: pnpm }
       - uses: supabase/setup-cli@v2
-        with: { version: latest }
+        with: { version: 2.109.1 }   # pinned — matches integration-smoke (ci.yml:130); do not float DB gates
+      - run: supabase --version | grep -qF '2.109.1'   # assert the pinned CLI is what runs
       - run: pnpm install --frozen-lockfile
       - run: supabase start
       - run: supabase db reset

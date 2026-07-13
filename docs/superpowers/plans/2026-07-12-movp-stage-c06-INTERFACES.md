@@ -167,6 +167,23 @@ Both are APPROVED — the executor does NOT stop on them:
   newer `config.toml` keys). C6 jobs MATCH `latest` — pinning only C6 would create cross-job version skew.
   A repo-wide exact-pin is a separate cross-cutting change, out of C6 scope.
 
+## Plan review round 3 — locked resolutions (2026-07-13)
+
+- **F2 CORRECTED — pin C6 CI to `supabase/setup-cli@v2` `version: 2.109.1`.** SUPERSEDES the round-2
+  pushback, which was based on a wrong premise: the existing `integration-smoke` job DOES pin
+  `2.109.1` (ci.yml:130) for the same `supabase start`/`db reset`/`functions serve` class of work
+  (5 other jobs use `latest`; the repo is mixed). All NEW C6 DB/functions jobs (06c consistency,
+  06e matrix) pin `version: 2.109.1` and print+assert `supabase --version` matches.
+- **F1 pack harness — never mutate the source worktree (06d + 06e own).** Do NOT
+  `rm -rf packages/create-movp/templates` + `cp -R templates/` in-place (destroys untracked work +
+  bypasses the safe-copier). Instead materialize templates into a TEMP `create-movp` staging dir
+  using the SAME guarded-copy semantics as the scaffolder (lstat/symlink-reject, size-bound), and
+  `npm pack` from that staging dir. The source worktree is left unchanged. Test: an external-symlink
+  template file makes the pack FAIL without reading it; the worktree is byte-unchanged after a pack.
+- **F3 06f approval wording (06f owns).** Global Constraints must state `@astrojs/starlight` approval
+  is RECORDED (per INTERFACES) — retain ONLY the astro@^6 peer-compat STOP; remove the
+  "stop and request approval" language so a context-poor executor does not halt unnecessarily.
+
 ## Stable error codes (all parts)
 
 `schema_runtime_mismatch` · `new_generated_delta_required` · `platform_artifact_invalid` ·
