@@ -79,6 +79,11 @@ Ship the last runnable piece of the C6 productization seam:
   and reject symlinks BEFORE any `stat`/`read`; bound file size (`MAX_FILE_BYTES`) with `lstat.size`
   BEFORE `readFileSync`; enforce a running total cap (`MAX_TOTAL_BYTES`); never log file CONTENTS
   (path + reason only). These gotchas are commented at their trigger sites in Task 2.
+  **Guards apply on EVERY read path — the walk AND every explicit one-off copy, the tree ROOT AND
+  every recursed subdirectory** (INTERFACES F1). `readdirSync` FOLLOWS a symlink, so a directory —
+  including the initial root — is `lstat`ed BEFORE it is `readdir`ed; and no `copyFileSync` /
+  `readFileSync` may touch a path that has not gone through `copyFileGuarded`. There is exactly one
+  implementation of each guard (`packages/create-movp/src/copier.ts`); no script reimplements them.
 - **Standalone install contract.** The scaffold pins `@movp/* @^0.1.0`, sets `packageManager`, Node +
   Supabase versions, and **defaults agent connectivity to the hosted MCP** (`/functions/v1/mcp`)
   because `@movp/mcp-bridge` is **private/unpublished** (`packages/mcp-bridge/package.json` has
@@ -92,8 +97,10 @@ Ship the last runnable piece of the C6 productization seam:
 - **No new runtime dependency.** The only new dependency is `verdaccio` (dev-only, Task 5) — get
   approval first (global rule: no new dependencies without approval).
 - **Stable error codes (this part):** copier — `target_exists`, `invalid_project_name`,
-  `template_symlink_rejected`, `template_file_too_large`, `template_total_too_large`,
-  `unknown_token`, `unresolved_token`. Reused from 06a: `platform_artifact_invalid`.
+  `template_symlink_rejected` (a symlinked or non-directory tree ROOT, a symlinked entry inside the
+  tree, or a symlinked explicit-copy source), `template_not_regular_file` (an explicit-copy source
+  that is not a regular file), `template_file_too_large`, `template_total_too_large`, `unknown_token`,
+  `unresolved_token`. Reused from 06a: `platform_artifact_invalid`.
 
 ---
 
@@ -263,18 +270,30 @@ here; the CLI/orchestration lands in Task 3.
 ### Interfaces
 
 - **Consumes:** none (pure `node:fs`/`node:path`).
-- **Produces (LOCKED — consumed by Task 3's scaffolder + Task 5's copier-safety assertions):**
+- **Produces (LOCKED — consumed by Task 3's scaffolder, Task 5's pack harness, and 06e's gallery
+  templates + CI matrix. 06d OWNS these primitives; the signatures below are the stable contract 06e
+  imports — do not change them when executing 06e):**
   - `interface CopyOptions { templateDir: string; targetDir: string; tokens: Record<string, string> }`
   - `function resolveTargetDir(parentDir: string, projectName: string): string` — validates the name
     charset, rejects `..`, resolves under `parentDir`, requires the result absent. Throws
     `invalid_project_name` / `target_exists`.
   - `function copyTemplate(opts: CopyOptions): { filesWritten: number; bytesWritten: number }` — the
-    hardened copy+substitute. Throws the stable copier codes on any unsafe input.
+    hardened copy+substitute. `lstat`s EVERY directory before `readdir` — **the template ROOT
+    included** — so a symlinked template root (`templates/crm-lite -> /external/dir`) is rejected, not
+    followed. Throws the stable copier codes on any unsafe input.
   - `function copyTreeGuarded(srcDir: string, destDir: string): { filesCopied: number; bytesCopied: number }` —
-    the SAME untrusted-io guards (lstat/symlink-reject, excluded-dir skip, size bounds, path-only
-    errors) with NO substitution/rename: a verbatim regular-file-only tree copy. Consumed by Task 5's
-    pack-harness staging (INTERFACES F1) so a symlinked template file fails the pack and the source
-    worktree is never mutated. Throws the same stable copier codes.
+    the SAME untrusted-io guards (ROOT-and-every-subdirectory lstat/symlink-reject, excluded-dir skip,
+    size bounds, path-only errors) with NO substitution/rename: a verbatim regular-file-only tree copy.
+    Consumed by Task 5's pack-harness staging (INTERFACES F1) so a symlinked template file — or a
+    symlinked template ROOT — fails the pack and the source worktree is never mutated. Throws the same
+    stable copier codes.
+  - `function copyFileGuarded(src: string, dest: string): { bytesCopied: number }` — a guarded
+    **single-file** copy: `lstat` the source (reject a symlink → `template_symlink_rejected`; reject a
+    non-regular file → `template_not_regular_file`), size-bound with `lstat.size` BEFORE the read
+    (`template_file_too_large`), then `mkdir -p` the dest's parent and write. Every EXPLICIT one-off
+    file copy in a pack-staging script (`packages/create-movp/package.json`) goes through this
+    (INTERFACES F1) — a raw `copyFileSync` on an unguarded path would follow a symlinked
+    `package.json` straight out of the repo and pack whatever it points at.
   - Exported constants `MAX_FILE_BYTES`, `MAX_TOTAL_BYTES`, `TOKEN_PATTERN`.
 
 ### Steps
@@ -354,22 +373,23 @@ templates/
 ```
 
 (`templates/` is gitignored as a DEFENSIVE guard — the pack harness materializes templates into a
-TEMP staging tree, never here (INTERFACES F1), so this dir should stay absent; the ignore only
-prevents a stray local materialization from being committed. The source of truth is the repo-root
-`templates/crm-lite/`.)
+TEMP staging tree, never here (INTERFACES F1); the ignore only prevents a stray local materialization
+from being committed. The source of truth is the repo-root `templates/crm-lite/`. Note it is
+gitignored, **not forbidden**: no gate may assert this directory is absent, and nothing may delete it
+— a developer's files there are theirs. The gate's F2 snapshot proves staging did not TOUCH it,
+which is the invariant that actually matters.)
 
 **5. Write the failing test** `packages/create-movp/test/copier.test.ts`:
 
 ```ts
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import {
+  existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { existsSync, readdirSync } from 'node:fs'
-import { execFileSync } from 'node:child_process'
-import { fileURLToPath } from 'node:url'
-import { dirname } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { copyTemplate, copyTreeGuarded, resolveTargetDir } from '../src/copier.ts'
+import { copyFileGuarded, copyTemplate, copyTreeGuarded, resolveTargetDir } from '../src/copier.ts'
 
 let work: string
 let templateDir: string
@@ -382,6 +402,24 @@ beforeEach(() => {
 afterEach(() => rmSync(work, { recursive: true, force: true }))
 
 const tokens = { __PROJECT_NAME__: 'acme-crm', __WORKSPACE_ID__: '33333333-3333-3333-3333-333333333333' }
+
+// Deterministic content-hash manifest of a tree — used to assert a copy pass mutated NOTHING in its
+// SOURCE. lstat (never stat): a symlink is recorded by its target STRING, never followed or read.
+// Hashes + paths only; file CONTENTS are never surfaced in a diff message.
+const snapshot = (root: string): string => {
+  const lines: string[] = []
+  const walk = (rel: string): void => {
+    for (const entry of readdirSync(join(root, rel)).sort()) {
+      const childRel = rel ? join(rel, entry) : entry
+      const info = lstatSync(join(root, childRel))
+      if (info.isSymbolicLink()) lines.push(`symlink ${childRel}`)
+      else if (info.isDirectory()) { lines.push(`dir ${childRel}`); walk(childRel) }
+      else lines.push(`file ${createHash('sha256').update(readFileSync(join(root, childRel))).digest('hex')} ${childRel}`)
+    }
+  }
+  walk('')
+  return lines.join('\n')
+}
 
 describe('resolveTargetDir', () => {
   it('resolves an absent dir under the parent', () => {
@@ -432,6 +470,21 @@ describe('copyTemplate', () => {
     symlinkSync(join(work, 'secret'), join(templateDir, 'notes.ts'))
     expect(() => copyTemplate({ templateDir, targetDir: join(work, 'out'), tokens }))
       .toThrow(/template_symlink_rejected/)
+  })
+
+  // INTERFACES F1(a): the ROOT itself. `readdirSync` FOLLOWS a symlink, so a symlinked template root
+  // would be walked and an external tree read+copied. The root must be lstat'd BEFORE the readdir.
+  it('rejects a symlinked template ROOT WITHOUT reading through it', () => {
+    const external = join(work, 'external')
+    mkdirSync(external)
+    writeFileSync(join(external, 'secret.ts'), 'ssh-key\n')
+    const rootLink = join(work, 'linked-template') // templates/crm-lite -> /external/dir
+    symlinkSync(external, rootLink)
+    const target = join(work, 'out-root')
+    expect(() => copyTemplate({ templateDir: rootLink, targetDir: target, tokens }))
+      .toThrow(/template_symlink_rejected/)
+    // Nothing was read through the link and nothing was created.
+    expect(existsSync(target)).toBe(false)
   })
 
   it('rejects an oversized file before buffering it', () => {
@@ -505,33 +558,66 @@ describe('copyTreeGuarded (pack-harness staging — INTERFACES F1)', () => {
       .toThrow(/template_file_too_large/)
   })
 
-  // (b) A staging pass writes ONLY into its TEMP destDir — the source worktree is byte-unchanged.
-  // Hermetic (synthetic source tree) so this stays in the Task 2 suite with no dependency on the
-  // Task 4 template; the REAL end-to-end worktree-clean check runs in gate.sh after the real pack.
-  it('leaves the source worktree unchanged (writes only into the TEMP destDir)', () => {
-    // test file lives at packages/create-movp/test/ → three levels up is the repo root.
-    const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
-    const pkgTemplates = join(repoRoot, 'packages', 'create-movp', 'templates')
-    // Compare git status BEFORE/AFTER (not "empty") so a dev's unrelated uncommitted state doesn't
-    // make this flaky — we assert the staging pass ADDED no change to the tracked tree.
-    const gitStatus = (): string =>
-      execFileSync('git', ['-C', repoRoot, 'status', '--porcelain', '--', 'packages/create-movp', 'templates'], {
-        encoding: 'utf8',
-      })
-    const before = gitStatus()
-    const templatesBefore = existsSync(pkgTemplates) ? readdirSync(pkgTemplates).sort().join(',') : '<absent>'
-    // A synthetic template tree stands in for the real one; staging targets a TEMP dir.
-    const src = join(work, 'template')
+  // INTERFACES F1(a): a symlinked staging ROOT is rejected before any readdir — same guard as the
+  // runtime copier, because the pack harness points this at `templates/crm-lite` from a shell script.
+  it('rejects a symlinked source ROOT WITHOUT reading through it', () => {
+    const external = join(work, 'external')
+    mkdirSync(external)
+    writeFileSync(join(external, 'secret.ts'), 'ssh-key\n')
+    const rootLink = join(work, 'linked-src')
+    symlinkSync(external, rootLink)
+    const dest = join(work, 'staged-root')
+    expect(() => copyTreeGuarded(rootLink, dest)).toThrow(/template_symlink_rejected/)
+    expect(existsSync(dest)).toBe(false)
+  })
+
+  // (b) A staging pass writes ONLY into its TEMP destDir — the SOURCE tree is byte-unchanged.
+  // Hermetic (synthetic source tree, content-hash snapshot) — no `git status`, no repo-root
+  // dependency, so a developer's unrelated WIP can never fail it. The REAL repo-subtree
+  // "staging changed nothing" assertion is Task 5's before/after snapshot gate (INTERFACES F2).
+  it('leaves the SOURCE tree byte-unchanged (writes only into the TEMP destDir)', () => {
+    const src = join(work, 'src-tree')
     mkdirSync(join(src, 'supabase'), { recursive: true })
     writeFileSync(join(src, 'package.json.template'), '{"name":"__PROJECT_NAME__"}\n')
     writeFileSync(join(src, 'supabase', 'config.toml'), 'x\n')
+    const before = snapshot(src)
     copyTreeGuarded(src, join(work, 'staged', 'crm-lite'))
     expect(existsSync(join(work, 'staged', 'crm-lite', 'package.json.template'))).toBe(true)
-    // The in-repo package templates dir is untouched (still absent / identical listing) …
-    const templatesAfter = existsSync(pkgTemplates) ? readdirSync(pkgTemplates).sort().join(',') : '<absent>'
-    expect(templatesAfter).toBe(templatesBefore)
-    // … and git sees no new change under create-movp or templates/.
-    expect(gitStatus()).toBe(before)
+    expect(snapshot(src)).toBe(before)
+  })
+})
+
+describe('copyFileGuarded (explicit single-file copy — INTERFACES F1(b))', () => {
+  it('copies a regular file byte-for-byte and creates the dest parent', () => {
+    writeFileSync(join(templateDir, 'package.json'), '{"name":"create-movp"}\n')
+    const dest = join(work, 'staged', 'package.json') // parent does not exist yet
+    const res = copyFileGuarded(join(templateDir, 'package.json'), dest)
+    expect(res.bytesCopied).toBe(23) // '{"name":"create-movp"}\n' — 22 chars + newline
+    expect(readFileSync(dest, 'utf8')).toBe('{"name":"create-movp"}\n')
+  })
+
+  it('rejects a symlinked SOURCE WITHOUT reading its target', () => {
+    writeFileSync(join(work, 'secret'), 'ssh-key\n')
+    const src = join(templateDir, 'package.json')
+    symlinkSync(join(work, 'secret'), src) // a symlinked package.json in the staged package
+    const dest = join(work, 'staged', 'package.json')
+    let msg = ''
+    expect(() => {
+      try { copyFileGuarded(src, dest) } catch (e) { msg = String(e); throw e }
+    }).toThrow(/template_symlink_rejected/)
+    expect(msg).not.toContain('ssh-key') // path + reason only — never the target's bytes
+    expect(existsSync(dest)).toBe(false)
+  })
+
+  it('rejects an oversized source before buffering it', () => {
+    writeFileSync(join(templateDir, 'big.json'), 'x'.repeat(6 * 1024 * 1024))
+    expect(() => copyFileGuarded(join(templateDir, 'big.json'), join(work, 'staged', 'big.json')))
+      .toThrow(/template_file_too_large/)
+  })
+
+  it('rejects a non-regular-file source (a directory)', () => {
+    expect(() => copyFileGuarded(templateDir, join(work, 'staged', 'nope')))
+      .toThrow(/template_not_regular_file/)
   })
 })
 ```
@@ -549,7 +635,7 @@ pnpm install \
 
 ```ts
 import { lstatSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
-import { join, resolve, sep } from 'node:path'
+import { dirname, join, resolve, sep } from 'node:path'
 
 export const MAX_FILE_BYTES = 5 * 1024 * 1024
 export const MAX_TOTAL_BYTES = 40 * 1024 * 1024
@@ -598,6 +684,18 @@ export function resolveTargetDir(parentDir: string, projectName: string): string
   return target
 }
 
+// GOTCHA (INTERFACES F1a) — `readdirSync` FOLLOWS symlinks. Calling it on an unvalidated directory
+// walks straight through a symlinked ROOT (`templates/crm-lite -> /external/dir`) and reads a tree
+// outside the project. So EVERY directory is lstat'd BEFORE it is readdir'd — the initial root AND
+// every recursed subdirectory. `lstatSync` throws ENOENT for a missing dir (loud, same as readdir).
+// The rejection carries the PATH only — never the target's contents.
+function assertRealDir(absDir: string, rel: string): void {
+  const info = lstatSync(absDir)
+  if (info.isSymbolicLink() || !info.isDirectory()) {
+    throw new CopierError('template_symlink_rejected', rel)
+  }
+}
+
 function extname(name: string): string {
   const dot = name.lastIndexOf('.')
   return dot <= 0 ? '' : name.slice(dot).toLowerCase()
@@ -632,6 +730,8 @@ export function copyTemplate(opts: CopyOptions): { filesWritten: number; bytesWr
 
   const walk = (relDir: string): void => {
     const absDir = join(opts.templateDir, relDir)
+    // lstat BEFORE readdir — the ROOT (relDir === '') and every recursed subdirectory (F1a).
+    assertRealDir(absDir, relDir || '.')
     for (const entry of readdirSync(absDir).sort()) {
       const rel = relDir ? join(relDir, entry) : entry
       const abs = join(absDir, entry)
@@ -667,8 +767,10 @@ export function copyTemplate(opts: CopyOptions): { filesWritten: number; bytesWr
     }
   }
 
-  mkdirSync(opts.targetDir, { recursive: true })
+  // walk() validates the ROOT before its readdir, so a rejected root creates NOTHING. The trailing
+  // mkdir only guarantees the (possibly empty) target exists once the source is known-good.
   walk('')
+  mkdirSync(opts.targetDir, { recursive: true })
   return { filesWritten, bytesWritten }
 }
 
@@ -686,6 +788,10 @@ export function copyTreeGuarded(srcDir: string, destDir: string): { filesCopied:
 
   const walk = (relDir: string): void => {
     const absDir = join(srcDir, relDir)
+    // lstat BEFORE readdir — the ROOT (relDir === '') and every recursed subdirectory (F1a). The pack
+    // harness passes `templates/crm-lite` in from a shell script; a symlinked root must FAIL the pack,
+    // not silently pack an external tree.
+    assertRealDir(absDir, relDir || '.')
     for (const entry of readdirSync(absDir).sort()) {
       const rel = relDir ? join(relDir, entry) : entry
       const abs = join(absDir, entry)
@@ -711,16 +817,41 @@ export function copyTreeGuarded(srcDir: string, destDir: string): { filesCopied:
     }
   }
 
-  mkdirSync(destDir, { recursive: true })
+  // walk() validates the ROOT before its readdir, so a rejected root creates NOTHING in destDir.
   walk('')
+  mkdirSync(destDir, { recursive: true })
   return { filesCopied, bytesCopied }
+}
+
+// Guarded EXPLICIT single-file copy. The tree walks above are not the only read path: the pack
+// harness also copies individual files (`packages/create-movp/package.json`) one at a time. A raw
+// `copyFileSync`/`readFileSync` there FOLLOWS a symlink — a symlinked `package.json` would be read
+// and packed into the published tarball. Every explicit one-off copy in a staging script goes
+// through THIS function (INTERFACES F1b): lstat first, reject symlink/non-regular-file, bound the
+// size BEFORE the read, then write. Path + reason only in every error — never the source bytes.
+export function copyFileGuarded(src: string, dest: string): { bytesCopied: number } {
+  // lstat BEFORE any stat/read — the throw fires on the lstat RESULT, so the target of a symlinked
+  // `src` is NEVER opened. `lstatSync` throws ENOENT if `src` is absent (loud, not silent).
+  const info = lstatSync(src)
+  if (info.isSymbolicLink()) throw new CopierError('template_symlink_rejected', src)
+  if (!info.isFile()) throw new CopierError('template_not_regular_file', src)
+  // Bound BEFORE buffering: an oversized file is rejected without being read into memory.
+  if (info.size > MAX_FILE_BYTES) throw new CopierError('template_file_too_large', src)
+
+  const buf = readFileSync(src)
+  mkdirSync(dirname(dest), { recursive: true })
+  writeFileSync(dest, buf) // byte-for-byte; NO substitution
+  return { bytesCopied: buf.length }
 }
 ```
 
 **7. `packages/create-movp/src/index.ts`:**
 
 ```ts
+// The pack-staging scripts (Task 5, and 06e's CI matrix) import `copyTreeGuarded` + `copyFileGuarded`
+// from the BUILT dist — this is the public seam, so both MUST be re-exported here.
 export {
+  copyFileGuarded,
   copyTemplate,
   copyTreeGuarded,
   resolveTargetDir,
@@ -731,8 +862,8 @@ export {
 } from './copier.ts'
 ```
 
-Re-run — **Expected: PASS** (4 `resolveTargetDir` + 8 `copyTemplate` + 4 `copyTreeGuarded` = 16
-tests across the described cases). Then typecheck:
+Re-run — **Expected: PASS** (4 `resolveTargetDir` + 9 `copyTemplate` + 5 `copyTreeGuarded` +
+4 `copyFileGuarded` = 22 tests across the described cases). Then typecheck:
 
 ```
 pnpm --filter create-movp exec vitest run
@@ -748,11 +879,15 @@ pnpm --filter create-movp exec vitest run \
   && pnpm --filter create-movp exec tsc --noEmit
 ```
 
-**Expected:** copier suite green; every unsafe input (`..`, bad charset, existing target, symlink,
-oversized file, total-cap, unknown token, unresolved token) throws its stable code; a binary file is
-copied byte-identically; `copyTreeGuarded` rejects an external symlink without reading its target,
-copies verbatim (no substitution/rename), bounds size, and leaves the source worktree byte-unchanged;
-typecheck clean.
+**Expected:** copier suite green (22 tests); every unsafe input (`..`, bad charset, existing target,
+symlink, **symlinked tree ROOT**, oversized file, total-cap, unknown token, unresolved token) throws
+its stable code; a binary file is copied byte-identically; `copyTreeGuarded` rejects an external
+symlink (entry OR root) without reading its target, copies verbatim (no substitution/rename), bounds
+size, and leaves the SOURCE tree byte-unchanged (content-hash snapshot); `copyFileGuarded` refuses a
+symlinked / non-regular / oversized source and copies a regular file byte-for-byte; typecheck clean.
+
+> The matching **no-unguarded-copy grep gate** runs in Task 5, once both consumers of these
+> primitives exist (`src/scaffold.ts` from Task 3 and `stage-create-movp.mjs` from Task 5).
 
 ---
 
@@ -877,10 +1012,10 @@ pnpm --filter create-movp exec vitest run scaffold
 **2. Implement** `packages/create-movp/src/scaffold.ts`:
 
 ```ts
-import { copyFileSync, lstatSync, mkdirSync, readdirSync } from 'node:fs'
+import { lstatSync, mkdirSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { verifyPlatformArtifact } from '@movp/platform'
-import { copyTemplate, resolveTargetDir } from './copier.ts'
+import { copyFileGuarded, copyTemplate, resolveTargetDir } from './copier.ts'
 
 export interface ScaffoldOptions {
   templateDir: string
@@ -918,8 +1053,12 @@ export async function scaffold(
   for (const name of readdirSync(srcMigrations).sort()) {
     if (!name.endsWith('.sql')) continue
     const abs = join(srcMigrations, name)
+    // A symlinked migration is an ARTIFACT defect → the 06a code, not a copier code (the client
+    // remedy is "re-install @movp/platform", not "fix your template"). lstat BEFORE any read.
     if (lstatSync(abs).isSymbolicLink()) throw new Error(`platform_artifact_invalid: migration is a symlink: ${name}`)
-    copyFileSync(abs, join(migrationsDir, name))
+    // Never a raw `copyFileSync` (INTERFACES F1b): copyFileGuarded re-lstats and, crucially, bounds
+    // the size BEFORE buffering, so an oversized artifact cannot OOM the scaffolder.
+    copyFileGuarded(abs, join(migrationsDir, name))
   }
 
   // 3. Codegen is NOT run here (INTERFACES F2). The scaffold's `@movp/*` deps + `tsx` do not exist
@@ -1444,8 +1583,11 @@ no workspace links, and drive the real edge surfaces + CLI + `verify-schema-runt
 
 - **Create:** `fixtures/verdaccio-crm-lite/verdaccio.yaml`
 - **Create:** `fixtures/verdaccio-crm-lite/stage-create-movp.mjs` (guarded staging — INTERFACES F1)
+- **Create:** `fixtures/verdaccio-crm-lite/tree-snapshot.mjs` (staging-safety snapshot — INTERFACES F2)
 - **Create:** `fixtures/verdaccio-crm-lite/gate.sh` (executable)
 - **Create:** `fixtures/verdaccio-crm-lite/README.md`
+- **Test (create):** `packages/create-movp/test/staging-safety.test.ts` (INTERFACES F2 — staging
+  preserves pre-existing untracked files and unrelated WIP edits)
 - **Modify:** root `package.json` (`devDependencies.verdaccio`, a `check:verdaccio-crm` script)
 
 ### Interfaces
@@ -1455,9 +1597,13 @@ no workspace links, and drive the real edge surfaces + CLI + `verify-schema-runt
   (`SUPABASE_URL` + `SUPABASE_ANON_KEY` + `MOVP_ACCESS_TOKEN`, verified in
   `packages/cli/src/client.ts:78-95`).
 - **Produces (the C6d acceptance evidence + the harness shape 06e's CI matrix reuses):** a
-  `gate.sh` whose steps — stage → publish-once → scaffold → install → codegen → reset → serve → drive —
-  are the per-template smoke 06e runs across all four templates. The `stage` step (guarded staging
-  into a TEMP tree, INTERFACES F1) is the shared, source-worktree-safe pack mechanism 06e reuses.
+  `gate.sh` whose steps — snapshot → stage → snapshot-compare → publish-once → scaffold → install →
+  codegen → reset → serve → drive — are the per-template smoke 06e runs across all four templates.
+  The `stage` step (guarded staging into a TEMP tree, INTERFACES F1) is the shared,
+  source-worktree-safe pack mechanism 06e reuses, and `tree-snapshot.mjs` (INTERFACES F2) is the
+  shared staging-safety assertion: **"staging changed nothing", never "the tree is pristine"**. 06e
+  must reuse both rather than reimplementing a `git status --porcelain`/`test ! -e templates` check —
+  those fail a developer who merely has unrelated WIP.
 
 ### Steps
 
@@ -1495,14 +1641,20 @@ invoking it, so `dist/index.js` exists.
 ```js
 #!/usr/bin/env node
 // C6d pack-harness staging (INTERFACES F1): assemble a create-movp publish tree in a TEMP dir. The
-// `files` whitelist ships package.json + dist/ + templates/, so those are all we stage. Templates go
-// through `copyTreeGuarded` (lstat/symlink-reject, regular-file-only, size-bound) — a symlinked
-// template file throws `template_symlink_rejected` WITHOUT reading its target, failing the pack.
-import { copyFileSync, mkdirSync } from 'node:fs'
+// `files` whitelist ships package.json + dist/ + templates/, so those are all we stage.
+//
+// EVERY read here is guarded — the walks AND the single-file copy (F1a + F1b):
+//   * `copyTreeGuarded` lstats every directory BEFORE readdir (the ROOT included, so a symlinked
+//     `templates/crm-lite -> /external/dir` is REJECTED, not followed) and every entry before read.
+//   * `copyFileGuarded` lstats `package.json` before reading it — a raw `copyFileSync` would follow
+//     a symlinked package.json and pack whatever it points at.
+// A symlinked/oversized input throws `template_symlink_rejected` / `template_file_too_large` WITHOUT
+// reading the target, failing the pack. This script NEVER writes outside `stagingDir`.
+import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
-// The BUILT create-movp dist re-exports copyTreeGuarded — the exact function `npm create movp` runs.
+// The BUILT create-movp dist re-exports both guards — the exact functions `npm create movp` runs.
 // This module path is fixed relative to THIS script (fixtures/verdaccio-crm-lite/ → repo root).
-import { copyTreeGuarded } from '../../packages/create-movp/dist/index.js'
+import { copyFileGuarded, copyTreeGuarded } from '../../packages/create-movp/dist/index.js'
 
 const [repoRoot, stagingDir] = process.argv.slice(2)
 if (!repoRoot || !stagingDir) {
@@ -1512,10 +1664,158 @@ if (!repoRoot || !stagingDir) {
 const pkgDir = join(repoRoot, 'packages', 'create-movp')
 
 mkdirSync(stagingDir, { recursive: true })
-copyFileSync(join(pkgDir, 'package.json'), join(stagingDir, 'package.json'))
+copyFileGuarded(join(pkgDir, 'package.json'), join(stagingDir, 'package.json'))
 copyTreeGuarded(join(pkgDir, 'dist'), join(stagingDir, 'dist')) // own build output — guarded anyway
 copyTreeGuarded(join(repoRoot, 'templates', 'crm-lite'), join(stagingDir, 'templates', 'crm-lite'))
 console.log(`staged create-movp → ${stagingDir}`)
+```
+
+**1c. `fixtures/verdaccio-crm-lite/tree-snapshot.mjs`** — the staging-safety snapshot (INTERFACES F2).
+The gate must assert **"staging changed nothing"**, NOT "the worktree is pristine": a developer
+routinely runs it with unrelated WIP edits and pre-existing untracked files, and a
+`git status --porcelain` / `test ! -e templates` check would falsely fail them (and tempt an executor
+to "clean" — i.e. DELETE — their untracked work). So we hash the source subtrees the staging step
+reads, BEFORE and AFTER, and require the two manifests to be byte-identical.
+
+```js
+#!/usr/bin/env node
+// C6d staging-safety snapshot (INTERFACES F2): a deterministic content-hash manifest of the SOURCE
+// subtrees the pack step reads. gate.sh writes one BEFORE staging and one AFTER and diffs them; the
+// gate passes iff they are byte-identical. This asserts "staging MUTATED nothing" — a dirty worktree,
+// unrelated WIP, and pre-existing untracked files (e.g. packages/create-movp/templates/preserve.txt)
+// are PRESERVED and pass, because they are present in BOTH snapshots.
+import { createHash } from 'node:crypto'
+import { lstatSync, readFileSync, readdirSync, readlinkSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
+
+// The two subtrees staging reads. Everything else in the repo is out of scope for this invariant.
+const ROOTS = ['packages/create-movp', 'templates']
+// Volatile and never written by staging: hashing them is slow and flaky, not safer. (dist/ IS
+// hashed — the gate builds it BEFORE the first snapshot, so it is stable across the two.)
+const SKIP_DIRS = new Set(['node_modules', '.git', '.turbo'])
+
+/** @param {string} repoRoot @returns {string} one sorted `<kind> <sha256|target|-> <relpath>` line per entry */
+export function snapshotTree(repoRoot) {
+  /** @type {string[]} */
+  const lines = []
+  const walk = (rel) => {
+    for (const entry of readdirSync(join(repoRoot, rel)).sort()) {
+      const childRel = join(rel, entry)
+      // lstat, NEVER stat: a symlink is recorded by its target STRING and never followed or read —
+      // the snapshot must not become the exfiltration path the copier guards close.
+      const info = lstatSync(join(repoRoot, childRel))
+      if (info.isSymbolicLink()) { lines.push(`symlink ${readlinkSync(join(repoRoot, childRel))} ${childRel}`); continue }
+      if (info.isDirectory()) {
+        if (SKIP_DIRS.has(entry)) continue
+        lines.push(`dir - ${childRel}`)
+        walk(childRel)
+        continue
+      }
+      if (!info.isFile()) { lines.push(`other - ${childRel}`); continue }
+      // Hash the bytes; NEVER print them (a diff of this manifest goes to CI logs).
+      lines.push(`file ${createHash('sha256').update(readFileSync(join(repoRoot, childRel))).digest('hex')} ${childRel}`)
+    }
+  }
+  for (const root of ROOTS) {
+    const info = lstatSync(join(repoRoot, root), { throwIfNoEntry: false })
+    if (!info) { lines.push(`absent - ${root}`); continue } // an absent root is a legal, stable state
+    if (info.isSymbolicLink()) { lines.push(`symlink ${readlinkSync(join(repoRoot, root))} ${root}`); continue }
+    lines.push(`dir - ${root}`)
+    walk(root)
+  }
+  return `${lines.join('\n')}\n`
+}
+
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const [repoRoot, outFile] = process.argv.slice(2)
+  if (!repoRoot || !outFile) {
+    console.error('usage: tree-snapshot.mjs <repoRoot> <outFile>')
+    process.exit(2)
+  }
+  writeFileSync(outFile, snapshotTree(repoRoot))
+}
+```
+
+**1d. Write the failing test** `packages/create-movp/test/staging-safety.test.ts` (INTERFACES F2).
+This is the regression that pins the corrected invariant: a developer with a pre-existing untracked
+file under `packages/create-movp/templates/` AND an unrelated edit to a tracked template file runs
+the staging step — both survive byte-identical, and the snapshot comparison PASSES.
+
+```ts
+import { execFileSync } from 'node:child_process'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+
+// test file lives at packages/create-movp/test/ → three levels up is the repo root.
+const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
+const fixture = join(repoRoot, 'fixtures', 'verdaccio-crm-lite')
+const pkgTemplates = join(repoRoot, 'packages', 'create-movp', 'templates')
+const preserveFile = join(pkgTemplates, 'preserve.txt')
+const dirtiedFile = join(repoRoot, 'templates', 'crm-lite', 'README.md')
+
+const snapshot = (out: string): string => {
+  execFileSync('node', [join(fixture, 'tree-snapshot.mjs'), repoRoot, out], { stdio: 'pipe' })
+  return readFileSync(out, 'utf8')
+}
+
+let work = ''
+let originalReadme = ''
+let templatesPreexisted = false
+
+beforeAll(() => {
+  // stage-create-movp.mjs imports the BUILT dist — build it so the test never depends on a stale or
+  // absent dist/ (tsup on this package is ~1s). It also pins dist/ for the two snapshots below: no
+  // rebuild happens between them, so its hashes are stable.
+  execFileSync('pnpm', ['--filter', 'create-movp', 'build'], { cwd: repoRoot, stdio: 'pipe' })
+}, 120_000)
+
+// Set up in beforeEach / tear down in afterEach so the developer's tree is ALWAYS restored, even if
+// the assertion below throws mid-test.
+beforeEach(() => {
+  work = mkdtempSync(join(tmpdir(), 'movp-staging-safety-'))
+  originalReadme = readFileSync(dirtiedFile, 'utf8')
+  templatesPreexisted = existsSync(pkgTemplates)
+  // A developer's pre-existing untracked file, exactly where the OLD gate demanded absence …
+  mkdirSync(pkgTemplates, { recursive: true })
+  writeFileSync(preserveFile, 'do not delete me\n')
+  // … and an unrelated WIP edit to a tracked template file (so `git status --porcelain` is non-empty).
+  writeFileSync(dirtiedFile, `${originalReadme}\n<!-- local WIP -->\n`)
+})
+
+afterEach(() => {
+  writeFileSync(dirtiedFile, originalReadme)
+  rmSync(preserveFile, { force: true })
+  if (!templatesPreexisted) rmSync(pkgTemplates, { recursive: true, force: true })
+  rmSync(work, { recursive: true, force: true })
+})
+
+describe('pack staging (INTERFACES F2 — "staging changed nothing", not "the tree is pristine")', () => {
+  it('preserves a pre-existing untracked file + an unrelated WIP edit, and the snapshot gate PASSES', () => {
+    const before = snapshot(join(work, 'before.txt'))
+    execFileSync('node', [join(fixture, 'stage-create-movp.mjs'), repoRoot, join(work, 'stage')], { stdio: 'pipe' })
+    const after = snapshot(join(work, 'after.txt'))
+
+    // The gate's actual assertion: the manifests are byte-identical → staging mutated nothing.
+    expect(after).toBe(before)
+    // Both the untracked file and the WIP edit survive byte-identical.
+    expect(readFileSync(preserveFile, 'utf8')).toBe('do not delete me\n')
+    expect(readFileSync(dirtiedFile, 'utf8')).toBe(`${originalReadme}\n<!-- local WIP -->\n`)
+    // And staging really did produce the publish tree, in the TEMP dir only.
+    expect(existsSync(join(work, 'stage', 'package.json'))).toBe(true)
+    expect(existsSync(join(work, 'stage', 'templates', 'crm-lite'))).toBe(true)
+  })
+})
+```
+
+Run — **Expected: FAIL** (`Cannot find module .../fixtures/verdaccio-crm-lite/tree-snapshot.mjs`)
+until steps 1b–1c land; then **PASS**:
+
+```
+pnpm --filter create-movp exec vitest run staging-safety
 ```
 
 **2. `fixtures/verdaccio-crm-lite/gate.sh`** (mark executable `chmod +x`). This is the acceptance gate.
@@ -1549,17 +1849,31 @@ trap cleanup EXIT
 pnpm -w build
 pnpm --filter @movp/platform build
 pnpm --filter create-movp build
+# No unguarded read path may reach an explicit copy (INTERFACES F1b): every one-off file copy in the
+# staging script and the scaffolder goes through `copyFileGuarded`, never a raw copyFileSync.
+if grep -nE '\b(copyFileSync|readFileSync)\(' \
+     "$FIXTURE_DIR/stage-create-movp.mjs" "$REPO_ROOT/packages/create-movp/src/scaffold.ts"; then
+  echo "gate: unguarded copyFileSync/readFileSync — use copyFileGuarded (INTERFACES F1b)"; exit 1;
+fi
+
 # Stage create-movp into a TEMP publish tree — NEVER mutate the source worktree (INTERFACES F1).
 # The staging script materializes templates/ through the SAME guarded copier (`copyTreeGuarded`:
-# lstat/symlink-reject, regular-file-only, size-bound) that `npm create movp` runs — NOT a raw
-# `cp -R` — so a symlinked template file FAILS the pack instead of being packed into the published
-# tarball, and `packages/create-movp/templates` is never created/deleted (no untracked-work loss).
+# ROOT-and-subdirectory lstat/symlink-reject, regular-file-only, size-bound) that `npm create movp`
+# runs — NOT a raw `cp -R` — so a symlinked template file, or a symlinked template ROOT, FAILS the
+# pack instead of being packed into the published tarball.
+#
+# INTERFACES F2 — the invariant is "STAGING CHANGED NOTHING", not "the tree is pristine". Hash the
+# source subtrees staging reads BEFORE and AFTER and require byte-identical manifests. Do NOT assert
+# `packages/create-movp/templates` is absent or that `git status --porcelain` is empty: this gate is
+# run by developers with unrelated WIP and pre-existing untracked files, which are legitimate and
+# MUST be preserved (an "assert pristine" gate also tempts a cleanup that DELETES their work).
+node "$FIXTURE_DIR/tree-snapshot.mjs" "$REPO_ROOT" "$WORK/snapshot-before.txt"
 CM_STAGE="$(mktemp -d "${TMPDIR:-/tmp}/movp-create-movp.XXXXXX")"
 node "$FIXTURE_DIR/stage-create-movp.mjs" "$REPO_ROOT" "$CM_STAGE"
-# Belt-and-suspenders: the pack must not have touched the source worktree (INTERFACES F1 test b).
-test ! -e "$REPO_ROOT/packages/create-movp/templates" || { echo "gate: pack wrote into the source worktree"; exit 1; }
-if [ -n "$(git -C "$REPO_ROOT" status --porcelain -- packages/create-movp templates)" ]; then
-  echo "gate: staging dirtied the tracked worktree under packages/create-movp or templates/"; exit 1;
+node "$FIXTURE_DIR/tree-snapshot.mjs" "$REPO_ROOT" "$WORK/snapshot-after.txt"
+if ! diff -u "$WORK/snapshot-before.txt" "$WORK/snapshot-after.txt"; then
+  # The diff prints paths + sha256s only — file CONTENTS are never emitted into the log.
+  echo "gate: staging MUTATED the source subtree (paths + hashes above)"; exit 1;
 fi
 
 # 2. Start Verdaccio.
@@ -1677,9 +1991,12 @@ echo "gate: verdaccio-crm-lite acceptance PASS"
 
 **3. `fixtures/verdaccio-crm-lite/README.md`** — one paragraph: what the gate proves (C6d acceptance),
 prerequisites (Docker, supabase, deno, node, npm, psql, `verdaccio` installed), the single command
-`bash gate.sh`, the `+200` port-block note, and one sentence that the pack step stages `create-movp`
-into a TEMP tree via `stage-create-movp.mjs` (INTERFACES F1) so the source worktree is never mutated
-and a symlinked template file fails the pack rather than shipping.
+`bash gate.sh`, the `+200` port-block note, and two sentences on the pack step: it stages `create-movp`
+into a TEMP tree via `stage-create-movp.mjs` (INTERFACES F1) — every read guarded, so a symlinked
+template file *or a symlinked template root* fails the pack rather than shipping — and it proves that
+with a `tree-snapshot.mjs` before/after content-hash comparison (INTERFACES F2). State explicitly:
+**you may run this gate with a dirty worktree.** It asserts staging changed nothing; it does not
+require a pristine tree, and it never deletes your untracked files.
 
 **4. Add the script + dependency to root `package.json`:**
 
@@ -1689,10 +2006,12 @@ and a symlinked template file fails the pack rather than shipping.
 
 and (after approval) `"verdaccio": "^6.0.0"` in root `devDependencies`.
 
-**5. Run the gate.** **Expected output** (tail): `gate: verdaccio-crm-lite acceptance PASS`.
+**5. Run the staging-safety test, then the gate.** **Expected output** (tail):
+`gate: verdaccio-crm-lite acceptance PASS`.
 
 ```
 pnpm add -Dw verdaccio@^6   # only after approval
+pnpm --filter create-movp exec vitest run staging-safety
 bash fixtures/verdaccio-crm-lite/gate.sh
 ```
 
@@ -1701,16 +2020,21 @@ bash fixtures/verdaccio-crm-lite/gate.sh
 ### Gate (machine-checkable)
 
 ```
-bash fixtures/verdaccio-crm-lite/gate.sh
+pnpm --filter create-movp exec vitest run staging-safety \
+  && bash fixtures/verdaccio-crm-lite/gate.sh
 ```
 
 **Expected:** exit 0; final line `gate: verdaccio-crm-lite acceptance PASS`. Along the way the gate
-asserts: no `file:`/`workspace:`/`link:` specifier and no monorepo-source path in the scaffold or its
-lockfile (standalone install); the project baseline + platform migrations are present; `db reset`
-green on the isolated `+200` stack; `verify-schema-runtime` prints `"ok":true`; an authenticated HTTP
-GraphQL `companies` query, a streamable-MCP `tools/call company.list`, and `npm run movp -- company
+asserts: no raw `copyFileSync`/`readFileSync` in the staging script or scaffolder (every explicit copy
+is `copyFileGuarded` — F1b); the source subtree content-hash snapshot is **byte-identical before and
+after staging** (F2 — "staging changed nothing"; a dirty worktree and pre-existing untracked files
+under `packages/create-movp/` or `templates/` are preserved and still PASS); no
+`file:`/`workspace:`/`link:` specifier and no monorepo-source path in the scaffold or its lockfile
+(standalone install); the project baseline + platform migrations are present; `db reset` green on the
+isolated `+200` stack; `verify-schema-runtime` prints `"ok":true`; an authenticated HTTP GraphQL
+`companies` query, a streamable-MCP `tools/call company.list`, and `npm run movp -- company
 create/list` all return the seeded/created `Acme Corp`. (Prerequisites: Docker running; `supabase`,
-`deno`, `node`, `npm`, `psql` on PATH; `verdaccio` installed.)
+`deno`, `node`, `npm`, `psql` on PATH; `verdaccio` installed. **The worktree may be dirty.**)
 
 ---
 
