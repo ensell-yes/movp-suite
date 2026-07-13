@@ -28,8 +28,9 @@
 - Modify `packages/codegen/src/generate.ts` — add project-mode branch keyed on `deltasRegistryPath` (Task 3).
 - Create `packages/codegen/src/new-delta.ts` — allocate ownership + emit one additive migration (Task 4); wire `@movp/cli`.
 - Create `packages/codegen/src/emit-manifest.ts` — `movp.schema.json` emitter (Task 5).
-- Create `packages/codegen/src/metadata-consistency.ts` — pure DB↔schema comparator (Task 6); `scripts/check-metadata-consistency.ts` wiring.
+- Create `packages/codegen/src/metadata-consistency.ts` — pure DB↔schema comparator (Task 6); `scripts/check-metadata-consistency.ts` psql wiring (Task 6).
 - Create `packages/codegen/test/*.test.ts` per task; integration slice `packages/codegen/test/project-codegen-e2e.test.ts` (Task 7).
+- Create `scripts/gate-metadata-consistency.sh` + `.github/workflows/ci.yml` `metadata-consistency` job — the live DB-reset consistency gate (Task 8, F7).
 - Extend `packages/codegen/src/index.ts` exports as each symbol lands.
 
 ---
@@ -47,13 +48,13 @@
   - `interface DeltaRegistryEntry { file: string; collections: string[]; events: string[] }`
   - `interface DeltaRegistry { deltas: DeltaRegistryEntry[] }` — the on-disk shape of `movp.deltas.json` (locked in INTERFACES §"Project codegen: deltas + manifest").
   - `loadDeltaRegistry(path: string): Promise<DeltaRegistry>` — missing file → `{ deltas: [] }`; symlink / oversized / structurally-invalid → throws `Error` whose message starts with `invalid_deltas_registry`.
-  - `saveDeltaRegistry(path: string, registry: DeltaRegistry): Promise<void>` — writes `JSON.stringify(registry, null, 2) + '\n'`.
+  - `saveDeltaRegistry(path: string, registry: DeltaRegistry): Promise<void>` — safe-write (F6): `lstat`-rejects a symlink / non-regular-file target BEFORE writing (no follow-through), then writes `JSON.stringify(registry, null, 2) + '\n'` with least-privilege mode `0o600`.
 
 - [ ] **Step 1: Write the failing test**
 
 ```ts
 // packages/codegen/test/deltas-registry.test.ts
-import { mkdtemp, symlink, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -99,6 +100,22 @@ describe('loadDeltaRegistry', () => {
     await writeFile(path, JSON.stringify({ deltas: [{ file: 'x.sql' }] }))
     await expect(loadDeltaRegistry(path)).rejects.toThrow(/invalid_deltas_registry/)
   })
+
+  it('safe-write refuses to overwrite a symlinked registry target without following it (F6)', async () => {
+    const d = await dir()
+    const target = join(d, 'outside.json')
+    const original = JSON.stringify({ deltas: [] })
+    await writeFile(target, original)
+    const path = join(d, 'movp.deltas.json')
+    await symlink(target, path)
+    await expect(
+      saveDeltaRegistry(path, {
+        deltas: [{ file: '20260712000001_movp_generated_x.sql', collections: ['deal'], events: [] }],
+      }),
+    ).rejects.toThrow(/invalid_deltas_registry.*symlink/)
+    // The symlink's target must be byte-unchanged — the write must NOT have followed the link.
+    expect(await readFile(target, 'utf8')).toBe(original)
+  })
 })
 ```
 
@@ -122,6 +139,9 @@ export interface DeltaRegistry {
 }
 
 const MAX_REGISTRY_BYTES = 1 * 1024 * 1024
+// F6: movp.deltas.json can carry sensitive collection/event refs — write it 0o600
+// (least-privilege; never world/group-readable). Per [[untrusted-io-and-resource-bounds]].
+const REGISTRY_FILE_MODE = 0o600
 
 function fail(reason: string): never {
   // Never include file CONTENTS in diagnostics — path + reason only.
@@ -153,7 +173,7 @@ async function nodeFs() {
   return (await import('node:fs/promises')) as {
     lstat(path: string): Promise<{ isFile(): boolean; isSymbolicLink(): boolean; size: number }>
     readFile(path: string, encoding: 'utf8'): Promise<string>
-    writeFile(path: string, contents: string): Promise<void>
+    writeFile(path: string, contents: string, options?: { mode: number }): Promise<void>
   }
 }
 
@@ -184,7 +204,20 @@ export async function loadDeltaRegistry(path: string): Promise<DeltaRegistry> {
 export async function saveDeltaRegistry(path: string, registry: DeltaRegistry): Promise<void> {
   assertRegistry(registry, path)
   const f = await nodeFs()
-  await f.writeFile(path, `${JSON.stringify(registry, null, 2)}\n`)
+  // F6 safe-write ([[untrusted-io-and-resource-bounds]]): lstat the target BEFORE writing
+  // and refuse to follow/overwrite a symlink or non-regular file (a planted symlink could
+  // redirect the write outside the project). Then write with a least-privilege mode.
+  let info: Awaited<ReturnType<typeof f.lstat>> | null = null
+  try {
+    info = await f.lstat(path)
+  } catch (error: unknown) {
+    if (!isMissing(error)) throw error
+  }
+  if (info !== null) {
+    if (info.isSymbolicLink()) fail(`${path}: refusing to overwrite a symlink`)
+    if (!info.isFile()) fail(`${path}: not a regular file`)
+  }
+  await f.writeFile(path, `${JSON.stringify(registry, null, 2)}\n`, { mode: REGISTRY_FILE_MODE })
 }
 ```
 
@@ -202,7 +235,7 @@ export {
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `pnpm --filter @movp/codegen exec vitest run test/deltas-registry.test.ts`
-Expected: PASS — 5 tests.
+Expected: PASS — 6 tests.
 
 - [ ] **Step 5: Commit**
 
@@ -211,7 +244,7 @@ git add packages/codegen/src/deltas-registry.ts packages/codegen/test/deltas-reg
 git commit -m "feat(codegen): C6c.1 validated movp.deltas.json registry loader"
 ```
 
-**Gate:** `pnpm --filter @movp/codegen exec vitest run test/deltas-registry.test.ts` PASS (5). Symlink + malformed inputs throw `invalid_deltas_registry` with zero content leakage.
+**Gate:** `pnpm --filter @movp/codegen exec vitest run test/deltas-registry.test.ts` PASS (6). Symlink + malformed load inputs throw `invalid_deltas_registry` with zero content leakage; the write path (`saveDeltaRegistry`) refuses to follow/overwrite a symlinked target (F6 safe-write) and leaves its target byte-unchanged, writing `0o600`.
 
 ---
 
@@ -398,7 +431,7 @@ git commit -m "feat(codegen): C6c.2 project-scoped emitters with layer=project +
 **Interfaces:**
 - Consumes (06a): `schema.projectCollections`. (06b): `generate` already has `schema`. (Task 1): `loadDeltaRegistry`, `DeltaRegistry`. (Task 2): `emitProjectMigration`, `emitProjectDeltaSql`.
 - Produces:
-  - `GenerateOptions` gains `deltasRegistryPath?: string` (presence ⇒ project mode) and `manifestPath?: string` / `generatorVersion?: string` (consumed in Task 5).
+  - `GenerateOptions` gains `deltasRegistryPath?: string` (presence ⇒ project mode) and `manifestPath?: string` / `generatorVersion?: string` (consumed in Task 5). `schema: MovpSchema` stays **REQUIRED** (F4, 06b) — this task must NOT reintroduce an optional/defaulted `schema` nor a `generate(options = {})` default.
   - Project mode contract: baseline (`migrationName`, project-scoped) + every registry delta are **compare-before-write / fail-on-drift**; codegen **never deletes** a generated migration; a project collection with no owning registry entry (and not baseline-owned) → throw `new_generated_delta_required` with **ZERO** file writes.
 
 - [ ] **Step 1: Write the failing test**
@@ -496,6 +529,16 @@ describe('generate() project mode', () => {
     await generate(opts(s, ctx))
     expect(await readFile(join(ctx.migrationsDir, '20260712130000_movp_generated_company.sql'), 'utf8')).toBe(delta)
   })
+
+  it('type-rejects a generate() call with no schema (F4 — schema is REQUIRED)', () => {
+    // Compile-time assertion, verified by `tsc --noEmit` (Task 7 gate), NOT at runtime:
+    // `noSchemaCall` is never invoked. The `@ts-expect-error` below fails the typecheck
+    // if omitting `schema` were ever allowed again (the F4 regression this pins shut).
+    const noSchemaCall = () =>
+      // @ts-expect-error - F4 (06b): options.schema is REQUIRED; a no-schema call must not typecheck.
+      generate({ migrationsDir: '/tmp/movp', migrationName: BASELINE, deltasRegistryPath: '/tmp/movp.deltas.json' })
+    expect(typeof noSchemaCall).toBe('function')
+  })
 })
 ```
 
@@ -524,7 +567,10 @@ export interface GenerateOptions {
   migrationsDir?: string
   typesPath?: string
   deltas?: readonly GeneratedDelta[]
-  schema?: MovpSchema
+  // F4 (06b owns): `schema` is REQUIRED — no optional `?`, no `= {}` default on
+  // `generate()`. Monorepo AND project callers both pass it explicitly (06b rewires
+  // `scripts/codegen.ts` et al.). 06c must NOT reintroduce an optional/defaulted schema.
+  schema: MovpSchema
   deltasRegistryPath?: string
   manifestPath?: string
   generatorVersion?: string
@@ -535,7 +581,7 @@ At the very start of `generate()`:
 
 ```ts
 export async function generate(
-  options: GenerateOptions = {},
+  options: GenerateOptions,
 ): Promise<{ migrationPath: string; typesPath: string; deltaPaths: string[] }> {
   if (options.deltasRegistryPath !== undefined) return generateProject(options)
   // ...existing monorepo body unchanged...
@@ -629,7 +675,7 @@ async function generateProject(
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `pnpm --filter @movp/codegen exec vitest run test/generate-project.test.ts test/generate.test.ts`
-Expected: PASS — 5 new project tests + 33 monorepo tests still green.
+Expected: PASS — 6 new project tests (5 project-mode + 1 type-rejection) + 33 monorepo tests still green.
 
 - [ ] **Step 5: Commit**
 
@@ -638,7 +684,7 @@ git add packages/codegen/src/generate.ts packages/codegen/test/generate-project.
 git commit -m "feat(codegen): C6c.3 immutable project-mode generate (compare-before-write, no-delete)"
 ```
 
-**Gate:** `pnpm --filter @movp/codegen exec vitest run test/generate-project.test.ts test/generate.test.ts` PASS. Unowned collection + drifted baseline both throw `new_generated_delta_required` and the `readdir` before/after assertion proves zero writes; a foreign `*_movp_generated.sql` survives.
+**Gate:** `pnpm --filter @movp/codegen exec vitest run test/generate-project.test.ts test/generate.test.ts` PASS. Unowned collection + drifted baseline both throw `new_generated_delta_required` and the `readdir` before/after assertion proves zero writes; a foreign `*_movp_generated.sql` survives. The F4 no-schema case is enforced at typecheck time by `@ts-expect-error` (verified by `tsc --noEmit`, Task 7).
 
 ---
 
@@ -1009,6 +1055,8 @@ In `generateProject`, after the write loop and before `return`:
 ```ts
   if (options.manifestPath !== undefined) {
     const generatorVersion = await resolveGeneratorVersion(options.generatorVersion)
+    // F6 safe-write: assertSafeWriteTarget (generate.ts) lstat-rejects a symlink / non-regular
+    // target before overwrite. movp.schema.json is public, non-secret schema, so default mode.
     await assertSafeWriteTarget(f, options.manifestPath, 'schema manifest')
     await f.writeFile(options.manifestPath, serializeManifest(emitManifest(schema, { generatorVersion })))
   }
@@ -1195,42 +1243,57 @@ export function checkMetadataConsistency(schema: MovpSchema, db: MetadataDbState
 }
 ```
 
-Create `scripts/check-metadata-consistency.ts` (the `db reset` gate wiring — queries the local DB, aliasing columns to the projection field names, and delegates to the pure comparator). This is not a Vitest target; it is run against a reset DB:
+Create `scripts/check-metadata-consistency.ts` (the `db reset` gate wiring — queries the local DB via `psql`, aliasing columns to the projection field names, and delegates to the pure comparator). This is not a Vitest target; it is run against a reset DB — **Task 8 is the CI gate that invokes it**. It uses `psql` (the repo's DB-gate convention, `scripts/check-vector-scale.mjs`), so it needs **no `pg` dependency** (`pg` is not installed; no new deps without approval):
 
 ```ts
 // scripts/check-metadata-consistency.ts
 // Run AFTER `supabase db reset`: asserts movp_collections/movp_fields match the schema
-// projection. Exits non-zero with the stable error code on any drift.
-import { Client } from 'pg'
+// projection. Exits non-zero with the stable error CODE on any drift.
+// Transport is psql (repo convention — scripts/check-vector-scale.mjs), NOT the `pg`
+// npm client, which is not a dependency here (no new deps without approval).
+import { execFileSync } from 'node:child_process'
 import { schema } from '@movp/core-schema'
 import { checkMetadataConsistency, MetadataConsistencyError, type MetadataDbState } from '@movp/codegen'
 
+// This repo's isolated local Supabase DB port (CLAUDE.md "Supabase Local Stack Hygiene").
 const DB_URL = process.env.SUPABASE_DB_URL ?? 'postgresql://postgres:postgres@127.0.0.1:64322/postgres'
 
-async function main(): Promise<void> {
-  const client = new Client({ connectionString: DB_URL })
-  await client.connect()
+// The SELECT column list IS the row-shape contract: psql returns JSON with exactly these
+// keys, matching MetadataDbState. Trusted, fixed-shape output from our own query — the one
+// `as T[]` cast lives here. `-tAX` = tuples-only, unaligned, no psqlrc; coalesce → '[]' so
+// an empty table still parses.
+function queryRows<T>(sql: string): T[] {
+  const out = execFileSync('psql', [DB_URL, '-tAX', '-c', `select coalesce(json_agg(t), '[]') from (${sql}) t`], {
+    encoding: 'utf8',
+  })
+  return JSON.parse(out.trim()) as T[]
+}
+
+function main(): void {
+  const collections = queryRows<MetadataDbState['collections'][number]>(
+    'select name, label, label_plural, workspace_scoped, layer from public.movp_collections',
+  )
+  const fields = queryRows<MetadataDbState['fields'][number]>(
+    'select collection_name, name, type, label, cardinality, reporting_role, searchable, embeddable, layer from public.movp_fields',
+  )
+  const db: MetadataDbState = { collections, fields }
   try {
-    const collections = await client.query('select name, label, label_plural, workspace_scoped, layer from public.movp_collections')
-    const fields = await client.query('select collection_name, name, type, label, cardinality, reporting_role, searchable, embeddable, layer from public.movp_fields')
-    const db: MetadataDbState = { collections: collections.rows, fields: fields.rows }
     checkMetadataConsistency(schema, db)
     console.log('metadata consistency: OK')
   } catch (error: unknown) {
     if (error instanceof MetadataConsistencyError) {
+      // Content discipline: log the stable CODE + key/column detail only, never a row value.
       console.error(`metadata consistency FAILED [${error.code}]: ${error.detail}`)
       process.exit(1)
     }
     throw error
-  } finally {
-    await client.end()
   }
 }
 
-await main()
+main()
 ```
 
-> **Note for the executor:** `pg` is already a repo dependency (used by existing DB gates — verify with `pnpm why pg`). If `pnpm why pg` reports it absent, STOP and ask before adding it (no new dependencies without approval). The port `64322` matches this repo's isolated local Supabase DB port (CLAUDE.md "Supabase Local Stack Hygiene").
+> **Note for the executor:** run this via the repo's `tsx` devDependency (`pnpm exec tsx scripts/check-metadata-consistency.ts`), exactly like `scripts/codegen.ts` / `scripts/seed-demo.ts`. It shells out to `psql` (present on the Supabase CI image). Do NOT add the `pg` npm package. The port `64322` matches this repo's isolated local Supabase DB port (CLAUDE.md "Supabase Local Stack Hygiene").
 
 Add to `packages/codegen/src/index.ts`:
 
@@ -1361,9 +1424,117 @@ git commit -m "test(codegen): C6c.7 end-to-end project-codegen acceptance slice"
 
 ---
 
+### Task 8: Live DB-reset metadata consistency gate (CI, F7)
+
+**Files:**
+- Create: `scripts/gate-metadata-consistency.sh` — the gate: run the check on a reset DB (expect pass), then mutate a real `movp_fields` row and assert the check exits non-zero with the stable code `altered_metadata_row`.
+- Modify: `package.json` — add a `gate:metadata-consistency` script for local + CI parity.
+- Modify: `.github/workflows/ci.yml` — add a `metadata-consistency` job (`supabase start` → `supabase db reset` → the gate).
+
+**Why this task (F7):** Task 6's `checkMetadataConsistency` + `scripts/check-metadata-consistency.ts` are otherwise only unit/typecheck-gated. F7 (INTERFACES "Plan review round 1 — locked resolutions") requires a REAL gate that runs against a live, reset DB and proves BOTH directions: a clean reset passes (exit 0), and a mutated `movp_fields` row fails with the stable code `altered_metadata_row` and a non-zero exit. **06f consumes THIS established signal** — it must not treat a manifest-derived `MetadataDbState` as live evidence. This task is the codegen-side twin of the monorepo `check-forward-only-migrations` gate.
+
+**Interfaces:**
+- Consumes: `scripts/check-metadata-consistency.ts` (Task 6, psql transport) and the stable code `altered_metadata_row` (Task 6). Uses this repo's isolated DB port `64322`.
+- Produces: no new API — a CI job + gate script; the live signal 06f depends on.
+
+- [ ] **Step 1: Write the gate script**
+
+```bash
+# scripts/gate-metadata-consistency.sh
+#!/usr/bin/env bash
+# F7 CI gate: after `supabase db reset`, live movp_collections/movp_fields must match the
+# schema projection (positive), and a mutated movp_fields row must fail with the stable code
+# `altered_metadata_row` + a non-zero exit (negative). 06f consumes THIS live signal.
+set -euo pipefail
+
+# This repo's isolated local Supabase DB port (CLAUDE.md "Supabase Local Stack Hygiene").
+DB_URL="${SUPABASE_DB_URL:-postgresql://postgres:postgres@127.0.0.1:64322/postgres}"
+
+# 1) Positive: a freshly reset DB is consistent — the check must exit 0.
+pnpm exec tsx scripts/check-metadata-consistency.ts
+
+# 2) Precondition: there must be a real movp_fields row to mutate (else the negative case
+#    would be a false pass). `-tAX` = tuples-only, unaligned, no psqlrc.
+count="$(psql "$DB_URL" -tAX -c 'select count(*) from public.movp_fields;')"
+if [ "$count" -eq 0 ]; then
+  echo "GATE FAILED: no movp_fields rows after reset — nothing to mutate" >&2
+  exit 1
+fi
+
+# 3) Negative: mutate exactly one real row, then require a non-zero exit + altered_metadata_row.
+psql "$DB_URL" -v ON_ERROR_STOP=1 -c \
+  "update public.movp_fields set label = label || ' (drift)' where ctid = (select ctid from public.movp_fields limit 1);"
+
+set +e
+out="$(pnpm exec tsx scripts/check-metadata-consistency.ts 2>&1)"
+code=$?
+set -e
+printf '%s\n' "$out"
+
+if [ "$code" -eq 0 ]; then
+  echo "GATE FAILED: a mutated movp_fields row did not cause a non-zero exit" >&2
+  exit 1
+fi
+if ! printf '%s' "$out" | grep -q 'altered_metadata_row'; then
+  echo "GATE FAILED: expected stable code altered_metadata_row on drift" >&2
+  exit 1
+fi
+echo "metadata-consistency gate: OK (clean reset passes; drift -> altered_metadata_row, exit $code)"
+```
+
+Make it executable: `chmod +x scripts/gate-metadata-consistency.sh`.
+
+Add to `package.json` `scripts`:
+
+```json
+"gate:metadata-consistency": "bash scripts/gate-metadata-consistency.sh"
+```
+
+- [ ] **Step 2: Wire the CI job**
+
+Add to `.github/workflows/ci.yml` (mirror the existing `quickstart` job's setup — `pnpm/action-setup@v6 { version: 9.12.0 }` + `actions/setup-node@v6 { node-version: 22, cache: pnpm }` + `supabase/setup-cli@v2 { version: latest }` per ci-deploy-patterns; `pnpm install` is required because the gate runs `tsx` + imports `@movp/*` workspace packages):
+
+```yaml
+  metadata-consistency:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v6
+        with: { version: 9.12.0 }
+      - uses: actions/setup-node@v6
+        with: { node-version: 22, cache: pnpm }
+      - uses: supabase/setup-cli@v2
+        with: { version: latest }
+      - run: pnpm install --frozen-lockfile
+      - run: supabase start
+      - run: supabase db reset
+      - run: pnpm gate:metadata-consistency
+```
+
+- [ ] **Step 3: Run the gate locally against a reset DB**
+
+Run:
+```bash
+supabase db reset && pnpm gate:metadata-consistency
+```
+Expected: prints `metadata consistency: OK`; then (after the mutation) `metadata consistency FAILED [altered_metadata_row]: field "<key>" column "label"`; then `metadata-consistency gate: OK ...`. The gate's OWN exit is `0` — it passes because the negative case behaved as required (non-zero exit from the check + the stable code found).
+
+> The gate leaves the DB with one mutated row; CI runs it on a throwaway runner after its own `supabase db reset`, so no cleanup is needed. Locally, re-run `supabase db reset` before other DB work.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add scripts/gate-metadata-consistency.sh package.json .github/workflows/ci.yml
+git commit -m "test(codegen): C6c.8 live DB-reset metadata consistency gate (F7)"
+```
+
+**Gate:** `supabase db reset && pnpm gate:metadata-consistency` exits `0`, having asserted the clean-reset positive AND the `altered_metadata_row` non-zero-exit negative. This is the live signal 06f consumes (INTERFACES F7); a manifest-derived `MetadataDbState` is NOT accepted as a substitute.
+
+---
+
 ## Self-Review
 
-**Spec coverage:** Immutable deltas / compare-before-write / no-delete (Task 3); project-local `movp.deltas.json` (Task 1); `new_generated_delta_required` + zero writes (Task 3, 7); `movp new-delta` one additive migration (Task 4); `layer='project'`-only emit + prune + `platform_row_delete_forbidden` (Task 2); manifest exact shape + `schemaFingerprint` from 06b (Task 5); consistency gate with missing/altered/stale stable ids (Task 6); acceptance slice (Task 7). Forward-only guard: the monorepo `scripts/check-forward-only-migrations.mjs` is reused by scaffolds (06d ships it); C6c's byte-stability gates (Tasks 3/7) are the codegen-side enforcement.
+**Spec coverage:** Immutable deltas / compare-before-write / no-delete (Task 3); project-local `movp.deltas.json` (Task 1); `new_generated_delta_required` + zero writes (Task 3, 7); `movp new-delta` one additive migration (Task 4); `layer='project'`-only emit + prune + `platform_row_delete_forbidden` (Task 2); manifest exact shape + `schemaFingerprint` from 06b (Task 5); consistency comparator with missing/altered/stale stable ids (Task 6) AND a live DB-reset gate proving both directions (Task 8, F7 — the signal 06f consumes); acceptance slice (Task 7). Locked-resolution conformance: `generate({schema})` schema is REQUIRED with no default (F4, Task 3, pinned by a `@ts-expect-error` test); `saveDeltaRegistry`/manifest writes use the untrusted-I/O safe-write pattern with least-privilege mode (F6, Task 1/5). Forward-only guard: the monorepo `scripts/check-forward-only-migrations.mjs` is reused by scaffolds (06d ships it); C6c's byte-stability gates (Tasks 3/7) are the codegen-side enforcement.
 
 **Type consistency:** `DeltaRegistry`/`DeltaRegistryEntry`, `SchemaManifest`/`ManifestCollection`/`ManifestField`, `MetadataDbState`/`MetadataConsistencyCode` used identically across tasks. `generate` project branch keyed on `deltasRegistryPath`; `emitProjectMigration`/`emitProjectDeltaSql` names match between Task 2 and Task 3.
 
@@ -1371,4 +1542,4 @@ git commit -m "test(codegen): C6c.7 end-to-end project-codegen acceptance slice"
 1. 06a exposes `schema.projectCollections`/`schema.platformCollections` and `CollectionDef.layer`; test fixtures cast a literal to `MovpSchema` — replace with the real `defineSchema({ extends, ... })` builder once 06a lands.
 2. 06b exports `metadataProjection` and `schemaFingerprint` from `@movp/core-schema` with the field names used here.
 3. Event-layer ownership: events are owned purely via `movp.deltas.json` entries (no `schema.projectEvents` view is assumed); the ownership check is collection-driven (matching the C6c gate "add a collection"). If 06a adds a project-events view, extend Task 3's ownership set accordingly.
-4. `pg` is an existing repo dependency for the Task 6 DB script; the executor verifies with `pnpm why pg` and stops if absent.
+4. The Task 6/8 DB gate uses `psql` (repo convention — `scripts/check-vector-scale.mjs`) run via the `tsx` devDependency; it adds **no** `pg` dependency. `psql` is present on the Supabase CI image. If a future runner lacks `psql`, swap the transport (still no new npm dep) rather than reintroducing `pg`.
