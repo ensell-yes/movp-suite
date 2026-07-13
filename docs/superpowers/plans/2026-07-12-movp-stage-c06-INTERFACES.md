@@ -287,6 +287,54 @@ Both are APPROVED — the executor does NOT stop on them:
   round-6 already corrected. INTERFACES now says `templates` (repo root); 06e must simply state it
   follows the locked default, not argue against it.
 
+## Plan review round 8 — locked resolutions (2026-07-13)
+
+- **F1 (HIGH — upgraded from the review's MEDIUM — reliability) a `&&` chain must never end in
+  `; test $? -eq 1` (06d, and a BAN across all parts).** 06d's Task 1 gate reads
+  `node --test … && node check-publishable-versions.mjs && pnpm build … ; test $? -eq 1`. `&&`
+  short-circuits and the trailing `test` reads `$?` from whatever ran LAST — so if `node --test` fails
+  (exit 1) or the version script finds a REAL 0.0.0 pin (exit 1, per the round-7 exit contract), the
+  chain stops and `test $? -eq 1` converts that failure into **exit 0, green**. Reproduced:
+  `bash -c 'false && echo B ; test $? -eq 1'` → `0`. The gate is inverted on the exact path it exists
+  to guard, which is why this is HIGH, not MEDIUM.
+  Fix: **delete the redundant trailing `git grep`** — `check-publishable-versions.mjs` already performs
+  that scoped check with correct 0/1/2 status discrimination (round-7 F1); the gate becomes a plain
+  `A && B && C` chain with no `$?` arithmetic.
+  **Rule for every part — a gate's EXIT CODE must reflect whether the property held.** Three banned
+  shapes, all of which pass while the property is violated:
+  1. `A && B && C ; test $? -eq 1` — `&&` short-circuits, so the `test` reads the exit of whichever
+     command failed. The `assert-this-fails` idiom (`cmd ; test $? -eq N`) may only ever apply to a
+     SINGLE command (a TDD "verify it fails" step is the legitimate use; an aggregate gate is not).
+  2. `cmd && echo OK || echo FAIL` — **always exits 0**. It *prints* FAIL and *reports* success,
+     manufacturing evidence for a property that does not hold.
+  3. `test <cond> && echo OK` with no `||` escape — on mismatch the `echo` is skipped, nothing is
+     printed, and execution falls through to the next line whose success overwrites `$?`. Its
+     correctness depends on being the LAST line, which is not a property an assertion may rely on.
+
+  Write every assertion as an explicit `if ! <cond>; then echo 'FAIL: …' >&2; exit 1; fi`, and put
+  `set -euo pipefail` at the top of each verification block.
+- **Self-found while fixing F1 (06e, same bug class, safety-critical).** 06e's Task 1 step-1d
+  verification used shape 2 for the **symlink-rejection** check — so a BROKEN untrusted-I/O guard (the
+  control that stops a template symlink from reading `~/.ssh/id_rsa`) would print
+  `FAIL: staging did not reject the symlink` and still exit 0 — and shape 2 *inverted* for the
+  snapshot-sensitivity check (a non-sensitive snapshot silently passed). Its `preserve.txt` /
+  WIP-README byte-identity checks used shape 3. All rewritten as `if … exit 1`. 06c's `set +e` was
+  audited and is CORRECT (it captures `code=$?`, restores `set -e`, then explicitly checks); 06e's
+  round-6 `check-template-gallery-guards.sh` was audited and is CORRECT (its `|| true` is deliberate —
+  rejection is the expected outcome — and `expect_reject` greps and `exit 1`s).
+- **F2 (MEDIUM, observability) the version gate must run in CI (06d).** Task 1 registers
+  `check:publishable-versions` and `test:version-gate` in the root `package.json`, but no workflow
+  invokes either — `pnpm -w test` runs `turbo run test` and never reaches root-only scripts. The gate
+  can regress after Task 1 without blocking a merge, so the safety net exists but is never armed.
+  Fix: add both to the C6 CI job (`pnpm test:version-gate` then `pnpm check:publishable-versions`),
+  and add a ci.yml-shape assertion to 06d's Task 1 gate so the wiring itself is machine-checked.
+- **F3 (LOW, reliability) `readJsonGuarded`'s closed error-code set must cover I/O failure (06d).**
+  `lstatSync`/`readFileSync` throw raw `ENOENT`/`EACCES`, escaping the declared closed `manifest_*`
+  set (a missing or unreadable publishable manifest is a plausible real state). Wrap each in its own
+  bare catch and throw a content-free `manifest_unreadable: <path> cannot be inspected` / `… cannot be
+  read`. Keep the reasons DISTINCT from the JSON-parse case's `is not valid JSON` — conflating "cannot
+  read" with "not valid JSON" loses the diagnostic. Still throw; never swallow.
+
 ## Stable error codes (all parts)
 
 `schema_runtime_mismatch` · `new_generated_delta_required` · `platform_artifact_invalid` ·

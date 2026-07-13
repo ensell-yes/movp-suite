@@ -140,8 +140,13 @@ resolve), and prove no in-repo consumer pins the literal `0.0.0`.
   `0.0.0` (both `"private"`; they consume workspace deps via `workspace:*`, never a version pin).
 - **Create (the guarded manifest reader):** `scripts/lib/guarded-read.mjs` (INTERFACES round-7 F2).
 - **Create (the gate):** `scripts/check-publishable-versions.mjs`.
-- **Test (create):** `scripts/test/guarded-read.test.mjs`
-- **Test (create):** `scripts/test/check-publishable-versions.test.mjs`
+- **Test (create):** `scripts/test/guarded-read.test.mjs` (8 tests)
+- **Test (create):** `scripts/test/check-publishable-versions.test.mjs` (9 tests)
+- **Modify (scripts block only):** root `package.json` — add `check:publishable-versions` +
+  `test:version-gate` (step 5). Its `version` stays `0.0.0`.
+- **Modify (arm the gate in CI):** `.github/workflows/ci.yml` — add the `publishable-versions` job
+  (step 5b). Without it the gate is registered but never run: `pnpm -w test` → `turbo run test` never
+  reaches a root-only script (INTERFACES round-8 F2).
 
 > **Why these two tests use Node's BUILT-IN runner (`node --test`), not vitest:** Task 1 runs BEFORE
 > `packages/create-movp` exists (Task 2 creates it), and the version gate must run before ANYTHING is
@@ -180,7 +185,7 @@ pins the guard that closes both.
 
 ```js
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, before, describe, it } from 'node:test'
@@ -190,6 +195,11 @@ import { MAX_MANIFEST_BYTES, readJsonGuarded } from '../lib/guarded-read.mjs'
 let work = ''
 before(() => { work = mkdtempSync(join(tmpdir(), 'movp-guarded-read-')) })
 after(() => rmSync(work, { recursive: true, force: true }))
+
+// `chmod 000` does NOT deny root (it ignores the mode bits) and does not remove read access on win32,
+// so the EACCES case is SKIPPED there rather than asserted falsely. Every other case is portable.
+const canDenyRead =
+  process.platform !== 'win32' && typeof process.getuid === 'function' && process.getuid() !== 0
 
 describe('readJsonGuarded', () => {
   it('returns the parsed manifest for a regular, valid file', () => {
@@ -228,10 +238,37 @@ describe('readJsonGuarded', () => {
     const path = join(work, 'bad.json')
     writeFileSync(path, 'aws_secret_access_key = SUPERSECRET\n')
     assert.throws(() => readJsonGuarded(path), (err) => {
-      assert.match(String(err), /manifest_unreadable/)
+      assert.match(String(err), /manifest_unreadable: .* is not valid JSON/) // a CONTENT fault
       assert.doesNotMatch(String(err), /SUPERSECRET|aws_secret/)
       return true
     })
+  })
+
+  // I/O faults must stay INSIDE the closed `manifest_*` set — a raw ENOENT/EACCES escaping it is a
+  // gate that crashes instead of diagnosing. The reason must stay DISTINCT from "is not valid JSON":
+  // "cannot be read" and "is not valid JSON" have different remedies, and conflating them loses that.
+  it('throws manifest_unreadable (not a raw ENOENT) for a missing manifest', () => {
+    const path = join(work, 'does-not-exist.json')
+    assert.throws(() => readJsonGuarded(path), (err) => {
+      assert.match(String(err), /manifest_unreadable: .* cannot be inspected/) // an I/O fault
+      assert.doesNotMatch(String(err), /ENOENT|no such file/)
+      return true
+    })
+  })
+
+  it('throws manifest_unreadable (not a raw EACCES) for an unreadable manifest', { skip: !canDenyRead }, () => {
+    const path = join(work, 'noperm.json')
+    writeFileSync(path, JSON.stringify({ name: '@movp/auth', version: '0.1.0' }))
+    chmodSync(path, 0o000) // lstat still succeeds; the READ is what fails
+    try {
+      assert.throws(() => readJsonGuarded(path), (err) => {
+        assert.match(String(err), /manifest_unreadable: .* cannot be read/)
+        assert.doesNotMatch(String(err), /EACCES|permission denied/)
+        return true
+      })
+    } finally {
+      chmodSync(path, 0o600) // restore so the `after` hook can remove the temp tree
+    }
   })
 
   it('rejects a parseable-but-structurally-invalid manifest (parseable is not valid)', () => {
@@ -278,14 +315,34 @@ export function readJsonGuarded(path) {
   // GOTCHA: `lstat` FIRST, and throw on the lstat RESULT — `statSync` and `readFileSync` both FOLLOW
   // symlinks, so a symlinked manifest pointing at ~/.aws/credentials would already be OPEN by the time
   // any later check ran. A basename denylist cannot help: the symlink is named `package.json`.
-  const info = lstatSync(path)
+  /** @type {import('node:fs').Stats} */
+  let info
+  try {
+    info = lstatSync(path)
+  } catch {
+    // The `manifest_*` code set is CLOSED. A raw `ENOENT`/`EACCES` from `lstatSync` would escape it —
+    // a deleted/renamed package or a CI permissions problem is a plausible real state, not a crash.
+    // Bare `catch` (NO error binding), so no errno message — which can name paths outside the repo —
+    // can be interpolated: the leak is unrepresentable, not merely discouraged.
+    throw new Error(`manifest_unreadable: ${path} cannot be inspected`)
+  }
   if (info.isSymbolicLink()) throw new Error(`manifest_symlink_rejected: ${path} is a symlink`)
   if (!info.isFile()) throw new Error(`manifest_not_regular_file: ${path} is not a regular file`)
   // Bound BEFORE buffering: a cap applied after `readFileSync` cannot prevent the OOM it exists to stop.
   if (info.size > MAX_MANIFEST_BYTES) {
     throw new Error(`manifest_too_large: ${path} is ${info.size} bytes (max ${MAX_MANIFEST_BYTES})`)
   }
-  const raw = readFileSync(path, 'utf8')
+
+  /** @type {string} */
+  let raw
+  try {
+    raw = readFileSync(path, 'utf8')
+  } catch {
+    // Same closed-set discipline as the `lstat` above. The reason is DISTINCT from the parse case's
+    // "is not valid JSON": conflating "cannot be read" with "is not valid JSON" destroys the diagnostic
+    // — one is an I/O fault, the other is a content fault, and they have different remedies.
+    throw new Error(`manifest_unreadable: ${path} cannot be read`)
+  }
 
   /** @type {unknown} */
   let parsed
@@ -315,11 +372,14 @@ export function readJsonGuarded(path) {
 }
 ```
 
-Re-run — **Expected: PASS** (6 tests):
+Re-run — **Expected: PASS**, `pass 8 / fail 0`:
 
 ```
 node --test scripts/test/guarded-read.test.mjs
 ```
+
+> The EACCES case self-skips when the runner is root or win32 (`chmod 000` cannot deny root), so a
+> root container reports `pass 7 / skip 1 / fail 0` instead. Either is green; **`fail 0` is the gate.**
 
 **3. Write the failing test for the gate** `scripts/test/check-publishable-versions.test.mjs`.
 
@@ -548,6 +608,40 @@ node scripts/check-publishable-versions.mjs ; test $? -eq 1
     "test:version-gate": "node --test scripts/test/guarded-read.test.mjs scripts/test/check-publishable-versions.test.mjs",
 ```
 
+**5b. ARM the gate in CI** — add a `publishable-versions` job to `.github/workflows/ci.yml`, immediately
+after the existing `package-artifacts` job (which ends at `- run: pnpm check:release-preflight`) and
+before `quickstart:`. Same shape as `schema-codegen-unit` / `package-artifacts` — checkout, pnpm,
+node, install, then the runs:
+
+```yaml
+  publishable-versions:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v6
+        with: { version: 9.12.0 }
+      - uses: actions/setup-node@v6
+        with: { node-version: 22, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      # NO `pnpm build` step, deliberately: this gate is dependency-free ESM over node builtins and must
+      # stay runnable before anything is built (see the header of `scripts/lib/guarded-read.mjs`).
+      - run: pnpm test:version-gate
+      - run: pnpm check:publishable-versions
+```
+
+> **Why a job and not `pnpm -w test`:** `pnpm -w test` runs `turbo run test`, which only reaches
+> *workspace-package* tests — it never runs a root-only script. Without this job the gate exists but is
+> never armed: a `0.0.0` pin could regress after Task 1 and still merge green (INTERFACES round-8 F2).
+
+Verify the wiring parses and invokes both commands:
+
+```
+node -e "const y=require('node:fs').readFileSync('.github/workflows/ci.yml','utf8'); for(const s of ['publishable-versions:','pnpm test:version-gate','pnpm check:publishable-versions']) if(!y.includes(s)) throw new Error('ci.yml is missing: '+s); console.log('ci.yml: publishable-version gate armed')"
+```
+
+**Expected:** `ci.yml: publishable-version gate armed`. If `actionlint` is on PATH, also run
+`actionlint .github/workflows/ci.yml` — Expected: no errors.
+
 **6. Bump each publishable `package.json`** `"version": "0.0.0"` → `"version": "0.1.0"` (the 12 files
 listed under Files). Edit only the `version` field; leave `publishConfig`, `main`, `exports` untouched.
 
@@ -588,15 +682,28 @@ pnpm -w test && pnpm -w typecheck
 node --test scripts/test/guarded-read.test.mjs scripts/test/check-publishable-versions.test.mjs \
   && node scripts/check-publishable-versions.mjs \
   && pnpm --filter @movp/platform build \
-  && git grep -nE '"@movp/[a-z-]+":[[:space:]]*"0\.0\.0"' -- '*package.json' '*package.json.template' ; test $? -eq 1
+  && node -e "const y=require('node:fs').readFileSync('.github/workflows/ci.yml','utf8'); for(const s of ['publishable-versions:','pnpm test:version-gate','pnpm check:publishable-versions']) if(!y.includes(s)) throw new Error('ci.yml is missing: '+s); console.log('ci.yml: publishable-version gate armed')"
 ```
 
-**Expected:** `node --test` prints `pass 15 / fail 0` (6 `readJsonGuarded` + 9 version-gate — the
+> **GOTCHA — never end an `&&` chain with `; test $? -eq N` (INTERFACES round-8 F1).** `&&`
+> short-circuits, and a trailing `test` reads `$?` from whatever ran LAST, so an early failure becomes
+> **exit 0, green** (`bash -c 'false && echo B ; test $? -eq 1'` → `0`). This gate is a plain `A && B &&
+> C && D` chain: any component failing fails the whole gate. The `assert-this-fails` idiom is legitimate
+> ONLY against a SINGLE command — step 4's `node scripts/check-publishable-versions.mjs ; test $? -eq 1`
+> is the correct use, and it is the only one in this plan.
+>
+> There is deliberately **no trailing scoped `git grep`** here: `check-publishable-versions.mjs` already
+> performs exactly that scoped-pathspec check with correct 0/1/2 status discrimination (round-7 F1), so a
+> second copy would be redundant *and* was the thing dragging the `$?` arithmetic in.
+
+**Expected:** `node --test` prints `pass 17 / fail 0` (8 `readJsonGuarded` + 9 version-gate — the
 version gate's three git branches are each pinned: status 0 with a match FAILS, status 1 PASSES,
-status 2 / spawn-error THROWS rather than reporting "no pins"); the version script prints its success
-line (exit 0 — and would exit **1** on a real finding, **2** on an operational failure, never 0);
-the platform build prints `platformVersion 0.1.0`; the final scoped `git grep` finds nothing (exit 1,
-asserted). `check-release-preflight.mjs` is unchanged **(N/A with evidence: it reads no version — it
+status 2 / spawn-error THROWS rather than reporting "no pins"; on a root/win32 runner the EACCES case
+self-skips → `pass 16 / skip 1`, still `fail 0`); the version script prints its success line — exit 0,
+and it is the component that FAILS this chain with exit **1** on a real finding (a wrong version or a
+`0.0.0` consumer pin) or **2** on an operational failure, never 0; the platform build prints
+`platformVersion 0.1.0`; the ci.yml assertion prints `ci.yml: publishable-version gate armed`.
+`check-release-preflight.mjs` is unchanged **(N/A with evidence: it reads no version — it
 only shells `npm org --help`, `npm whoami`, `npm org ls movp`).**
 
 ---
