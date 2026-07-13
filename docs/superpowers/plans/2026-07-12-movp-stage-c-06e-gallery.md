@@ -1034,10 +1034,15 @@ and fan out across all four templates, plus the Docker-free gallery gate.
 
 ### Files
 
+- **Create:** `fixtures/verdaccio-gallery/stage-create-movp.mjs` — the gallery pack-staging script
+  (INTERFACES round-3 F1). Materializes a TEMP `create-movp` publish tree with all four templates,
+  never mutating the source worktree. It CONSUMES 06d's shared `copyTreeGuarded` from the built
+  `packages/create-movp/dist/index.js`; it does **not** define a guarded copier of its own.
 - **Create:** `fixtures/verdaccio-gallery/gate.sh` (executable) — the COMPLETE `$TEMPLATE`-parameterized
   self-contained gallery gate authored inline in Step 2 (INTERFACES F3: no "copy/reconcile 06d's gate").
 - **Create:** `fixtures/verdaccio-gallery/pack.sh` (executable) — the CI pack-once producer authored
-  inline in Step 1 (stages every template into `create-movp`, then packs the whole bundle to `<outdir>`).
+  inline in Step 1 (stages every template into a TEMP `create-movp` copy — never mutating the source
+  worktree — then packs the whole bundle to `<outdir>`).
 - **Modify:** `.github/workflows/ci.yml` (add `template-gallery`, `pack-artifacts`, `template-smoke`).
 - **Modify:** root `package.json` (add `check:verdaccio-gallery` script alongside 06d's `check:verdaccio-crm`).
 - **Modify:** `docs/superpowers/plans/README.md` (Stage C EXECUTION STATUS — mark C6e landed).
@@ -1049,50 +1054,161 @@ and fan out across all four templates, plus the Docker-free gallery gate.
   the edge-serve env-file pattern from `scripts/slice-e2e.sh` (lines 136-171), and the
   `+200`/`+300`/`+400`/`+500` port blocks. The gallery gate (Step 2) is authored in full here — it does
   NOT copy or reconcile against `fixtures/verdaccio-crm-lite/gate.sh`.
-- **Produces:** `fixtures/verdaccio-gallery/gate.sh <template>` and a CI matrix over
-  `[crm-lite, marketing-site, support-desk, knowledge-base]`.
+- **Consumes (06d) — the guarded-copy primitive:** **`copyTreeGuarded(srcDir, destDir)`**, exported from
+  `packages/create-movp/src/copier.ts` and re-exported by the built `dist/index.js`. It is the sibling of
+  `copyTemplate` that copies VERBATIM (no token substitution) under the EXACT same untrusted-io guards:
+  `lstat`-before-read symlink reject (`template_symlink_rejected`), `EXCLUDED_DIRS` skip,
+  `MAX_FILE_BYTES`/`MAX_TOTAL_BYTES` bound-before-buffer, path-only error messages. 06e's pack staging
+  imports it from the BUILT dist — the exact compiled function `npm create movp` runs. **06e defines NO
+  guarded copier of its own** (INTERFACES round-3 F1; two implementations of the same guard = drift).
+  06d also owns its unit tests; 06e pins only the gallery-level pack invariants (Step 1c).
+- **Produces:** `fixtures/verdaccio-gallery/gate.sh <template>`,
+  `fixtures/verdaccio-gallery/stage-create-movp.mjs` (variadic over the four templates), and a CI matrix
+  over `[crm-lite, marketing-site, support-desk, knowledge-base]`.
 
 ### Steps
 
-**1. Create the pack-once producer `fixtures/verdaccio-gallery/pack.sh`** (mark executable). The CI
+**1. Author the gallery staging script, then the pack-once producer.**
+
+**1a. The gallery staging script `fixtures/verdaccio-gallery/stage-create-movp.mjs`** (INTERFACES
+round-3 F1). It assembles a `create-movp` PUBLISH tree in a caller-supplied TEMP dir — so the source
+worktree is NEVER mutated — with ALL FOUR templates staged, so the ONE shared tarball can scaffold any
+matrix leg.
+
+> **DRY — do NOT write a new guarded copier.** The guarded-copy primitive is **06d's
+> `copyTreeGuarded(srcDir, destDir)`** (`packages/create-movp/src/copier.ts`, a sibling of
+> `copyTemplate` reusing the EXACT same guards: `lstat`-before-read symlink reject →
+> `template_symlink_rejected`, `EXCLUDED_DIRS` skip, `MAX_FILE_BYTES`/`MAX_TOTAL_BYTES`
+> bound-before-buffer, path-only error messages — copying VERBATIM, no token substitution). Import it
+> from the freshly BUILT `packages/create-movp/dist/index.js` — the exact compiled function
+> `npm create movp` runs. Never reimplement the guards here, in bash, or in a second helper.
+
+This mirrors 06d's `fixtures/verdaccio-crm-lite/stage-create-movp.mjs` (which stages the single
+crm-lite template); the gallery variant is variadic over the four templates. Plain `.mjs` run with
+`node` (no tsx): the caller builds `create-movp` before invoking it, so `dist/index.js` exists.
+
+```js
+#!/usr/bin/env node
+// C6e pack-harness staging (INTERFACES F1): assemble a create-movp publish tree in a TEMP dir with
+// EVERY requested template staged, so ONE tarball scaffolds any matrix leg. The `files` whitelist
+// ships package.json + dist/ + templates/, so those are all we stage. Trees go through the SHARED
+// `copyTreeGuarded` (06d's copier: lstat/symlink-reject, regular-file-only, size-bound) — a symlinked
+// template file throws `template_symlink_rejected` WITHOUT reading its target, failing the pack. The
+// source worktree is never written to.
+import { copyFileSync, mkdirSync } from 'node:fs'
+import { join } from 'node:path'
+// The BUILT create-movp dist re-exports copyTreeGuarded — the exact function `npm create movp` runs.
+// This module path is fixed relative to THIS script (fixtures/verdaccio-gallery/ → repo root).
+import { copyTreeGuarded } from '../../packages/create-movp/dist/index.js'
+
+const [repoRoot, stagingDir, ...templates] = process.argv.slice(2)
+if (!repoRoot || !stagingDir || templates.length === 0) {
+  console.error('usage: stage-create-movp.mjs <repoRoot> <stagingDir> <template>...')
+  process.exit(2)
+}
+const pkgDir = join(repoRoot, 'packages', 'create-movp')
+
+mkdirSync(stagingDir, { recursive: true })
+copyFileSync(join(pkgDir, 'package.json'), join(stagingDir, 'package.json'))
+copyTreeGuarded(join(pkgDir, 'dist'), join(stagingDir, 'dist')) // own build output — guarded anyway
+for (const t of templates) {
+  if (!/^[a-z][a-z0-9-]*$/.test(t)) {
+    console.error(`invalid template name: ${t}`)
+    process.exit(2)
+  }
+  copyTreeGuarded(join(repoRoot, 'templates', t), join(stagingDir, 'templates', t))
+}
+console.log(`staged create-movp (${templates.join(', ')}) → ${stagingDir}`)
+```
+
+**1b. Create the pack-once producer `fixtures/verdaccio-gallery/pack.sh`** (mark executable). The CI
 `pack-artifacts` job runs `pnpm build` and then `pack.sh ./artifacts`, uploading the tarballs the
 `template-smoke` matrix consumes via `ARTIFACTS_DIR`. Because `create-movp` ships the template source in
 its tarball (06d `package.json` `"files": ["dist","templates"]`), pack.sh MUST stage ALL FOUR templates
-into `packages/create-movp/templates/` before packing — otherwise the single shared tarball could not
-scaffold every matrix leg. The publishable set is exactly the 12 names in `check-publishable-versions.mjs`
-plus `create-movp` (self-contained here — no 06d cross-reference):
+into a TEMP `create-movp` copy before packing — otherwise the single shared tarball could not scaffold
+every matrix leg. It stages via the 1a script (never mutating the worktree) and packs `create-movp` from
+that staging dir. The publishable set is exactly the 12 names in `check-publishable-versions.mjs` plus
+`create-movp` (self-contained here — no 06d cross-reference):
 
 ```bash
 #!/usr/bin/env bash
 # Pack every publishable workspace artifact ONCE into <outdir>. Assumes `pnpm build` (dist/) already ran
 # (the CI pack-artifacts job runs it first). create-movp ships the templates in its tarball, so stage
-# ALL FOUR templates into it before packing so one shared bundle can scaffold any matrix leg.
+# ALL FOUR into a TEMP create-movp publish tree via stage-create-movp.mjs — which routes every copy
+# through the SHARED `copyTreeGuarded` (lstat/symlink-reject, regular-file-only, size-bound), NEVER a
+# raw `cp -R` into the worktree — and pack create-movp from there.
 set -euo pipefail
 OUT="${1:?usage: pack.sh <outdir>}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+FIXTURE_DIR="$REPO_ROOT/fixtures/verdaccio-gallery"
 mkdir -p "$OUT"
 ABS_OUT="$(cd "$OUT" && pwd)"
 
-# Stage every template into create-movp so the single packed tarball can scaffold any of them.
-rm -rf "$REPO_ROOT/packages/create-movp/templates"
-mkdir -p "$REPO_ROOT/packages/create-movp/templates"
-for t in crm-lite marketing-site support-desk knowledge-base; do
-  cp -R "$REPO_ROOT/templates/$t" "$REPO_ROOT/packages/create-movp/templates/$t"
-done
+# Stage all four templates into a TEMP publishable create-movp tree (source worktree untouched). An
+# external-symlink template file FAILS here with `template_symlink_rejected`, unread.
+CM_STAGE="$(mktemp -d "${TMPDIR:-/tmp}/movp-create-movp.XXXXXX")"
+trap 'rm -rf "$CM_STAGE"' EXIT
+node "$FIXTURE_DIR/stage-create-movp.mjs" "$REPO_ROOT" "$CM_STAGE" \
+  crm-lite marketing-site support-desk knowledge-base
 
-for pkg in auth cli codegen core-schema domain flows graphql mcp notifications obs search platform create-movp; do
+# Belt-and-suspenders (INTERFACES F1 test b): the pack must not have touched the source worktree.
+test ! -e "$REPO_ROOT/packages/create-movp/templates" || { echo "pack: wrote into the source worktree"; exit 1; }
+if [ -n "$(git -C "$REPO_ROOT" status --porcelain -- packages/create-movp templates)" ]; then
+  echo "pack: staging dirtied the tracked worktree under packages/create-movp or templates/"; exit 1;
+fi
+
+# Pack the 12 source-only publishables from their own dirs; pack create-movp from the STAGING tree so
+# its tarball ships templates/ without ever touching the worktree.
+for pkg in auth cli codegen core-schema domain flows graphql mcp notifications obs search platform; do
   ( cd "$REPO_ROOT/packages/$pkg" && pnpm pack --pack-destination "$ABS_OUT" )
 done
+( cd "$CM_STAGE" && npm pack --ignore-scripts --pack-destination "$ABS_OUT" >/dev/null )
 echo "pack: wrote $(ls "$OUT"/*.tgz | wc -l | tr -d ' ') tarballs to $OUT"
 ```
 
-**Expected:** `pack: wrote 13 tarballs to <outdir>` (12 `@movp/*` publishables + `create-movp`).
+**Expected:** `pack: wrote 13 tarballs to <outdir>` (12 `@movp/*` publishables + `create-movp`), with no
+worktree-mutation error.
+
+**1c. F1 acceptance — the two locked tests, exercised against the SHARED `copyTreeGuarded`.** 06d owns
+the `copyTreeGuarded` UNIT tests (its `copier.test.ts` already pins external-symlink →
+`template_symlink_rejected` without reading the target, verbatim copy, and byte bounds) — do NOT
+duplicate them here. 06e pins the two F1 invariants at the level it owns: the GALLERY four-template pack.
+
+**(a) An external-symlink template file makes the pack FAIL without reading it.** Plant a symlink in a
+gallery template, confirm the pack aborts with the shared copier's code, and confirm the worktree is
+restored:
+
+```
+printf 'TOPSECRET\n' > /tmp/movp-fake-secret
+ln -s /tmp/movp-fake-secret templates/marketing-site/notes.ts
+bash fixtures/verdaccio-gallery/pack.sh /tmp/movp-pack-symlink-check 2>&1 \
+  | grep -qF 'template_symlink_rejected' && echo 'symlink template rejected (unread)' || echo 'FAIL: pack did not reject the symlink'
+! grep -rqF 'TOPSECRET' /tmp/movp-pack-symlink-check 2>/dev/null && echo 'secret never read into any tarball'
+rm -f templates/marketing-site/notes.ts /tmp/movp-fake-secret
+rm -rf /tmp/movp-pack-symlink-check
+```
+
+**Expected:** `symlink template rejected (unread)` then `secret never read into any tarball`.
+
+**(b) The worktree is byte-unchanged after a SUCCESSFUL pack.** `pack.sh` asserts this internally
+(above); confirm it independently:
+
+```
+bash fixtures/verdaccio-gallery/pack.sh /tmp/movp-pack-check \
+  && git status --porcelain -- packages/create-movp templates | grep -q . \
+  && { echo 'FAIL: pack mutated the worktree'; exit 1; } || echo 'worktree byte-unchanged after pack'
+test ! -e packages/create-movp/templates && echo 'no templates/ dir created in the package'
+rm -rf /tmp/movp-pack-check
+```
+
+**Expected:** `worktree byte-unchanged after pack` then `no templates/ dir created in the package`.
 
 **2. Author the COMPLETE self-contained gallery gate `fixtures/verdaccio-gallery/gate.sh`** (mark
 executable — `chmod +x`). This is the full script — paste it verbatim; it does NOT copy or reconcile
 against 06d's gate (INTERFACES F3). It takes ONE positional argument (`$TEMPLATE`) and covers BOTH
 tarball sources with an identical publish path: a prepopulated `ARTIFACTS_DIR` (CI, packed once by
-`pack.sh`) OR a local pack (build → stage all templates into `create-movp` → `npm pack` every artifact).
+`pack.sh`) OR a local pack (build → stage all templates into a TEMP `create-movp` copy → `npm pack`
+every artifact, worktree untouched).
 It stands up a hermetic Verdaccio whose config + storage live under the scratch dir (no fixture-dir
 pollution — no separate `verdaccio.yaml` file needed), then runs the **F2-locked order** per template:
 publish → scaffold (copy files ONLY) → `npm install` (from Verdaccio, no workspace links) → `npm run
@@ -1111,7 +1227,7 @@ real-surface yet template-agnostic in structure:
 #
 # Tarball source (identical publish path either way):
 #   ARTIFACTS_DIR set   -> publish the pre-packed tarballs already in that dir (CI: packed once upstream).
-#   ARTIFACTS_DIR unset -> build, stage every template into create-movp, npm pack every artifact locally.
+#   ARTIFACTS_DIR unset -> build, stage every template into a TEMP create-movp copy, npm pack locally.
 #
 # Requires: Docker, supabase, deno, node, npm, pnpm, curl, psql.
 set -euo pipefail
@@ -1159,16 +1275,21 @@ else
   ( cd "$REPO_ROOT" && pnpm -w build )
   ( cd "$REPO_ROOT" && pnpm --filter @movp/platform build )
   ( cd "$REPO_ROOT" && pnpm --filter create-movp build )
-  # create-movp ships templates in its tarball; stage ALL FOUR so the bundle can scaffold any template.
-  rm -rf "$REPO_ROOT/packages/create-movp/templates"
-  mkdir -p "$REPO_ROOT/packages/create-movp/templates"
-  for t in "${ALL_TEMPLATES[@]}"; do
-    cp -R "$REPO_ROOT/templates/$t" "$REPO_ROOT/packages/create-movp/templates/$t"
-  done
-  # Explicit npm pack enumeration of every workspace artifact -> tarballs in PACK_DIR.
-  for pkg in "${PUBLISHABLE[@]}" create-movp; do
+  # create-movp ships templates in its tarball; stage ALL FOUR into a TEMP publishable create-movp tree
+  # so the bundle can scaffold any template — NEVER mutate the source worktree. stage-create-movp.mjs
+  # routes every copy through the SHARED `copyTreeGuarded` (06d's copier: lstat/symlink-reject before
+  # read, regular-file-only, size-bound), so an external-symlink template file FAILS the pack unread
+  # with `template_symlink_rejected`. No raw `cp -R`, no second guarded-copy implementation.
+  CM_STAGE="$WORK/create-movp-stage"   # under $WORK; the cleanup trap rm -rf's it
+  node "$REPO_ROOT/fixtures/verdaccio-gallery/stage-create-movp.mjs" \
+    "$REPO_ROOT" "$CM_STAGE" "${ALL_TEMPLATES[@]}"
+  # The staging must not have touched the source worktree (INTERFACES F1).
+  test ! -e "$REPO_ROOT/packages/create-movp/templates" || { echo "gate: pack wrote into the source worktree"; exit 1; }
+  # Pack the source-only publishables from their dirs; pack create-movp from the STAGING tree.
+  for pkg in "${PUBLISHABLE[@]}"; do
     ( cd "$REPO_ROOT/packages/$pkg" && npm pack --pack-destination "$PACK_DIR" >/dev/null )
   done
+  ( cd "$CM_STAGE" && npm pack --ignore-scripts --pack-destination "$PACK_DIR" >/dev/null )
 fi
 
 # 2. Start a hermetic Verdaccio (config + storage under $WORK — nothing written to the fixture dir).
@@ -1367,7 +1488,8 @@ generalized gate per `matrix.template` (so the artifacts are packed a single tim
       - uses: actions/setup-node@v6
         with: { node-version: 22, cache: pnpm }
       - uses: supabase/setup-cli@v2
-        with: { version: latest }
+        with: { version: 2.109.1 }   # pin — matches integration-smoke (ci.yml:130); INTERFACES round-3 F2
+      - run: supabase --version | grep -qF '2.109.1'   # fail loud if the pinned CLI drifts
       - uses: actions/download-artifact@v4
         with: { name: movp-tarballs, path: ./artifacts }
       - run: pnpm install --frozen-lockfile
@@ -1405,13 +1527,19 @@ pnpm exec tsx scripts/check-template-gallery.ts
 pnpm exec tsx scripts/check-template-gallery.ts \
   && test -x fixtures/verdaccio-gallery/gate.sh \
   && test -x fixtures/verdaccio-gallery/pack.sh \
-  && node -e "const y=require('node:fs').readFileSync('.github/workflows/ci.yml','utf8'); if(!['crm-lite','marketing-site','support-desk','knowledge-base'].every(t=>y.includes(t))) throw new Error('matrix missing a template'); for(const j of ['template-gallery:','pack-artifacts:','template-smoke:']) if(!y.includes(j)) throw new Error('missing job '+j); console.log('ok')"
+  && test -f fixtures/verdaccio-gallery/stage-create-movp.mjs \
+  && grep -qF 'copyTreeGuarded' fixtures/verdaccio-gallery/stage-create-movp.mjs \
+  && ! grep -REq 'rm -rf .*packages/create-movp/templates|cp -R .*packages/create-movp' fixtures/verdaccio-gallery/ \
+  && node -e "const y=require('node:fs').readFileSync('.github/workflows/ci.yml','utf8'); if(!['crm-lite','marketing-site','support-desk','knowledge-base'].every(t=>y.includes(t))) throw new Error('matrix missing a template'); for(const j of ['template-gallery:','pack-artifacts:','template-smoke:']) if(!y.includes(j)) throw new Error('missing job '+j); if(!y.includes('2.109.1')) throw new Error('template-smoke setup-cli not pinned to 2.109.1'); console.log('ok')"
 ```
 
-**Expected:** gallery gate reports 3 templates verified; both scripts are executable; `ci.yml` contains
-all four template names and the three new jobs. In CI, `template-smoke` runs each of the four templates'
-scaffold → reset → real-surface smoke against the once-packed tarballs; `template-gallery` runs the
-Docker-free composition gate.
+**Expected:** gallery gate reports 3 templates verified; all three fixture scripts exist (gate/pack
+executable); the staging script routes through the SHARED `copyTreeGuarded` and NO fixture reintroduces a
+raw `cp -R`/`rm -rf` into `packages/create-movp`; `ci.yml` contains all four template names, the three new
+jobs, and the pinned `2.109.1` CLI. The F1 pack invariants (symlink-reject, worktree byte-unchanged) are
+pinned by Step 1c. In CI, `template-smoke` runs each of the four templates' scaffold → reset →
+real-surface smoke against the once-packed tarballs; `template-gallery` runs the Docker-free composition
+gate.
 
 ---
 
