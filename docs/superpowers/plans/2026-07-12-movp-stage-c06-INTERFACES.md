@@ -201,6 +201,22 @@ Both are APPROVED — the executor does NOT stop on them:
   BEFORE staging and compare AFTER; the gate passes iff the snapshot is byte-identical. Pre-existing
   untracked files and unrelated edits are PRESERVED, not failed on.
 
+## Plan review round 5 — locked resolutions (2026-07-13)
+
+- **F1 (HIGH) tests/verification NEVER touch the real worktree (06d + 06e).** The round-4 F2 tests
+  dirty a REAL `templates/*/README.md` and restore with `git checkout -- <file>` — which DISCARDS a
+  developer's pre-existing uncommitted edits. The test for "staging destroys nothing" must not itself
+  destroy anything. Fix: every staging-safety test and snapshot demonstration runs against a
+  **temporary synthetic tree** (`mktemp -d`, seeded with a fake `packages/create-movp/` + `templates/`).
+  **NO `git checkout --` anywhere. NO writes under the real repository from any test or gate demo.**
+  Acceptance: start with a dirty real README, run the tests/gates, assert its bytes are UNCHANGED.
+- **F2 ONE shared bounded snapshot helper (06d owns; 06e consumes).** 06d's `tree-snapshot.mjs`
+  `readFileSync`s every file (unbounded — a large untracked file OOMs the very gate that exists to
+  tolerate dirty worktrees), while 06e wrote a second, chunk-bounded `snapshot-tree.mjs`. Collapse to
+  ONE: `scripts/tree-snapshot.mjs` (06d owns) — `lstat`-based, **chunked/bounded streaming hash**
+  (never buffers a whole file), path-sorted manifest, records symlinks WITHOUT following, skips
+  `node_modules`, never prints content. 06e imports it; delete the duplicate.
+
 ## Stable error codes (all parts)
 
 `schema_runtime_mismatch` · `new_generated_delta_required` · `platform_artifact_invalid` ·
