@@ -63,8 +63,13 @@ started and smoked. Only the domain files differ.
   a stable 64-hex fingerprint); (b) runs `@movp/codegen`'s project-mode `generate()` twice against a
   temp dir and asserts the project baseline emits ONLY the `layer='project'` tables/metadata, never
   platform infra, and is byte-stable (immutability); (c) structural-greps the seed, page, and manifest
-  files (`package.json.template` present, bare `package.json` absent). Docker-free proxy for
-  "scaffold → reset"; the true reset + real-surface smoke runs in CI (Task 4).
+  files (`package.json.template` present, bare `package.json` absent, `codegen` npm script would be
+  present post-copier since the template ships `package.json.template`). Docker-free proxy for
+  "scaffold → reset"; the true reset + real-surface smoke runs in CI (Task 4). **This `generate()` is NOT
+  scaffold-time codegen (INTERFACES F2):** it runs FROM the monorepo, where the workspace `@movp/*` are
+  already installed, purely to prove the schema composes and the baseline is immutable. The scaffolded
+  project's codegen still runs strictly post-`npm install` in the Verdaccio gate (Task 4) — this gate
+  never installs a scaffold, so it cannot and does not run codegen before install.
 - **CI matrix (Task 4).** A `pack-artifacts` job packs `@movp/*` + `@movp/platform` + `create-movp`
   ONCE and uploads the tarballs; a `template-smoke` matrix job (`matrix.template:
   [crm-lite, marketing-site, support-desk, knowledge-base]`) `needs:` it, downloads the tarballs, and
@@ -94,6 +99,17 @@ started and smoked. Only the domain files differ.
 - **Templates ship `package.json.template`, never a bare `package.json`.** The copier renames it at
   scaffold time; a committed `package.json` under `templates/*` would make pnpm try to link the
   unpublished `@movp/* @^0.1.0` pins. The gallery gate asserts this per template.
+- **Codegen runs POST-install, never inline at scaffold time (INTERFACES F2; 06d owns, 06e mirrors).**
+  Scaffolding COPIES files only — it never `import`s the schema module or runs `generate()`, because the
+  scaffold's `@movp/*` deps do not exist until `npm install` (tsx cannot resolve a missing dependency).
+  Every template therefore ships the **`.ts` schema module** (`supabase/functions/_shared/schema.ts`,
+  loaded post-install via the project's own installed `tsx`) and a **`codegen` npm script**
+  (`"codegen": "tsx bin/codegen.mjs"`, inherited verbatim from CRM-lite's `package.json.template`). Every
+  gate — `fixtures/verdaccio-gallery/gate.sh` and the bootstrap commands in every README — sequences
+  **scaffold (copy only) → `npm install` → `npm run codegen` → `supabase db reset` → real-surface smoke**;
+  codegen never precedes install. The Docker-free `scripts/check-template-gallery.ts` is NOT a
+  scaffold-time codegen: it runs `generate()` from the **monorepo**, where the workspace `@movp/*` already
+  resolve, as an in-repo composition/immutability proxy — see the Architecture note.
 - **Seed must be `db reset`-safe on its own.** `seed.sql` bootstraps its demo workspace with the
   `__WORKSPACE_ID__` token + `workspace_membership` (whose `user_id` has NO FK to `auth.users` — see
   `supabase/migrations/20260701000001_bootstrap_tenancy.sql`), then inserts only project + platform rows
@@ -128,6 +144,15 @@ plan consumes them verbatim; the two facts most load-bearing here:
    streamable-MCP `callTool` + CLI create/list) and the `check:verdaccio-crm` root script. **06d does
    NOT add a CI job** (its acceptance gate is the local `gate.sh`). The 4-way CI matrix is THIS plan's
    Task 4, and it generalizes that gate to a `$TEMPLATE` parameter.
+3. **Codegen post-install (INTERFACES F2).** 06d's scaffolder COPIES files and emits the bootstrap step
+   list (`npm install` → `supabase start` → `npm run codegen` → `supabase db reset` → …, `create.ts`
+   line 803); it MUST NOT `import(movp.config.mjs)` / run `generate()` before `npm install`, because the
+   scaffold's `@movp/*` deps do not exist until then. Each template's `package.json.template` carries the
+   `codegen` npm script verbatim (`"codegen": "tsx bin/codegen.mjs"`) and the schema stays a **`.ts`**
+   module at `supabase/functions/_shared/schema.ts`, loaded post-install by the project's installed `tsx`.
+   06e mirrors this exactly: the generalized `gate.sh` and every README bootstrap keep
+   install-before-codegen; the Docker-free gallery gate runs `generate()` in-monorepo only (deps already
+   present), never against an uninstalled scaffold.
 
 The **generic GraphQL field names are camelCase-plural** of the collection name (`support_ticket` →
 `supportTickets`, `kb_article` → `kbArticles`, `author` → `authors`), matching the platform's existing
@@ -427,8 +452,10 @@ insert into public.newsletter_subscriber (id, workspace_id, email, status, sourc
 confirm it is present and unchanged).
 
 **7. `templates/marketing-site/package.json.template`** — copy CRM-lite's `package.json.template` (06d Task
-4 step 9) verbatim; it already uses `name: "__PROJECT_NAME__"`, `@movp/* @^0.1.0`, `packageManager`, and
-carries NO `@movp/mcp-bridge` (hosted-MCP default). No content change is needed beyond the copy.
+4 step 9) verbatim; it already uses `name: "__PROJECT_NAME__"`, `@movp/* @^0.1.0`, `packageManager`,
+carries the F2 `"codegen": "tsx bin/codegen.mjs"` script (the `npm run codegen` the gate runs post-install)
+alongside `movp`/`verify-schema-runtime`, and carries NO `@movp/mcp-bridge` (hosted-MCP default). No
+content change is needed beyond the copy.
 
 **8. `templates/marketing-site/src/pages/blog/index.astro`** — one page (smoke target, not gate-critical),
 using the CRM-lite shell's `postGraphql` helper + `readServerEnv`. (Platform gotcha inlined: env is read
@@ -497,8 +524,10 @@ if (token) {
 **9. `templates/marketing-site/README.md`** — purpose (marketing site + blog), a **Platform vs. project**
 table (reuses `content_item`/`content_type`/`content_revision`/`content_seo`/`content_schedule`/
 `content_publish_event`/`tag`/`asset`; extends with `author` + `newsletter_subscriber`), the hosted-MCP
-default note, and bootstrap commands (`npm create movp@latest -- --template marketing-site`, then
-`npm run codegen`, `supabase db reset`). Use `__PROJECT_NAME__` where CRM-lite's README uses it.
+default note, and bootstrap commands **in F2 order** (`npm create movp@latest -- --template
+marketing-site`, then `cd <project>`, `npm install`, `supabase start`, `npm run codegen`, `supabase db
+reset` — codegen strictly AFTER install, mirroring 06d's `create.ts` bootstrap list). Use
+`__PROJECT_NAME__` where CRM-lite's README uses it.
 
 **10. Re-run the gate — Expected: PASS**:
 
@@ -750,7 +779,9 @@ if (token) {
 
 **8. `templates/support-desk/README.md`** — purpose (support desk), Platform-vs-project table (reuses
 `task`/`task_status_option`/`task_priority_option`/`automation_rule`/`comment`/`event_type`; extends with
-`support_ticket` + `sla_policy`), the tickets-as-tasks note, and bootstrap commands.
+`support_ticket` + `sla_policy`), the tickets-as-tasks note, and bootstrap commands **in F2 order**
+(`npm create movp@latest -- --template support-desk`, then `cd <project>`, `npm install`, `supabase
+start`, `npm run codegen`, `supabase db reset` — codegen strictly AFTER install).
 
 **9. Re-run the gate — Expected: PASS** (`template-gallery: support-desk OK`):
 
@@ -969,7 +1000,8 @@ if (token) {
 **8. `templates/knowledge-base/README.md`** — purpose (KB / product docs), Platform-vs-project table
 (reuses `content_item`/`saved_item`/`tag` + the embeddable search infra; extends with `kb_article` +
 `kb_category`), a note that hybrid search works because `kb_article.body` is `embeddable`, and bootstrap
-commands.
+commands **in F2 order** (`npm create movp@latest -- --template knowledge-base`, then `cd <project>`, `npm
+install`, `supabase start`, `npm run codegen`, `supabase db reset` — codegen strictly AFTER install).
 
 **9. Re-run the gate — Expected: PASS** (`template-gallery: knowledge-base OK`):
 
@@ -1067,10 +1099,13 @@ DB_URL="postgresql://postgres:postgres@127.0.0.1:${DB_PORT}/postgres"
 ```
 
 If a pre-packed artifacts dir is present (`ARTIFACTS_DIR`, set by CI), publish those tarballs to Verdaccio
-instead of re-packing; otherwise call `pack.sh` locally. Keep the rest of 06d's gate body verbatim
-(publish-once to Verdaccio, scaffold, `npm install`, codegen, `supabase db reset`, serve, drive
-GraphQL/MCP/CLI, assert no `file:`/workspace links). Final line: `gate: verdaccio-gallery ($TEMPLATE)
-acceptance PASS`. Mark both scripts executable (`chmod +x fixtures/verdaccio-gallery/*.sh`).
+instead of re-packing; otherwise call `pack.sh` locally. Keep the rest of 06d's gate body verbatim, in
+this **F2-locked order** (INTERFACES F2 — codegen is POST-install, never inline at scaffold):
+**publish-once to Verdaccio → scaffold (copy files ONLY — no `import`/`generate()` here; the scaffold's
+`@movp/*` do not exist yet) → `npm install --registry "$REGISTRY"` (no workspace links) → `npm run
+codegen` → `supabase db reset` → serve real GraphQL + MCP → drive GraphQL/MCP/CLI → assert no
+`file:`/workspace links**. Do NOT move codegen before `npm install`. Final line: `gate: verdaccio-gallery
+($TEMPLATE) acceptance PASS`. Mark both scripts executable (`chmod +x fixtures/verdaccio-gallery/*.sh`).
 
 > **Reconcile with 06d before running:** open `fixtures/verdaccio-crm-lite/gate.sh` and adopt its exact
 > `REGISTRY` / `WORK` / `PROJECT` / `WS` variable names and its serve-readiness poll verbatim — only the

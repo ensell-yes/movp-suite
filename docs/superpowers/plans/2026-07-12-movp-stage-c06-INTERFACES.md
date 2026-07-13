@@ -122,6 +122,33 @@ Both are APPROVED — the executor does NOT stop on them:
 - **`@astrojs/starlight`** (06f) — docs-site framework; pick a version whose peer range accepts the
   repo's `astro@^6`. If NO compatible version exists, STOP and ask (do NOT downgrade Astro).
 
+## Plan review round 1 — locked resolutions (2026-07-12)
+
+- **F1 `@movp/platform` publish mechanics (06a owns, 06d consumes).** The package ships a real JS
+  entrypoint via `publishConfig` (`dist/index.js` + `dist/index.d.ts`, built from `src/index.ts`)
+  AND its migration artifacts under `dist/migrations/` + `dist/manifest.json`; its `exports` map
+  includes `"."`, `"./package.json"`, and `"./migrations/*"`. 06d resolves the package via
+  `import.meta.resolve('@movp/platform/package.json')` (or the entry), derives the migrations dir
+  from that, and runs `verifyPlatformArtifact` on it. Do NOT export `./src/*` for the installed path.
+- **F2 codegen runs POST-install, never inline at scaffold time (06d owns, 06e mirrors).** The
+  scaffolder COPIES files and prints/executes the bootstrap `npm install` → `npm run codegen`; it
+  MUST NOT `import(movp.config.mjs)`/run `generate()` before `npm install` (the scaffold's
+  `@movp/*` deps do not exist yet — tsx cannot fix a missing dependency). Verdaccio gates sequence
+  install → codegen → reset. The schema module stays `.ts` (loaded post-install via the project's
+  installed `tsx`).
+- **F4 `generate({schema})` — schema REQUIRED, no default (06b owns; 06a/06c conform).** No
+  `generate(options = {})`; `schema: MovpSchema` is required. Monorepo callers pass it explicitly
+  (06b rewires `scripts/codegen.ts` etc.). 06c must NOT reintroduce an optional/defaulted schema;
+  06a's "required OR defaulted" language is tightened to REQUIRED.
+- **F6 untrusted-I/O at every platform-build read + registry/manifest write (06a, 06c).** Apply
+  `lstat`(symlink-reject) + regular-file + size-bound BEFORE reading source migrations/manifests;
+  `saveDeltaRegistry`/manifest writes use the safe-write pattern (no symlink follow/overwrite),
+  0o600 where the file may hold sensitive refs. Per [[untrusted-io-and-resource-bounds]].
+- **F7 real DB-reset consistency gate (06c owns, 06f consumes).** 06c adds a CI gate that runs
+  `supabase db reset` then queries live `movp_fields`/`movp_collections` and asserts
+  `checkMetadataConsistency` passes (and fails with the stable code on a mutated row). 06f consumes
+  THAT established signal — it does not treat a manifest-derived DB state as live evidence.
+
 ## Stable error codes (all parts)
 
 `schema_runtime_mismatch` · `new_generated_delta_required` · `platform_artifact_invalid` ·

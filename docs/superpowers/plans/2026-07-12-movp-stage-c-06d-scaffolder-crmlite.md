@@ -16,8 +16,9 @@ Ship the last runnable piece of the C6 productization seam:
    this per INTERFACES "Ownership notes"), confirming no in-repo consumer pins `0.0.0`.
 2. A new **unscoped `create-movp`** package: `npm create movp` / `npx create-movp` prompts for a
    template + project name, runs a **safe copier** (untrusted-I/O hardened), materializes the
-   `@movp/platform` release bundle (via `verifyPlatformArtifact` from 06a), runs project codegen
-   (06b/06c project mode), and prints bootstrap steps.
+   `@movp/platform` release bundle (via `verifyPlatformArtifact` from 06a), and prints bootstrap steps.
+   **Project codegen runs POST-install** (`npm install` → `npm run codegen`), never inline at scaffold
+   time — the scaffold's `@movp/*` deps do not exist until `npm install` runs (INTERFACES F2).
 3. A **CRM-lite** template under `templates/crm-lite/`: `contact` / `company` / `deal` project
    extension collections (via `defineSchema({ extends })`), a seeded segment + automation (platform
    collections showcasing C5), a few Astro pages, a SQL seed, and a README — the exact "Scaffold
@@ -37,7 +38,8 @@ Ship the last runnable piece of the C6 productization seam:
 - **`create-movp` (Tasks 2–3, `packages/create-movp/`).** Unscoped published package. `src/copier.ts`
   is a **pure, synchronous, untrusted-I/O-hardened** file copier (no prompts, no network). `src/scaffold.ts`
   orchestrates: resolve target → copy template → substitute tokens → materialize platform bundle →
-  run project codegen → print bootstrap steps. `src/cli.ts` (the `create-movp` bin) does the prompting
+  print bootstrap steps (codegen is deferred to the printed post-install `npm run codegen`, INTERFACES
+  F2 — never run inline). `src/cli.ts` (the `create-movp` bin) does the prompting
   and calls `scaffold`. The copier and scaffolder are unit-tested in isolation; the CLI is exercised
   end-to-end by the Verdaccio gate (Task 5).
 - **CRM-lite template (Task 4, `templates/crm-lite/`).** A private-in-monorepo directory of template
@@ -628,7 +630,10 @@ copied byte-identically; typecheck clean.
 ## Task 3 — `create-movp` scaffolder orchestration + CLI
 
 Wire the copier into the full flow: resolve target → copy → materialize the platform bundle (06a) →
-run project codegen (06b/06c) → print bootstrap steps; add the prompting CLI bin.
+print bootstrap steps; add the prompting CLI bin. **Codegen is NOT run inline** — the scaffolder only
+COPIES files + materializes the platform bundle, then prints the post-install `npm install` →
+`npm run codegen` steps (INTERFACES F2: the scaffold's `@movp/*` deps do not exist until `npm install`
+runs, so `tsx` cannot import `movp.config.mjs`/`schema.ts` at scaffold time).
 
 ### Files
 
@@ -641,10 +646,10 @@ run project codegen (06b/06c) → print bootstrap steps; add the prompting CLI b
 
 - **Consumes (exact signatures):**
   - 06a: `import { verifyPlatformArtifact } from '@movp/platform'` — `verifyPlatformArtifact(dir: string): void`.
-  - 06c: `import { generate } from '@movp/codegen'` —
-    `generate({ schema: MovpSchema; migrationsDir: string; migrationName: string; deltasRegistryPath: string; manifestPath: string; generatorVersion?: string }): Promise<{ migrationPath: string; typesPath: string; deltaPaths: string[] }>`.
-  - The scaffold's project schema, imported at scaffold time from the freshly-copied
-    `movp.config.mjs` (which re-exports `supabase/functions/_shared/schema.ts`).
+  - The scaffolder does NOT consume `@movp/codegen`'s `generate()` and does NOT import the scaffold's
+    `movp.config.mjs`/`schema.ts` at scaffold time (INTERFACES F2). Project codegen runs POST-install
+    via the scaffold's own `npm run codegen` (`bin/codegen.mjs`, Task 4), using the project's installed
+    `tsx` + `@movp/codegen`.
 - **Produces (LOCKED — consumed by Task 5 + 06e):**
   - `interface ScaffoldOptions { templateDir: string; parentDir: string; projectName: string; workspaceId: string; platformArtifactDir: string }`
   - `function scaffold(opts: ScaffoldOptions): Promise<{ targetDir: string; bootstrap: string[] }>` —
@@ -658,7 +663,7 @@ template + a MINIMAL fake platform artifact so the unit test needs no real DB or
 the real CRM-lite + real platform bundle are exercised by Task 5):
 
 ```ts
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -684,13 +689,13 @@ function fakeTemplate(dir: string): void {
   mkdirSync(join(dir, 'supabase', 'migrations'), { recursive: true })
   writeFileSync(join(dir, 'README.md'), '# __PROJECT_NAME__ (ws __WORKSPACE_ID__)\n')
   writeFileSync(join(dir, 'movp.deltas.json'), JSON.stringify({ deltas: [] }, null, 2) + '\n')
-  // A movp.config.mjs whose schema has ZERO project collections keeps codegen a no-op baseline.
+  // movp.config.mjs is COPIED verbatim; the scaffolder never imports it (codegen is post-install, F2).
   writeFileSync(join(dir, 'movp.config.mjs'),
     'export const schema = { collections: [], events: [], projectCollections: [], platformCollections: [] }\n')
 }
 
 describe('scaffold', () => {
-  it('copies the template, materializes the platform bundle first, runs codegen, prints bootstrap', async () => {
+  it('copies the template + materializes the platform bundle, and DEFERS codegen to bootstrap (install → codegen)', async () => {
     const templateDir = join(work, 'template')
     const platformDir = join(work, 'platform')
     fakeTemplate(templateDir)
@@ -710,9 +715,14 @@ describe('scaffold', () => {
     // platform migration materialized into the scaffold, ahead of any project migration
     expect(readFileSync(join(res.targetDir, 'supabase', 'migrations', '20260701000001_init.sql'), 'utf8'))
       .toBe('-- platform baseline\n')
-    // bootstrap steps are ordered + non-empty
-    expect(res.bootstrap.length).toBeGreaterThan(0)
-    expect(res.bootstrap.join('\n')).toContain('npm install')
+    // F2: codegen did NOT run inline — no manifest and no project baseline migration were emitted.
+    expect(existsSync(join(res.targetDir, 'movp.schema.json'))).toBe(false)
+    expect(existsSync(join(res.targetDir, 'supabase', 'migrations', '20260715000000_movp_generated.sql'))).toBe(false)
+    // bootstrap sequences install BEFORE codegen (the contract Task 5's gate follows).
+    const install = res.bootstrap.indexOf('npm install')
+    const codegen = res.bootstrap.indexOf('npm run codegen')
+    expect(install).toBeGreaterThanOrEqual(0)
+    expect(codegen).toBeGreaterThan(install)
   })
 
   it('refuses a tampered platform artifact (digest mismatch → platform_artifact_invalid)', async () => {
@@ -740,9 +750,6 @@ pnpm --filter create-movp exec vitest run scaffold
 ```ts
 import { copyFileSync, lstatSync, mkdirSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
-import { pathToFileURL } from 'node:url'
-import type { MovpSchema } from '@movp/core-schema'
-import { generate } from '@movp/codegen'
 import { verifyPlatformArtifact } from '@movp/platform'
 import { copyTemplate, resolveTargetDir } from './copier.ts'
 
@@ -754,10 +761,8 @@ export interface ScaffoldOptions {
   platformArtifactDir: string
 }
 
-// Project baseline sorts AFTER the whole platform stream so the `layer` column (06a's
-// 20260713000001_metadata_layer.sql) already exists when project metadata upserts run.
-const PROJECT_BASELINE = '20260715000000_movp_generated.sql'
-
+// `async` is retained so a thrown `verifyPlatformArtifact` surfaces as a rejected promise for the
+// unit test's `.rejects.toThrow`; there is no inline `await` (codegen is deferred to bootstrap, F2).
 export async function scaffold(
   opts: ScaffoldOptions,
 ): Promise<{ targetDir: string; bootstrap: string[] }> {
@@ -775,6 +780,8 @@ export async function scaffold(
 
   // 2. Materialize the immutable platform bundle AHEAD of any project migration. verify FIRST
   //    (throws platform_artifact_invalid on any tamper), then COPY the .sql files (never symlink).
+  //    `platformArtifactDir` is the platform package's `dist/` (contains migrations/ + manifest.json),
+  //    resolved by the CLI via import.meta.resolve('@movp/platform/package.json') — see Step 4 (F1).
   verifyPlatformArtifact(opts.platformArtifactDir)
   const migrationsDir = join(targetDir, 'supabase', 'migrations')
   mkdirSync(migrationsDir, { recursive: true })
@@ -786,25 +793,14 @@ export async function scaffold(
     copyFileSync(abs, join(migrationsDir, name))
   }
 
-  // 3. Run project codegen (project mode, keyed on deltasRegistryPath). Emits ONLY the project
-  //    baseline + registered deltas + the movp.schema.json manifest. Load the schema from the
-  //    freshly-copied movp.config.mjs via a file URL so tsx/ESM resolves the composed schema.
-  const configUrl = pathToFileURL(join(targetDir, 'movp.config.mjs')).href
-  const mod = (await import(configUrl)) as { schema: MovpSchema }
-  await generate({
-    schema: mod.schema,
-    migrationsDir,
-    migrationName: PROJECT_BASELINE,
-    deltasRegistryPath: join(targetDir, 'movp.deltas.json'),
-    manifestPath: join(targetDir, 'movp.schema.json'),
-  })
-
-  // 4. Bootstrap steps (also the contract Task 5's gate follows, in order).
+  // 3. Codegen is NOT run here (INTERFACES F2). The scaffold's `@movp/*` deps + `tsx` do not exist
+  //    until `npm install` runs, so the project baseline + movp.schema.json are emitted post-install
+  //    by the scaffold's own `npm run codegen` (bin/codegen.mjs, Task 4). Bootstrap prints that step.
   const bootstrap = [
     `cd ${opts.projectName}`,
     'npm install',
-    'supabase start',
     'npm run codegen',
+    'supabase start',
     'supabase db reset',
     'npm run verify-schema-runtime',
     'supabase functions serve --env-file supabase/.env.local',
@@ -814,12 +810,12 @@ export async function scaffold(
 }
 ```
 
-> **Platform-runtime gotcha (inline):** `create-movp` runs under Node via `tsx` (its bin is ESM). The
-> `import(configUrl)` of `movp.config.mjs` re-exports `supabase/functions/_shared/schema.ts` (a `.ts`
-> file), which requires the tsx loader — the `create-movp` bin (Step 4 below) MUST be launched with a
-> tsx-capable runtime; the published `dist/cli.js` bundles nothing from the scaffold, so the tsx
-> requirement is satisfied by the scaffold's own `packageManager`/`tsx` devDep (Task 4). In the unit
-> test above the config is plain `.mjs` with an inline object, so no tsx is needed there.
+> **F2 gotcha (inline):** the scaffolder MUST NOT `import()` the scaffold's `movp.config.mjs` (which
+> re-exports `supabase/functions/_shared/schema.ts`, a `.ts` file resolving `@movp/core-schema`) or run
+> `generate()` at scaffold time. At scaffold time the target's `node_modules` is empty — `npm install`
+> has not run yet — so tsx cannot load `@movp/*` and codegen would throw a missing-dependency error.
+> Codegen is deferred to the printed `npm run codegen`, which runs under the project's installed tsx +
+> `@movp/codegen`.
 
 **3. Add `scaffold` to `packages/create-movp/src/index.ts`:**
 
@@ -835,7 +831,6 @@ export { scaffold, type ScaffoldOptions } from './scaffold.ts'
 import { createInterface } from 'node:readline/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { createRequire } from 'node:module'
 import { scaffold } from './scaffold.ts'
 
 const TEMPLATES = ['crm-lite'] as const
@@ -848,10 +843,12 @@ function bundledTemplateDir(name: TemplateName): string {
 }
 
 function bundledPlatformDir(): string {
-  // @movp/platform is a runtime dependency of create-movp; its dist/ carries the migration bundle.
-  const require = createRequire(import.meta.url)
-  const pkgJson = require.resolve('@movp/platform/package.json')
-  return join(dirname(pkgJson), 'dist')
+  // @movp/platform is a runtime dependency of create-movp. Resolve it via the package.json export
+  // (INTERFACES F1: `exports` includes "./package.json"; NEVER "./src/*"), then derive the artifact
+  // dir dist/ (which holds migrations/ + manifest.json — see @movp/platform publishConfig). Use
+  // import.meta.resolve, not createRequire — the bin is native ESM.
+  const pkgJsonPath = fileURLToPath(import.meta.resolve('@movp/platform/package.json'))
+  return join(dirname(pkgJsonPath), 'dist')
 }
 
 async function main(): Promise<void> {
@@ -1422,7 +1419,9 @@ if grep -Rq 'supasuite/packages' package-lock.json 2>/dev/null; then
   echo "gate: lockfile references the monorepo source tree — not standalone"; exit 1;
 fi
 
-# 6. Codegen (project mode) + platform-materialized migrations present.
+# 6. Codegen runs POST-install (INTERFACES F2 — the scaffolder does NOT run it inline; the project
+#    baseline + movp.schema.json are emitted HERE, by the scaffold's own tsx + @movp/codegen). Sequence
+#    is install (step 5) → codegen (this step) → db reset (step 7).
 npm run codegen
 test -f supabase/migrations/20260715000000_movp_generated.sql || { echo "project baseline missing"; exit 1; }
 ls supabase/migrations/*_movp_generated.sql >/dev/null || { echo "no generated migration"; exit 1; }
@@ -1477,22 +1476,26 @@ GQL="$(curl -sS "$API_URL/functions/v1/graphql" -H "Authorization: Bearer $TOKEN
   -d "{\"query\":\"query{companies(workspaceId:\\\"$WS\\\", first:20){items{id name}}}\"}")"
 echo "$GQL" | grep -q 'Acme Corp' || { echo "GraphQL companies query failed: $GQL"; exit 1; }
 
-# 13. Streamable-MCP tools/call over HTTP creates + reads a project collection tool.
+# 13. Streamable-MCP tools/call over HTTP creates + reads a project collection tool. The MCP server
+#     registers tools as `${collection}.list` = `company.list` (verified packages/mcp/src/server.ts:70).
+#     Assert the EXACT tool name is present in tools/list BEFORE calling it (not a loose match).
 MCP_LIST="$(curl -sS "$API_URL/functions/v1/mcp" -H "Authorization: Bearer $TOKEN" -H "apikey: $ANON_KEY" \
   -H "content-type: application/json" -H "accept: application/json, text/event-stream" \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}')"
-echo "$MCP_LIST" | grep -qi 'company' || { echo "MCP tools/list missing company tools: $MCP_LIST"; exit 1; }
+echo "$MCP_LIST" | grep -qF '"company.list"' || { echo "MCP tools/list missing exact tool company.list: $MCP_LIST"; exit 1; }
 MCP_CALL="$(curl -sS "$API_URL/functions/v1/mcp" -H "Authorization: Bearer $TOKEN" -H "apikey: $ANON_KEY" \
   -H "content-type: application/json" -H "accept: application/json, text/event-stream" \
-  -d "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"company_list\",\"arguments\":{\"workspaceId\":\"$WS\"}}}")"
-echo "$MCP_CALL" | grep -q 'Acme Corp' || { echo "MCP tools/call company_list failed: $MCP_CALL"; exit 1; }
+  -d "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"company.list\",\"arguments\":{\"workspaceId\":\"$WS\"}}}")"
+echo "$MCP_CALL" | grep -q 'Acme Corp' || { echo "MCP tools/call company.list failed: $MCP_CALL"; exit 1; }
 
 echo "gate: verdaccio-crm-lite acceptance PASS"
 ```
 
-> **Executor notes (verify against the running scaffold, fail loudly if wrong):**
-> - The exact MCP tool name (`company_list` vs `list_company`) is schema-derived; confirm from the
->   `tools/list` output captured in step 13 and correct the `tools/call` `name` if needed.
+> **Executor notes:**
+> - The MCP tool name is `company.list` (`${collection}.list`, verified `packages/mcp/src/server.ts:70`).
+>   The sample above is correct as written — do NOT rename it at execution time. Step 13 asserts the
+>   exact `"company.list"` string is in `tools/list` before the `tools/call`, so a derivation drift
+>   fails the gate loudly rather than silently mismatching.
 > - The exact GraphQL field name (`companies`) and CLI subcommand flags (`--name`) come from the
 >   schema-derived surfaces; `company` has a single-word `name` field specifically so the CLI flag is
 >   unambiguously `--name` (no camelCase surprise). Confirm the GraphQL root field with
@@ -1529,7 +1532,7 @@ bash fixtures/verdaccio-crm-lite/gate.sh
 asserts: no `file:`/`workspace:`/`link:` specifier and no monorepo-source path in the scaffold or its
 lockfile (standalone install); the project baseline + platform migrations are present; `db reset`
 green on the isolated `+200` stack; `verify-schema-runtime` prints `"ok":true`; an authenticated HTTP
-GraphQL `companies` query, a streamable-MCP `tools/call company_list`, and `npm run movp -- company
+GraphQL `companies` query, a streamable-MCP `tools/call company.list`, and `npm run movp -- company
 create/list` all return the seeded/created `Acme Corp`. (Prerequisites: Docker running; `supabase`,
 `deno`, `node`, `npm`, `psql` on PATH; `verdaccio` installed.)
 

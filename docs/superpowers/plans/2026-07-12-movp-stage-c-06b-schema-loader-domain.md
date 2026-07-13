@@ -842,6 +842,9 @@ pnpm --filter @movp/cli exec vitest run verify-schema-runtime
 Create `packages/cli/src/verify-schema-runtime.ts`:
 
 ```ts
+// ESM package: use a static `import` for the Node builtin. A CommonJS `require('node:child_process')`
+// throws `ReferenceError: require is not defined` at runtime here — never introduce one.
+import { spawnSync } from 'node:child_process'
 import type { MovpSchema } from '@movp/core-schema'
 import { schemaFingerprint } from '@movp/core-schema'
 
@@ -876,7 +879,7 @@ function defaultSpawnDeno(args: string[]): SpawnResult {
   // because a Node process cannot import the Deno-resolved schema in-process (the split-brain this
   // command closes). NEVER log stdout/stderr contents elsewhere — they are surfaced only in the
   // spawn-failure error path below and carry no schema field VALUES (only fingerprints/diagnostics).
-  const { spawnSync } = require('node:child_process') as typeof import('node:child_process')
+  // `spawnSync` is statically imported at the top of this file (ESM) — do NOT `require()` it here.
   const r = spawnSync('deno', args, { encoding: 'utf8' })
   return { status: r.status, stdout: r.stdout ?? '', stderr: r.stderr ?? '' }
 }
@@ -1029,7 +1032,12 @@ Deno computes the same fingerprint fn; the real `npm:@movp/*` resolution smoke i
 ```
 
 Add the acceptance test to `packages/cli/test/verify-schema-runtime.test.ts` (real `deno`, guarded so
-the suite still runs where deno is absent; the GATE requires deno installed):
+the suite still runs where deno is absent; the GATE requires deno installed).
+
+These cases MUST NOT inject `spawnDeno` — they deliberately fall through to the real
+`defaultSpawnDeno`, so the `spawnSync`/ESM-import path is exercised end-to-end. That is what makes a
+`require('node:child_process')` regression (which throws `ReferenceError: require is not defined`)
+fail this gate; a mock-only test would never hit `defaultSpawnDeno` and would hide it.
 
 ```ts
 import { spawnSync } from 'node:child_process'
@@ -1039,16 +1047,20 @@ const hasDeno = spawnSync('deno', ['--version'], { encoding: 'utf8' }).status ==
 const fixture = fileURLToPath(new URL('./fixtures/verify-schema-runtime/', import.meta.url))
 
 describe.skipIf(!hasDeno)('verify-schema-runtime real Deno cross-runtime gate (C6b.5 acceptance)', () => {
-  it('matches when Node config and Deno edge schema are identical', async () => {
+  it('matches when Node config and Deno edge schema are identical (real defaultSpawnDeno)', async () => {
+    // No `spawnDeno` override → runs the real `defaultSpawnDeno` (static `spawnSync` import).
     const res = await runVerifySchemaRuntime({
       configPath: `${fixture}movp.config.mjs`,
       denoConfigPath: `${fixture}deno.json`,
       edgeSchemaSpecifier: `${fixture}schema.match.mjs`,
     })
     expect(res.ok).toBe(true)
+    expect(res.nodeFingerprint).toMatch(/^[0-9a-f]{64}$/)
+    expect(res.denoFingerprint).toBe(res.nodeFingerprint)
   })
 
-  it('fails with schema_runtime_mismatch when only the Deno-facing schema changes', async () => {
+  it('fails with schema_runtime_mismatch when only the Deno-facing schema changes (real defaultSpawnDeno)', async () => {
+    // No `spawnDeno` override → runs the real `defaultSpawnDeno` (static `spawnSync` import).
     const res = await runVerifySchemaRuntime({
       configPath: `${fixture}movp.config.mjs`,        // MATCH schema on the Node side
       denoConfigPath: `${fixture}deno.json`,

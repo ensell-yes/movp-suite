@@ -31,10 +31,14 @@ Ship the first piece of the C6 productization seam:
 - **`@movp/codegen`** (`packages/codegen/`) — `emit-sql.ts`'s `collectionMetadataSql` conditionally
   writes the `layer` column: **only** for `layer === 'project'` collections. Platform collections emit
   exactly the bytes already frozen in `20260701000002_movp_generated.sql`.
-- **`@movp/platform`** (NEW, `packages/platform/`) — a build script that snapshots the whole ordered
-  `supabase/migrations/*.sql` stream into `dist/migrations/` + `dist/manifest.json`, and a pure
-  `verifyPlatformArtifact(dir)` util that throws `platform_artifact_invalid` on
-  missing/extra/reordered/digest-mismatch/symlink.
+- **`@movp/platform`** (NEW, `packages/platform/`) — a publishable package that ships (a) a real JS
+  entrypoint (`dist/index.js` + `dist/index.d.ts`, built from `src/index.ts` by `tsup`) exposing the
+  pure `verifyPlatformArtifact(dir)` util (throws `platform_artifact_invalid` on
+  missing/extra/reordered/digest-mismatch/symlink), and (b) the migration artifacts (`dist/migrations/`
+  + `dist/manifest.json`) snapshotted from the whole ordered `supabase/migrations/*.sql` stream by a
+  `tsx`-run build step. Per the locked C6 interface (F1), the PUBLISHED `exports` map (`publishConfig`)
+  carries `"."`, `"./package.json"`, and `"./migrations/*"`; 06d resolves the package via
+  `import.meta.resolve('@movp/platform/package.json')` and derives the migrations dir from it.
 - **`fixtures/platform-consumer/`** (NEW) — a port-isolated Supabase project that materializes the
   platform bundle + one hand-authored `contact` extension migration (`layer='project'`) and asserts,
   via `gate.sh`, that `db reset` is green, no source-repo paths leak, and platform metadata is
@@ -44,7 +48,9 @@ Ship the first piece of the C6 productization seam:
 
 - TypeScript (ESM, `.ts` extension imports, `moduleResolution: bundler`, `strict: true`), pnpm 9
   workspace, `turbo` for `test`/`typecheck`.
-- Vitest `^3.2.6` (already present); `tsx` `^4.19.0` (already present) for the platform build script.
+- Vitest `^3.2.6` (already present); `tsup` `^8.5.1` (root build tool used by every publishable
+  `@movp/*` package) for the `dist/index.js` + `dist/index.d.ts` entrypoint; `tsx` `^4.19.0` (already
+  present) for the migration-snapshot build step.
 - Node `node:crypto` / `node:fs` for digests and I/O.
 - Supabase CLI local stack, Postgres major version 17.
 
@@ -69,6 +75,17 @@ Ship the first piece of the C6 productization seam:
 - **Published pin context.** Scaffolds will later pin `@movp/* @^0.1.0` (C6d). In C6a all workspace
   packages, including the new `@movp/platform`, stay at `version: "0.0.0"`; `platformVersion` in the
   manifest is read from `@movp/platform`'s own `package.json` `version` field.
+- **publishConfig discipline (C1 gotcha, recurring — F1).** NEVER repoint `main`/`exports` at `dist`
+  in the working tree — the monorepo consumes `@movp/platform` from `src/*.ts` (like every other
+  `@movp/*` package). The dist entrypoint (`dist/index.js`) and the full published `exports` map
+  (`"."`, `"./package.json"`, `"./migrations/*"`) live ONLY in `publishConfig`, which npm/pnpm apply
+  when PACKING the tarball. Validate the PACKED tarball (Task 3 Step 10), not the working tree — a
+  wrong `exports`/`files` combination only manifests after `npm pack` + install.
+- **Untrusted-I/O at every source read (F6, [[untrusted-io-and-resource-bounds]]).** The platform
+  build treats the local `supabase/migrations` tree and any manifest as untrusted at read time:
+  `lstat` (reject symlinks) + regular-file + size-bound BEFORE reading any bytes, and never
+  follow/overwrite a symlink on write. A committed `x.sql -> ~/.ssh/id_rsa` symlink must be refused,
+  never followed into the artifact.
 - **Stable error codes (this part):** `platform_artifact_invalid`. (`platform_row_delete_forbidden`,
   `new_generated_delta_required`, `schema_runtime_mismatch` are owned by 06b/06c — do NOT emit them here.)
 
@@ -531,24 +548,38 @@ digests, and a pure verifier that rejects tampered artifacts.
 - **Create:** `packages/platform/tsconfig.json`
 - **Create:** `packages/platform/vitest.config.ts`
 - **Create:** `packages/platform/src/verify.ts`
-- **Create:** `packages/platform/src/build.ts`
+- **Create:** `packages/platform/src/build-lib.ts` (pure, testable build with untrusted-I/O guards)
+- **Create:** `packages/platform/src/build.ts` (thin repo-path entry that calls `build-lib.ts`)
 - **Create:** `packages/platform/src/index.ts`
 - **Create:** `packages/platform/.gitignore`
 - **Test (create):** `packages/platform/test/verify.test.ts`
+- **Test (create):** `packages/platform/test/build.test.ts` (untrusted-I/O negative cases)
 
 ### Interfaces
 
 - **Produces (LOCKED — consumed by 06d's scaffolder + this part's fixture):**
-  - Artifact layout under a dir: `migrations/<ordered .sql files>` + `manifest.json`
+  - Artifact layout under `dist/`: `migrations/<ordered .sql files>` + `manifest.json`
     `{ platformVersion: string, files: [{ name: string, sha256: string }] }` (files in applied /
     lexicographic order, including interleaved `*_movp_generated*.sql`).
   - `verifyPlatformArtifact(dir: string): void` — throws on missing / extra / reordered /
-    digest-mismatch / symlink migration. Error message contains the stable code
-    `platform_artifact_invalid`.
+    digest-mismatch / symlink migration, malformed / non-regular-file / oversized `manifest.json`.
+    Error message contains the stable code `platform_artifact_invalid`.
+  - Published entrypoint (via `publishConfig`, F1): importing `@movp/platform` resolves to
+    `dist/index.js` (re-exports `verifyPlatformArtifact`); `@movp/platform/package.json` and
+    `@movp/platform/migrations/*` resolve via the published `exports` map. The migration artifact dir
+    a consumer verifies is `dirname(resolve('@movp/platform/package.json')) + '/dist'`.
 
 ### Steps
 
-**1. `packages/platform/package.json`** (all deps already exist in the repo; version stays `0.0.0`):
+**1. `packages/platform/package.json`** (all deps already exist in the repo — `tsup ^8.5.1` is the root
+build tool every publishable `@movp/*` package already uses; version stays `0.0.0`).
+
+GOTCHA (C1 publishConfig, recurring — F1): the working-tree `main`/`exports` point at `src` so the
+MONOREPO consumes the package from source (matching `@movp/codegen` et al.); do NOT repoint them at
+`dist`. The dist entrypoint AND the full published `exports` map (`"."`, `"./package.json"`,
+`"./migrations/*"`) live ONLY under `publishConfig`, applied when the tarball is packed. `build` runs
+`tsup` first (emits `dist/index.js` + `dist/index.d.ts` from `src/index.ts`, `--clean` wipes `dist`),
+THEN `tsx src/build.ts` snapshots the migrations into the same `dist` WITHOUT re-wiping it:
 
 ```json
 {
@@ -562,17 +593,30 @@ digests, and a pure verifier that rejects tampered artifacts.
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "build": "tsx src/build.ts"
+    "build": "tsup src/index.ts --format esm --dts --sourcemap --clean --target node20 --out-dir dist && tsx src/build.ts"
   },
   "devDependencies": {
     "vitest": "^3.2.6",
     "tsx": "^4.19.0",
+    "tsup": "^8.5.1",
     "@types/node": "^26.0.1"
   },
   "types": "./src/index.ts",
   "files": [
     "dist"
-  ]
+  ],
+  "publishConfig": {
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js"
+      },
+      "./package.json": "./package.json",
+      "./migrations/*": "./dist/migrations/*"
+    }
+  }
 }
 ```
 
@@ -619,7 +663,10 @@ export interface PlatformManifest {
   files: PlatformManifestEntry[]
 }
 
-const MAX_MIGRATION_BYTES = 10 * 1024 * 1024
+// Size bounds enforced BEFORE any file is buffered (untrusted-I/O, F6). Exported so the build reuses
+// the SAME migration bound on the source read path.
+export const MAX_MIGRATION_BYTES = 10 * 1024 * 1024
+export const MAX_MANIFEST_BYTES = 1 * 1024 * 1024
 
 export class PlatformArtifactError extends Error {
   readonly code = 'platform_artifact_invalid'
@@ -635,9 +682,13 @@ function sha256Hex(bytes: Buffer): string {
 
 function readManifest(dir: string): PlatformManifest {
   const manifestPath = join(dir, 'manifest.json')
+  // Untrusted-I/O (F6): lstat + symlink-reject + regular-file + size-bound BEFORE reading/parsing.
+  // An oversized manifest is rejected on its stat size, never buffered into memory.
   const info = lstatSync(manifestPath, { throwIfNoEntry: false })
   if (!info) throw new PlatformArtifactError('manifest.json missing')
   if (info.isSymbolicLink()) throw new PlatformArtifactError('manifest.json is a symlink')
+  if (!info.isFile()) throw new PlatformArtifactError('manifest.json is not a regular file')
+  if (info.size > MAX_MANIFEST_BYTES) throw new PlatformArtifactError('manifest.json exceeds size bound')
 
   const parsed: unknown = JSON.parse(readFileSync(manifestPath, 'utf8'))
   if (typeof parsed !== 'object' || parsed === null) {
@@ -720,21 +771,89 @@ export {
 } from './verify.ts'
 ```
 
-**7. `packages/platform/src/build.ts`** (snapshots the whole ordered migration stream, self-verifies):
+**7a. `packages/platform/src/build-lib.ts`** (the PURE, testable build — takes explicit source/out paths;
+applies untrusted-I/O guards on EVERY source read; never wipes the whole `dist`):
 
 ```ts
 import { createHash } from 'node:crypto'
-import { copyFileSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  constants,
+  copyFileSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
+import { join } from 'node:path'
+import { MAX_MIGRATION_BYTES, verifyPlatformArtifact, type PlatformManifest } from './verify.ts'
+
+function sha256Hex(bytes: Buffer): string {
+  return createHash('sha256').update(bytes).digest('hex')
+}
+
+// UNTRUSTED-I/O (F6, [[untrusted-io-and-resource-bounds]]): the source migration tree is untrusted at
+// read time. lstat + symlink-reject + regular-file + size-bound BEFORE reading any bytes, so a
+// committed `x.sql -> ~/.ssh/id_rsa` symlink is refused (never followed/copied) and an oversized file
+// is rejected on its stat size, before it is buffered into memory.
+function assertSafeSourceMigration(path: string, name: string): void {
+  const info = lstatSync(path, { throwIfNoEntry: false })
+  if (!info) throw new Error(`source migration missing: ${name}`)
+  if (info.isSymbolicLink()) throw new Error(`refusing to read symlinked source migration: ${name}`)
+  if (!info.isFile()) throw new Error(`source migration is not a regular file: ${name}`)
+  if (info.size > MAX_MIGRATION_BYTES) throw new Error(`source migration exceeds size bound: ${name}`)
+}
+
+export function buildPlatformArtifact(opts: {
+  sourceMigrations: string
+  outDir: string
+  platformVersion: string
+}): PlatformManifest {
+  const outMigrations = join(opts.outDir, 'migrations')
+  // Clean ONLY the artifacts this step owns. `dist/index.js` + `dist/index.d.ts` are produced by
+  // `tsup` in the SAME `build` script, BEFORE this runs; wiping the whole `dist` would delete the JS
+  // entrypoint. `rmSync(..., { force: true })` unlinks a pre-existing manifest.json even if it is a
+  // symlink (it does not follow it), so the subsequent write lands on a fresh regular file.
+  rmSync(outMigrations, { recursive: true, force: true })
+  rmSync(join(opts.outDir, 'manifest.json'), { force: true })
+  mkdirSync(outMigrations, { recursive: true })
+
+  const files = readdirSync(opts.sourceMigrations)
+    .filter((name) => name.endsWith('.sql'))
+    .sort()
+
+  const manifest: PlatformManifest = {
+    platformVersion: opts.platformVersion,
+    files: files.map((name) => {
+      const srcPath = join(opts.sourceMigrations, name)
+      assertSafeSourceMigration(srcPath, name)
+      const bytes = readFileSync(srcPath)
+      // COPYFILE_EXCL: fail rather than follow/overwrite an existing destination (write safety).
+      copyFileSync(srcPath, join(outMigrations, name), constants.COPYFILE_EXCL)
+      return { name, sha256: sha256Hex(bytes) }
+    }),
+  }
+
+  writeFileSync(join(opts.outDir, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`)
+  verifyPlatformArtifact(opts.outDir)
+  return manifest
+}
+```
+
+**7b. `packages/platform/src/build.ts`** (thin entry — resolves repo paths, reads the package version,
+calls the pure builder, logs). Kept in a SEPARATE file so tests import `build-lib.ts` without triggering
+a real snapshot of the repo's migration tree:
+
+```ts
+import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { verifyPlatformArtifact, type PlatformManifest } from './verify.ts'
+import { buildPlatformArtifact } from './build-lib.ts'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const packageDir = join(here, '..')
 const repoRoot = join(packageDir, '..', '..')
-const sourceMigrations = join(repoRoot, 'supabase', 'migrations')
-const outDir = join(packageDir, 'dist')
-const outMigrations = join(outDir, 'migrations')
 
 function platformVersion(): string {
   const pkg: unknown = JSON.parse(readFileSync(join(packageDir, 'package.json'), 'utf8'))
@@ -743,33 +862,14 @@ function platformVersion(): string {
   return version
 }
 
-function sha256Hex(bytes: Buffer): string {
-  return createHash('sha256').update(bytes).digest('hex')
-}
-
-function main(): void {
-  rmSync(outDir, { recursive: true, force: true })
-  mkdirSync(outMigrations, { recursive: true })
-
-  const files = readdirSync(sourceMigrations)
-    .filter((name) => name.endsWith('.sql'))
-    .sort()
-
-  const manifest: PlatformManifest = {
-    platformVersion: platformVersion(),
-    files: files.map((name) => {
-      const bytes = readFileSync(join(sourceMigrations, name))
-      copyFileSync(join(sourceMigrations, name), join(outMigrations, name))
-      return { name, sha256: sha256Hex(bytes) }
-    }),
-  }
-
-  writeFileSync(join(outDir, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`)
-  verifyPlatformArtifact(outDir)
-  console.log(`@movp/platform: bundled ${manifest.files.length} migrations (platformVersion ${manifest.platformVersion})`)
-}
-
-main()
+const manifest = buildPlatformArtifact({
+  sourceMigrations: join(repoRoot, 'supabase', 'migrations'),
+  outDir: join(packageDir, 'dist'),
+  platformVersion: platformVersion(),
+})
+console.log(
+  `@movp/platform: bundled ${manifest.files.length} migrations (platformVersion ${manifest.platformVersion})`,
+)
 ```
 
 **8. Write the failing test** `packages/platform/test/verify.test.ts`:
@@ -849,6 +949,14 @@ describe('verifyPlatformArtifact', () => {
     symlinkSync(outside, join(dir, 'migrations', '20260701000001_a.sql'))
     expect(() => verifyPlatformArtifact(dir)).toThrow(/symlink/)
   })
+
+  it('rejects an oversized manifest on its size bound (never buffers it)', () => {
+    writeArtifact(dir)
+    // >1 MiB manifest.json — readManifest must reject on the lstat size, before readFileSync/JSON.parse.
+    const huge = `{"platformVersion":"0.0.0","files":[],"pad":"${'x'.repeat(1024 * 1024 + 16)}"}`
+    writeFileSync(join(dir, 'manifest.json'), huge)
+    expect(() => verifyPlatformArtifact(dir)).toThrow(/platform_artifact_invalid/)
+  })
 })
 ```
 
@@ -863,17 +971,108 @@ pnpm install \
 (`pnpm install` links the new workspace package; `packages/*` is already globbed by
 `pnpm-workspace.yaml`.)
 
+**8b. Write the build-guard test** `packages/platform/test/build.test.ts` (untrusted-I/O negative cases
+against a temp source tree — proves the symlink is refused BEFORE copy and the oversized file BEFORE
+buffering):
+
+```ts
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { buildPlatformArtifact } from '../src/build-lib.ts'
+
+describe('buildPlatformArtifact untrusted-I/O guards', () => {
+  let root: string
+  let src: string
+  let out: string
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'movp-platform-build-'))
+    src = join(root, 'src-migrations')
+    out = join(root, 'dist')
+    mkdirSync(src, { recursive: true })
+  })
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  it('bundles well-formed source migrations', () => {
+    writeFileSync(join(src, '20260101000001_a.sql'), '-- a\n')
+    const manifest = buildPlatformArtifact({ sourceMigrations: src, outDir: out, platformVersion: '0.0.0' })
+    expect(manifest.files.map((f) => f.name)).toEqual(['20260101000001_a.sql'])
+    expect(existsSync(join(out, 'migrations', '20260101000001_a.sql'))).toBe(true)
+  })
+
+  it('refuses a symlinked source migration and never copies its target bytes', () => {
+    const secret = join(root, 'secret.txt')
+    writeFileSync(secret, 'TOP SECRET\n')
+    symlinkSync(secret, join(src, '20260101000001_evil.sql'))
+    expect(() =>
+      buildPlatformArtifact({ sourceMigrations: src, outDir: out, platformVersion: '0.0.0' }),
+    ).toThrow(/symlink/)
+    expect(existsSync(join(out, 'migrations', '20260101000001_evil.sql'))).toBe(false)
+  })
+
+  it('refuses an oversized source migration before buffering it', () => {
+    // >10 MiB — rejected on the lstat size, before readFileSync.
+    writeFileSync(join(src, '20260101000002_big.sql'), 'x'.repeat(11 * 1024 * 1024))
+    expect(() =>
+      buildPlatformArtifact({ sourceMigrations: src, outDir: out, platformVersion: '0.0.0' }),
+    ).toThrow(/size bound/)
+  })
+})
+```
+
+Re-run — **Expected: PASS** (`verify.test.ts` 7 tests + `build.test.ts` 3 tests = 10):
+
+```
+pnpm --filter @movp/platform exec vitest run
+```
+
 **9. Build the real artifact** to prove the whole migration stream snapshots + self-verifies:
 
 ```
 pnpm --filter @movp/platform build
 ```
 
-**Expected:** prints `@movp/platform: bundled 42 migrations (platformVersion 0.0.0)` (41 pre-existing +
-the new `20260713000001_metadata_layer.sql`), and `packages/platform/dist/manifest.json` +
-`packages/platform/dist/migrations/` exist. `dist/` is gitignored.
+**Expected:** `tsup` first emits `packages/platform/dist/index.js` + `dist/index.d.ts` (the JS
+entrypoint), then the snapshot step prints
+`@movp/platform: bundled 42 migrations (platformVersion 0.0.0)` (41 pre-existing + the new
+`20260713000001_metadata_layer.sql`), and `packages/platform/dist/manifest.json` +
+`packages/platform/dist/migrations/` exist alongside `dist/index.js`. `dist/` is gitignored.
 
-**10. Commit** (`feat(c6a): @movp/platform artifact build + verifier`).
+**10. Prove the PACKED tarball installs + resolves (F1 — the C1 publishConfig gotcha).** `publishConfig`
+takes effect ONLY in the packed tarball (the working tree still points `main`/`exports` at `src`), so
+this validates the ACTUAL published shape — that `exports`/`files` ship a resolvable JS entrypoint AND
+the migration artifacts. Run from the repo root:
+
+```bash
+set -euo pipefail
+TMP="$(mktemp -d)"
+pnpm --filter @movp/platform build
+TARBALL="$(cd packages/platform && npm pack --pack-destination "$TMP" | tail -n1)"
+mkdir -p "$TMP/consumer"
+( cd "$TMP/consumer" && npm init -y >/dev/null && npm install "$TMP/$TARBALL" \
+  && node --input-type=module -e '
+import { verifyPlatformArtifact } from "@movp/platform"
+import { fileURLToPath } from "node:url"
+import { dirname, join } from "node:path"
+const distDir = join(dirname(fileURLToPath(import.meta.resolve("@movp/platform/package.json"))), "dist")
+const migUrl = import.meta.resolve("@movp/platform/migrations/20260713000001_metadata_layer.sql")
+console.log("located migration artifact:", fileURLToPath(migUrl))
+verifyPlatformArtifact(distDir)
+console.log("installed-tarball artifact ok")
+' )
+rm -rf "$TMP"
+```
+
+**Expected** (tail): a `located migration artifact: …/node_modules/@movp/platform/dist/migrations/20260713000001_metadata_layer.sql`
+line, then `installed-tarball artifact ok`. This proves the installed package resolves `@movp/platform`
+(→ `dist/index.js`), `@movp/platform/package.json`, and `@movp/platform/migrations/*` (→ `dist/migrations/`),
+and that `verifyPlatformArtifact` passes on the packed `dist`. A wrong `exports`/`files`/`publishConfig`
+fails HERE (module-not-found or `platform_artifact_invalid`), not in the working tree.
+
+**11. Commit** (`feat(c6a): @movp/platform artifact build + verifier`).
 
 ### Gate (machine-checkable)
 
@@ -881,11 +1080,13 @@ the new `20260713000001_metadata_layer.sql`), and `packages/platform/dist/manife
 pnpm --filter @movp/platform test \
   && pnpm --filter @movp/platform typecheck \
   && pnpm --filter @movp/platform build \
-  && node -e "require('node:fs').accessSync('packages/platform/dist/manifest.json')"
+  && node -e "require('node:fs').accessSync('packages/platform/dist/manifest.json'); require('node:fs').accessSync('packages/platform/dist/index.js')"
 ```
 
-**Expected:** verifier suite green (6 tests); typecheck green; build prints the bundle line;
-`manifest.json` present.
+**Expected:** suites green (`verify.test.ts` 7 + `build.test.ts` 3 = 10 tests); typecheck green; build
+prints the bundle line; `dist/manifest.json` AND `dist/index.js` present. Then run **Step 10's PACKED
+tarball proof** — Expected final line `installed-tarball artifact ok` (this is the load-bearing F1 gate:
+it fails loudly on a wrong `exports`/`files`/`publishConfig`, which the working tree cannot surface).
 
 ---
 
