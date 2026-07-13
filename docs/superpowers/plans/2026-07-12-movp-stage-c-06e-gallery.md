@@ -1971,14 +1971,52 @@ generalized gate per `matrix.template` (so the artifacts are packed a single tim
         run: bash fixtures/verdaccio-gallery/gate.sh ${{ matrix.template }}
 ```
 
-**6. Verify the workflow parses and lists four templates:**
+**6. Verify the workflow actually wires the jobs — APPEND to 06d's `REQUIRED_JOBS`, do NOT write a
+second checker.** 06d owns `scripts/check-ci-wiring.mjs` (INTERFACES round-9 F2): a dependency-free,
+indentation-aware structural check that locates each named job under the indent-0 `jobs:` key and
+requires its `runs:` / `contains:` entries **inside that job's own block**.
+
+> **Why this replaced the old `node -e "… y.includes(…)"` one-liner.** A file-wide `includes()` does not
+> check a property; it checks that a string exists *somewhere*. Two ways it false-greens here, both
+> real: (1) the strings can appear only in `#` comments, and (2) — verified against the current
+> `ci.yml` — **`2.109.1` already appears exactly once, in the `integration-smoke` job (line 130)**. So
+> the old assertion "template-smoke setup-cli not pinned to 2.109.1" passes **today**, with no
+> `template-smoke` job in existence. It was vacuous on arrival: a *different* job's pin satisfied it
+> permanently. Block-scoped `contains` is what makes the assertion real.
+
+Append these three entries to `REQUIRED_JOBS` in `scripts/check-ci-wiring.mjs` (this file is the ONE
+shared CI-wiring checker — nothing else in it changes):
+
+```js
+  'pack-artifacts': {
+    runs: ['bash fixtures/verdaccio-gallery/pack.sh'],
+  },
+  'template-gallery': {
+    runs: [
+      'pnpm exec tsx scripts/check-template-gallery.ts',
+      'bash scripts/check-template-gallery-guards.sh',
+    ],
+    // The 4-way matrix must name every template INSIDE this job — a template listed in some other
+    // job's matrix must not satisfy it.
+    contains: ['crm-lite', 'marketing-site', 'support-desk', 'knowledge-base'],
+  },
+  'template-smoke': {
+    runs: ['bash fixtures/verdaccio-gallery/gate.sh'],
+    // `supabase/setup-cli` pinned in THIS job — `integration-smoke` already pins 2.109.1, so a
+    // file-wide check would pass with no template-smoke job at all (that was the bug).
+    contains: ['2.109.1'],
+  },
+```
+
+Then run the shared checker:
 
 ```
-node -e "const y=require('node:fs').readFileSync('.github/workflows/ci.yml','utf8'); if(!['crm-lite','marketing-site','support-desk','knowledge-base'].every(t=>y.includes(t))) throw new Error('matrix missing a template'); for(const j of ['template-gallery:','pack-artifacts:','template-smoke:']) if(!y.includes(j)) throw new Error('missing job '+j); console.log('ci.yml: 4-way template matrix + gallery job present')"
+node scripts/check-ci-wiring.mjs
 ```
 
-**Expected:** `ci.yml: 4-way template matrix + gallery job present`. If `actionlint` is on PATH, also run
-`actionlint .github/workflows/ci.yml` — Expected: no errors.
+**Expected:** `ci wiring: 4 gate job(s) armed` (06d's `publishable-versions` + these three), exit 0. It
+exits non-zero naming the exact missing job / `run:` / literal otherwise. If `actionlint` is on PATH,
+also run `actionlint .github/workflows/ci.yml` — Expected: no errors.
 
 **7. Update the Stage C EXECUTION STATUS table** in `docs/superpowers/plans/README.md`: mark C6e landed in
 the SAME commit (Phase Completion Signal rule), noting the three templates + the 4-way matrix.
@@ -2019,8 +2057,17 @@ pnpm --filter create-movp build \
   && ! grep -REq 'git status --porcelain' fixtures/verdaccio-gallery/ \
   && ! grep -REq 'git checkout' fixtures/verdaccio-gallery/ scripts/check-template-gallery-guards.sh .github/workflows/ci.yml \
   && ! grep -REq 'rm -rf .*packages/create-movp/templates|cp -R .*packages/create-movp' fixtures/verdaccio-gallery/ \
-  && node -e "const y=require('node:fs').readFileSync('.github/workflows/ci.yml','utf8'); if(!['crm-lite','marketing-site','support-desk','knowledge-base'].every(t=>y.includes(t))) throw new Error('matrix missing a template'); for(const j of ['template-gallery:','pack-artifacts:','template-smoke:']) if(!y.includes(j)) throw new Error('missing job '+j); for(const s of ['scripts/check-template-gallery.ts','scripts/check-template-gallery-guards.sh']) if(!y.includes(s)) throw new Error('template-gallery job does not run '+s); if(!y.includes('2.109.1')) throw new Error('template-smoke setup-cli not pinned to 2.109.1'); console.log('ok')"
+  && ! grep -REq "readFileSync\('\.github/workflows" . --include=*.mjs --include=*.ts --include=*.md \
+  && node scripts/check-ci-wiring.mjs
 ```
+
+The last two components are the round-9 F2 fix. The `grep` is a tripwire against reintroducing a raw,
+unguarded `readFileSync` of the workflow; the **proof** is `check-ci-wiring.mjs`, which reads `ci.yml`
+through `readTextGuarded` and verifies each job STRUCTURALLY — the four jobs must exist as real keys
+under the indent-0 `jobs:` (the real `ci.yml` also has a job *named* `jobs:` at line 173, which is why
+naive anchoring breaks), and each `run:` / `contains:` literal must sit inside its own job's block. The
+substring `node -e` one-liner this replaces false-greened on comments, on a wrong-job match, and on a
+duplicate job name.
 
 **Expected:** gallery gate reports 3 templates verified and the guarded-read gate reports
 `guarded-reads: hostile-tree gate PASS` (a symlinked `seed.sql` / page / schema module and an oversized

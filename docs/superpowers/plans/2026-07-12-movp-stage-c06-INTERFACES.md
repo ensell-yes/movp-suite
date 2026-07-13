@@ -335,6 +335,30 @@ Both are APPROVED — the executor does NOT stop on them:
   read`. Keep the reasons DISTINCT from the JSON-parse case's `is not valid JSON` — conflating "cannot
   read" with "not valid JSON" loses the diagnostic. Still throw; never swallow.
 
+## Plan review round 9 — locked resolutions (2026-07-13)
+
+- **F1 (MEDIUM, safety) the guard is the ONLY way to read, not an option beside it (06d).** Round-8's
+  ci.yml shape assertion reads `.github/workflows/ci.yml` with a raw `readFileSync` — no `lstat`, no
+  size bound — one line after round-7 built `readJsonGuarded` for exactly that hazard. The rule was
+  scoped to "manifests" instead of "every read", which is how untrusted-I/O defects recur.
+  Fix: **generalize the primitive.** `scripts/lib/guarded-read.mjs` exports
+  `readTextGuarded(path, maxBytes)` — `lstat`-reject symlink/non-regular, size-bound BEFORE buffering,
+  content-free `*_unreadable` errors — and `readJsonGuarded` is implemented **on top of it** (parse +
+  structural validation). Every repo-file read in a gate goes through one of the two.
+- **F2 (MEDIUM, observability) the CI-wiring check must be STRUCTURAL, not a substring scan (06d).**
+  `y.includes('publishable-versions:') && y.includes('pnpm test:version-gate') && …` passes when those
+  strings appear **only in comments** or in an unrelated job — reproduced: a workflow whose gate exists
+  purely as `#` comments exits 0. So the assertion that proves the gate is armed can itself false-green.
+  Fix: a **dependency-free** structural checker that locates the `jobs:` → `publishable-versions:`
+  block by indentation and requires BOTH exact `run:` entries *inside that block*, ignoring comment
+  lines. No YAML dependency is added (none is resolvable, and new deps need approval); GitHub remains
+  the authoritative YAML parser — this check only has to prove the job exists and invokes both commands.
+  Hostile fixtures that MUST fail: comments-only, right commands in the wrong job, job present but a
+  command missing, duplicate job name. The intended job MUST pass.
+- **Placement:** both live in a real script (`scripts/check-ci-wiring.mjs`), not the `node -e`
+  one-liner — a `node -e` string is CommonJS and cannot cleanly `import` the ESM guard. The Task 1
+  gate invokes the script.
+
 ## Stable error codes (all parts)
 
 `schema_runtime_mismatch` · `new_generated_delta_required` · `platform_artifact_invalid` ·

@@ -36,10 +36,18 @@ Ship the last runnable piece of the C6 productization seam:
   — that reads the twelve manifests through `scripts/lib/guarded-read.mjs` (`readJsonGuarded`:
   lstat-before-read, size-bound-before-buffer, content-free errors, structural validation) and
   discriminates `git grep`'s exit status (`0` match / `1` no-match / anything else → throw), so an
-  operational git failure can never masquerade as a clean tree. Both are unit-tested with Node's
-  built-in runner (no vitest, no build step — the gate runs before anything is built).
+  operational git failure can never masquerade as a clean tree. All three scripts are unit-tested with
+  Node's built-in runner (no vitest, no build step — the gate runs before anything is built).
   `check-release-preflight.mjs` does not read versions (verified: it only shells
   `npm org/whoami/org ls`), so it needs no change — Task 1 states this as an explicit N/A with evidence.
+- **Guarded reads + CI wiring (Task 1).** `scripts/lib/guarded-read.mjs` exports **`readTextGuarded(path,
+  maxBytes, codePrefix?)`** as THE primitive — every repo-root gate that reads a worktree file goes
+  through it, and `readJsonGuarded` is built ON TOP of it (parse + structural validation), so the
+  lstat/symlink/size logic exists in exactly ONE place (INTERFACES round-9 F1: a guard that sits *beside*
+  a raw `readFileSync` is not a guard). `scripts/check-ci-wiring.mjs` proves the gate jobs are actually
+  ARMED in `.github/workflows/ci.yml` with a dependency-free, indentation-aware **structural** scan —
+  never a substring `includes()`, which false-greens on a job that exists only inside `#` comments or
+  under an unrelated job (INTERFACES round-9 F2).
 - **`create-movp` (Tasks 2–3, `packages/create-movp/`).** Unscoped published package. `src/copier.ts`
   is a **pure, synchronous, untrusted-I/O-hardened** file copier (no prompts, no network). `src/scaffold.ts`
   orchestrates: resolve target → copy template → substitute tokens → materialize platform bundle →
@@ -112,14 +120,27 @@ Ship the last runnable piece of the C6 productization seam:
   `platform_artifact_invalid`. **This copier list is CLOSED** — `readFileGuarded` reuses these codes;
   invent no new copier code (the INTERFACES stable-error-code list is fixed).
 - **Stable error codes (repo-root gates, Task 1) — a SEPARATE closed set:**
-  `scripts/lib/guarded-read.mjs` — `manifest_symlink_rejected`, `manifest_not_regular_file`,
-  `manifest_too_large`, `manifest_unreadable` (a JSON parse failure; the message carries the path +
-  reason and **NEVER** the file's bytes), `manifest_invalid_shape` (parseable but `name`/`version` are
-  not strings). `scripts/check-publishable-versions.mjs` — `version_gate_git_failed` (git exited with
-  an operational status, or could not be spawned at all). These are deliberately NOT the copier's
-  `template_*` codes: the repo-root gate and the published `create-movp` package are two different
-  module boundaries that must not import each other (INTERFACES round-7 F2), and a `package.json`
-  manifest is not a template file. Neither set adds to the INTERFACES cross-part code list.
+  - `scripts/lib/guarded-read.mjs`, **`readTextGuarded(path, maxBytes, codePrefix = 'file')`** — the ONE
+    guarded reader. Its four codes are parameterized by `codePrefix` so each caller keeps a closed,
+    self-describing set: **`<prefix>_symlink_rejected`**, **`<prefix>_not_regular_file`**,
+    **`<prefix>_too_large`**, **`<prefix>_unreadable`** (two DISTINCT reasons — `cannot be inspected` for
+    an `lstat` fault, `cannot be read` for a read fault). The prefixes in use are exactly three:
+    `manifest` (from `readJsonGuarded`), `workflow` (from `check-ci-wiring.mjs`), and the default `file`.
+  - `scripts/lib/guarded-read.mjs`, **`readJsonGuarded(path)`** — built ON TOP of `readTextGuarded` with
+    `codePrefix: 'manifest'`, so it inherits `manifest_symlink_rejected`, `manifest_not_regular_file`,
+    `manifest_too_large`, `manifest_unreadable` and ADDS: `manifest_unreadable: … is not valid JSON` (a
+    JSON parse failure; the message carries the path + reason and **NEVER** the file's bytes) and
+    `manifest_invalid_shape` (parseable but `name`/`version` are not strings).
+  - `scripts/check-publishable-versions.mjs` — `version_gate_git_failed` (git exited with an operational
+    status, or could not be spawned at all).
+  - `scripts/check-ci-wiring.mjs` — `ci_wiring_jobs_block_missing`, `ci_wiring_job_missing`,
+    `ci_wiring_job_duplicated`, `ci_wiring_run_missing`, `ci_wiring_contains_missing` (a required literal
+    is absent from THAT job's block). (Its `workflow_*` read faults come from `readTextGuarded` above.)
+
+  These are deliberately NOT the copier's `template_*` codes: the repo-root gate and the published
+  `create-movp` package are two different module boundaries that must not import each other (INTERFACES
+  round-7 F2), and a `package.json` manifest is not a template file. Neither set adds to the INTERFACES
+  cross-part code list.
 
 ---
 
@@ -138,12 +159,17 @@ resolve), and prove no in-repo consumer pins the literal `0.0.0`.
 - **Do NOT modify:** `packages/mcp-bridge/package.json` — it is `"private": true` and unpublished; it
   stays `0.0.0`. The monorepo root `package.json` and `templates/frontend-astro/package.json` stay
   `0.0.0` (both `"private"`; they consume workspace deps via `workspace:*`, never a version pin).
-- **Create (the guarded manifest reader):** `scripts/lib/guarded-read.mjs` (INTERFACES round-7 F2).
-- **Create (the gate):** `scripts/check-publishable-versions.mjs`.
-- **Test (create):** `scripts/test/guarded-read.test.mjs` (8 tests)
+- **Create (the guarded readers):** `scripts/lib/guarded-read.mjs` — `readTextGuarded` (THE primitive)
+  + `readJsonGuarded` (built on top of it) (INTERFACES round-7 F2 + round-9 F1).
+- **Create (the version gate):** `scripts/check-publishable-versions.mjs`.
+- **Create (the CI-wiring gate):** `scripts/check-ci-wiring.mjs` — the structural checker that proves
+  each gate job is armed in `ci.yml` (INTERFACES round-9 F2, step 5d).
+- **Test (create):** `scripts/test/guarded-read.test.mjs` (14 tests — 6 `readTextGuarded` + 8 `readJsonGuarded`)
 - **Test (create):** `scripts/test/check-publishable-versions.test.mjs` (9 tests)
-- **Modify (scripts block only):** root `package.json` — add `check:publishable-versions` +
-  `test:version-gate` (step 5). Its `version` stays `0.0.0`.
+- **Test (create):** `scripts/test/check-ci-wiring.test.mjs` (13 tests — the 4 hostile workflows, the
+  intended one, the guarded-read seam, and the 3 block-scoped `contains` cases)
+- **Modify (scripts block only):** root `package.json` — add `check:publishable-versions`,
+  `check:ci-wiring` + `test:version-gate` (step 5). Its `version` stays `0.0.0`.
 - **Modify (arm the gate in CI):** `.github/workflows/ci.yml` — add the `publishable-versions` job
   (step 5b). Without it the gate is registered but never run: `pnpm -w test` → `turbo run test` never
   reaches a root-only script (INTERFACES round-8 F2).
@@ -165,23 +191,63 @@ resolve), and prove no in-repo consumer pins the literal `0.0.0`.
   next `pnpm --filter @movp/platform build` (it reads its own `package.json` version — verified in
   06a Task 3 `build.ts`).
 - **Produces (06d-internal, repo-root gates only):** `scripts/lib/guarded-read.mjs` →
-  `readJsonGuarded(path): PackageManifest` — the untrusted-I/O-hardened `package.json` reader every
-  repo-root gate uses instead of `JSON.parse(readFileSync(...))`. **This is deliberately NOT the same
-  implementation as `create-movp`'s `readFileGuarded` (Task 2), and the two must NOT be
-  "consolidated"** (INTERFACES round-7 F2): `create-movp` is a *published npm package* and cannot
-  import repo-root `scripts/` (it would not ship in the tarball), and a repo-root gate cannot import
-  `create-movp`'s build output (nothing is built when this gate runs). Two consumers, two module
-  boundaries — one guard each, same semantics.
+  - `readTextGuarded(path: string, maxBytes: number, codePrefix = 'file'): string` — **THE primitive.**
+    `lstat` FIRST (throw on the lstat RESULT, so a symlink target is never opened) → reject symlink /
+    non-regular → size-bound via `lstat.size` BEFORE buffering → read. Errors are content-free
+    (`<prefix>_*`: path + reason, never the bytes). **EVERY repo-file read in a repo-root gate goes
+    through this or `readJsonGuarded` — never a raw `readFileSync`** (INTERFACES round-9 F1).
+  - `readJsonGuarded(path): PackageManifest` — the untrusted-I/O-hardened `package.json` reader every
+    repo-root gate uses instead of `JSON.parse(readFileSync(...))`. **Implemented ON TOP of
+    `readTextGuarded`** (`codePrefix: 'manifest'`, cap `MAX_MANIFEST_BYTES`), then `JSON.parse` +
+    structural validation. The lstat/size logic is NOT duplicated — one implementation, one owner.
+  - Exported constants `MAX_MANIFEST_BYTES` (256 KiB) and `MAX_WORKFLOW_BYTES` (1 MiB).
+
+  **This whole module is deliberately NOT the same implementation as `create-movp`'s `readFileGuarded`
+  (Task 2), and the two must NOT be "consolidated"** (INTERFACES round-7 F2): `create-movp` is a
+  *published npm package* and cannot import repo-root `scripts/` (it would not ship in the tarball), and
+  a repo-root gate cannot import `create-movp`'s build output (nothing is built when this gate runs). Two
+  consumers, two module boundaries — one guard each, same semantics.
+- **Produces (LOCKED — the ONE shared CI-wiring checker; 06e CONSUMES it):**
+  `scripts/check-ci-wiring.mjs` → `checkCiWiring(workflowPath?, requiredJobs?): string[]` plus the
+  **`REQUIRED_JOBS` table**, `Record<string, JobRequirement>` where:
+
+  ```js
+  /** @typedef {{ runs: string[], contains?: string[] }} JobRequirement */
+  export const REQUIRED_JOBS = {
+    'publishable-versions': {
+      runs: ['pnpm test:version-gate', 'pnpm check:publishable-versions'],
+    },
+    // 06e APPENDS its entries here; nothing else changes.
+  }
+  ```
+
+  - **`runs`** — exact `run:` commands that must appear as `- run: <cmd>` INSIDE that job's block.
+  - **`contains`** (optional) — literal strings that must appear anywhere inside **that job's OWN block**
+    (bounded by the next key at same-or-shallower indent, comments already stripped). For assertions that
+    are NOT `run:` commands: **06e uses it to pin `supabase/setup-cli` to `2.109.1` in `template-smoke`
+    and to name all four templates in the `template-gallery` matrix.** This is what stops 06e falling
+    back to a file-wide `y.includes('2.109.1')` — which, verified against the CURRENT tree, returns TRUE
+    because `integration-smoke` already pins `2.109.1`, so it would pass even with **no `template-smoke`
+    job at all**. Same false-green class as round-9 F2, closed the same way: scope the search to the block.
+
+  **06d OWNS this script and seeds the table with `publishable-versions`; later parts only APPEND an
+  entry** — 06e appends `template-gallery` + `template-smoke` and changes nothing else in the file.
+  **Do NOT write a second CI-wiring checker.** (Duplicate-helper drift has already been caught four times
+  in this plan series — `tree-snapshot.mjs`, `readFileGuarded`, the snapshot CLI contract, and the guarded
+  reader itself. This note is what prevents the fifth.) The workflow path is an argument (default
+  `.github/workflows/ci.yml`) so tests point it at `mkdtemp` fixtures — the same seam 06e uses for
+  `--templates-dir`.
 
 ### Steps
 
-**1. Write the failing test for the guarded manifest reader** `scripts/test/guarded-read.test.mjs`.
+**1. Write the failing test for the guarded readers** `scripts/test/guarded-read.test.mjs`.
 
-The gate parses twelve worktree `package.json` files. Those are UNTRUSTED input: any of them could be
-a committed symlink (`packages/auth/package.json -> ~/.aws/credentials`), and `readFileSync` FOLLOWS
-symlinks. Worse, Node's `JSON.parse` error message **embeds a snippet of the input** — so the naive
-`JSON.parse(readFileSync(p))` leaks secret bytes into CI logs through its own failure path. This test
-pins the guard that closes both.
+The gates read twelve worktree `package.json` files **and** `.github/workflows/ci.yml`. Those are
+UNTRUSTED input: any of them could be a committed symlink (`packages/auth/package.json ->
+~/.aws/credentials`), and `readFileSync` FOLLOWS symlinks. Worse, Node's `JSON.parse` error message
+**embeds a snippet of the input** — so the naive `JSON.parse(readFileSync(p))` leaks secret bytes into
+CI logs through its own failure path. `readTextGuarded` is THE primitive that closes both; `readJsonGuarded`
+is built on top of it, so the lstat/size logic is tested once and inherited (INTERFACES round-9 F1).
 
 ```js
 import assert from 'node:assert/strict'
@@ -189,7 +255,7 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync }
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, before, describe, it } from 'node:test'
-import { MAX_MANIFEST_BYTES, readJsonGuarded } from '../lib/guarded-read.mjs'
+import { MAX_MANIFEST_BYTES, readJsonGuarded, readTextGuarded } from '../lib/guarded-read.mjs'
 
 // Synthetic fixtures under $TMPDIR only. NO writes under the real repository (INTERFACES round-5 F1).
 let work = ''
@@ -200,6 +266,66 @@ after(() => rmSync(work, { recursive: true, force: true }))
 // so the EACCES case is SKIPPED there rather than asserted falsely. Every other case is portable.
 const canDenyRead =
   process.platform !== 'win32' && typeof process.getuid === 'function' && process.getuid() !== 0
+
+// `readTextGuarded` is THE primitive — `readJsonGuarded` is built on top of it, so these guards are
+// tested once and inherited. The `codePrefix` argument keeps each caller's error-code set closed:
+// 'manifest' for package.json, 'workflow' for ci.yml, 'file' by default.
+describe('readTextGuarded', () => {
+  const TEXT_MAX = 1024
+
+  it('returns the file contents for a regular, in-bounds file', () => {
+    const path = join(work, 'ok.txt')
+    writeFileSync(path, 'jobs:\n')
+    assert.equal(readTextGuarded(path, TEXT_MAX, 'workflow'), 'jobs:\n')
+  })
+
+  it('rejects a symlink WITHOUT reading its target', () => {
+    const secret = join(work, 'text-credentials')
+    writeFileSync(secret, 'aws_secret_access_key = SUPERSECRET\n')
+    const path = join(work, 'linked.yml')
+    symlinkSync(secret, path) // .github/workflows/ci.yml -> ~/.aws/credentials
+    assert.throws(() => readTextGuarded(path, TEXT_MAX, 'workflow'), (err) => {
+      assert.match(String(err), /workflow_symlink_rejected/)
+      assert.doesNotMatch(String(err), /SUPERSECRET|aws_secret/) // the target was never opened
+      return true
+    })
+  })
+
+  it('rejects a non-regular file (a directory)', () => {
+    const dir = join(work, 'text-dir')
+    mkdirSync(dir)
+    assert.throws(() => readTextGuarded(dir, TEXT_MAX, 'workflow'), /workflow_not_regular_file/)
+  })
+
+  it('rejects an oversized file BEFORE buffering it', () => {
+    const path = join(work, 'big.yml')
+    writeFileSync(path, 'x'.repeat(TEXT_MAX + 1))
+    assert.throws(() => readTextGuarded(path, TEXT_MAX, 'workflow'), /workflow_too_large/)
+  })
+
+  it('throws <prefix>_unreadable (not a raw ENOENT) for a missing file', () => {
+    assert.throws(() => readTextGuarded(join(work, 'nope.yml'), TEXT_MAX, 'workflow'), (err) => {
+      assert.match(String(err), /workflow_unreadable: .* cannot be inspected/)
+      assert.doesNotMatch(String(err), /ENOENT|no such file/)
+      return true
+    })
+  })
+
+  it('throws <prefix>_unreadable (not a raw EACCES) for an unreadable file', { skip: !canDenyRead }, () => {
+    const path = join(work, 'text-noperm.yml')
+    writeFileSync(path, 'jobs:\n')
+    chmodSync(path, 0o000) // lstat still succeeds; the READ is what fails
+    try {
+      assert.throws(() => readTextGuarded(path, TEXT_MAX, 'workflow'), (err) => {
+        assert.match(String(err), /workflow_unreadable: .* cannot be read/)
+        assert.doesNotMatch(String(err), /EACCES|permission denied/)
+        return true
+      })
+    } finally {
+      chmodSync(path, 0o600) // restore so the `after` hook can remove the temp tree
+    }
+  })
+})
 
 describe('readJsonGuarded', () => {
   it('returns the parsed manifest for a regular, valid file', () => {
@@ -288,9 +414,15 @@ node --test scripts/test/guarded-read.test.mjs
 **2. Implement `scripts/lib/guarded-read.mjs`:**
 
 ```js
-// The guarded `package.json` reader for repo-root gates. Dependency-free ESM with NO build step, on
-// purpose: `check-publishable-versions.mjs` runs BEFORE anything is built, so it cannot import a
-// package's compiled `dist/`.
+// The guarded file readers for repo-root gates. Dependency-free ESM with NO build step, on purpose:
+// `check-publishable-versions.mjs` and `check-ci-wiring.mjs` run BEFORE anything is built, so they
+// cannot import a package's compiled `dist/`.
+//
+// `readTextGuarded` is THE primitive: every repo-root gate that reads a worktree file goes through it
+// (or through `readJsonGuarded`, which is built ON TOP of it). There is exactly ONE lstat/size-bound
+// implementation here — a guard that sits BESIDE a raw `readFileSync` is not a guard (INTERFACES
+// round-9 F1: the ci.yml shape assertion was originally added with a raw `readFileSync` one line after
+// `readJsonGuarded` was built for exactly that hazard).
 //
 // DELIBERATELY NOT the same implementation as `create-movp`'s `readFileGuarded`
 // (`packages/create-movp/src/copier.ts`, Task 2), and the two must NOT be "consolidated" (INTERFACES
@@ -302,47 +434,64 @@ import { lstatSync, readFileSync } from 'node:fs'
 
 /** A `package.json` is a few KiB. 256 KiB is generous and still BOUNDS the buffer. */
 export const MAX_MANIFEST_BYTES = 256 * 1024
+/** A workflow is a few KiB (this repo's `ci.yml` is ~7 KiB). 1 MiB is generous and still BOUNDS it. */
+export const MAX_WORKFLOW_BYTES = 1024 * 1024
 
 /** @typedef {{ name: string, version: string } & Record<string, unknown>} PackageManifest */
 
 /**
- * Read + parse a `package.json` from an UNTRUSTED path (a worktree file anyone may have committed as
- * a symlink). Throws `manifest_*` (path + reason ONLY — never the file's bytes).
+ * Read a UTF-8 text file from an UNTRUSTED path (a worktree file anyone may have committed as a
+ * symlink). Throws `<codePrefix>_*` (path + reason ONLY — never the file's bytes).
+ *
+ * `codePrefix` keeps each caller's error-code set closed and self-describing: `readJsonGuarded` passes
+ * `'manifest'` (preserving its `manifest_*` codes), `check-ci-wiring.mjs` passes `'workflow'`, and the
+ * default `'file'` reads correctly for any other repo file.
+ *
  * @param {string} path
- * @returns {PackageManifest}
+ * @param {number} maxBytes
+ * @param {string} [codePrefix]
+ * @returns {string}
  */
-export function readJsonGuarded(path) {
+export function readTextGuarded(path, maxBytes, codePrefix = 'file') {
   // GOTCHA: `lstat` FIRST, and throw on the lstat RESULT — `statSync` and `readFileSync` both FOLLOW
-  // symlinks, so a symlinked manifest pointing at ~/.aws/credentials would already be OPEN by the time
-  // any later check ran. A basename denylist cannot help: the symlink is named `package.json`.
+  // symlinks, so a symlinked file pointing at ~/.aws/credentials would already be OPEN by the time any
+  // later check ran. A basename denylist cannot help: the symlink is named `package.json` / `ci.yml`.
   /** @type {import('node:fs').Stats} */
   let info
   try {
     info = lstatSync(path)
   } catch {
-    // The `manifest_*` code set is CLOSED. A raw `ENOENT`/`EACCES` from `lstatSync` would escape it —
-    // a deleted/renamed package or a CI permissions problem is a plausible real state, not a crash.
+    // The `<codePrefix>_*` code set is CLOSED. A raw `ENOENT`/`EACCES` from `lstatSync` would escape it
+    // — a deleted/renamed file or a CI permissions problem is a plausible real state, not a crash.
     // Bare `catch` (NO error binding), so no errno message — which can name paths outside the repo —
     // can be interpolated: the leak is unrepresentable, not merely discouraged.
-    throw new Error(`manifest_unreadable: ${path} cannot be inspected`)
+    throw new Error(`${codePrefix}_unreadable: ${path} cannot be inspected`)
   }
-  if (info.isSymbolicLink()) throw new Error(`manifest_symlink_rejected: ${path} is a symlink`)
-  if (!info.isFile()) throw new Error(`manifest_not_regular_file: ${path} is not a regular file`)
+  if (info.isSymbolicLink()) throw new Error(`${codePrefix}_symlink_rejected: ${path} is a symlink`)
+  if (!info.isFile()) throw new Error(`${codePrefix}_not_regular_file: ${path} is not a regular file`)
   // Bound BEFORE buffering: a cap applied after `readFileSync` cannot prevent the OOM it exists to stop.
-  if (info.size > MAX_MANIFEST_BYTES) {
-    throw new Error(`manifest_too_large: ${path} is ${info.size} bytes (max ${MAX_MANIFEST_BYTES})`)
+  if (info.size > maxBytes) {
+    throw new Error(`${codePrefix}_too_large: ${path} is ${info.size} bytes (max ${maxBytes})`)
   }
 
-  /** @type {string} */
-  let raw
   try {
-    raw = readFileSync(path, 'utf8')
+    return readFileSync(path, 'utf8')
   } catch {
-    // Same closed-set discipline as the `lstat` above. The reason is DISTINCT from the parse case's
-    // "is not valid JSON": conflating "cannot be read" with "is not valid JSON" destroys the diagnostic
-    // — one is an I/O fault, the other is a content fault, and they have different remedies.
-    throw new Error(`manifest_unreadable: ${path} cannot be read`)
+    // Same closed-set discipline as the `lstat` above. This reason is DISTINCT from the JSON-parse
+    // case's "is not valid JSON": conflating "cannot be read" with "is not valid JSON" destroys the
+    // diagnostic — one is an I/O fault, the other a content fault, with different remedies.
+    throw new Error(`${codePrefix}_unreadable: ${path} cannot be read`)
   }
+}
+
+/**
+ * Read + parse a `package.json` from an UNTRUSTED path. Built ON TOP of `readTextGuarded` — the
+ * lstat/symlink/size logic lives in ONE place, not two. Throws `manifest_*` (path + reason ONLY).
+ * @param {string} path
+ * @returns {PackageManifest}
+ */
+export function readJsonGuarded(path) {
+  const raw = readTextGuarded(path, MAX_MANIFEST_BYTES, 'manifest')
 
   /** @type {unknown} */
   let parsed
@@ -352,7 +501,7 @@ export function readJsonGuarded(path) {
     // GOTCHA (the entire reason this catch exists): Node's `JSON.parse` error message EMBEDS a snippet
     // of the input — `Unexpected token 'a', "aws_secret"... is not valid JSON`. Re-throwing it, or
     // interpolating `err.message`, prints the file's CONTENT into CI logs — the very leak the `lstat`
-    // above closes on the happy path. Throw the path + a reason. NEVER the bytes, NEVER a preview.
+    // in `readTextGuarded` closes on the happy path. Throw the path + a reason. NEVER the bytes.
     throw new Error(`manifest_unreadable: ${path} is not valid JSON`)
   }
 
@@ -372,14 +521,15 @@ export function readJsonGuarded(path) {
 }
 ```
 
-Re-run — **Expected: PASS**, `pass 8 / fail 0`:
+Re-run — **Expected: PASS**, `pass 14 / fail 0` (6 `readTextGuarded` + 8 `readJsonGuarded`):
 
 ```
 node --test scripts/test/guarded-read.test.mjs
 ```
 
-> The EACCES case self-skips when the runner is root or win32 (`chmod 000` cannot deny root), so a
-> root container reports `pass 7 / skip 1 / fail 0` instead. Either is green; **`fail 0` is the gate.**
+> The TWO EACCES cases (one per reader) self-skip when the runner is root or win32 (`chmod 000` cannot
+> deny root), so a root container reports `pass 12 / skip 2 / fail 0` instead. Either is green;
+> **`fail 0` is the gate.**
 
 **3. Write the failing test for the gate** `scripts/test/check-publishable-versions.test.mjs`.
 
@@ -574,7 +724,13 @@ export function checkPublishableVersions(repoRoot, runGit = runGitGrep) {
 
 // Exit-code contract: 0 = pass · 1 = a real finding (wrong version / a 0.0.0 pin) · 2 = OPERATIONAL
 // failure (git broke, a manifest is a symlink/oversized/malformed). An operational failure is never 0.
-if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+//
+// GOTCHA: `process.argv[1]` is `undefined` when this module is IMPORTED from an eval context
+// (`node -e`, the REPL), and `pathToFileURL(undefined)` THROWS `ERR_INVALID_ARG_TYPE` — turning a
+// library import into a crash. Guard it. (Hit for real while verifying this plan; all three scripts
+// here — this one, `tree-snapshot.mjs`, and `check-ci-wiring.mjs` — use the identical idiom.)
+const entryPoint = process.argv[1] === undefined ? '' : pathToFileURL(process.argv[1]).href
+if (import.meta.url === entryPoint) {
   /** @type {string[]} */
   let problems
   try {
@@ -601,11 +757,13 @@ node --test scripts/test/check-publishable-versions.test.mjs
 node scripts/check-publishable-versions.mjs ; test $? -eq 1
 ```
 
-**5. Add both scripts to root `package.json` scripts** (after `check:packages`):
+**5. Add the gate scripts to root `package.json` scripts** (after `check:packages`). `test:version-gate`
+runs all THREE test files — the two above plus the CI-wiring checker's, added in step 5c:
 
 ```json
     "check:publishable-versions": "node scripts/check-publishable-versions.mjs",
-    "test:version-gate": "node --test scripts/test/guarded-read.test.mjs scripts/test/check-publishable-versions.test.mjs",
+    "check:ci-wiring": "node scripts/check-ci-wiring.mjs",
+    "test:version-gate": "node --test scripts/test/guarded-read.test.mjs scripts/test/check-publishable-versions.test.mjs scripts/test/check-ci-wiring.test.mjs",
 ```
 
 **5b. ARM the gate in CI** — add a `publishable-versions` job to `.github/workflows/ci.yml`, immediately
@@ -633,14 +791,446 @@ node, install, then the runs:
 > *workspace-package* tests — it never runs a root-only script. Without this job the gate exists but is
 > never armed: a `0.0.0` pin could regress after Task 1 and still merge green (INTERFACES round-8 F2).
 
-Verify the wiring parses and invokes both commands:
+**5c. Write the failing test for the CI-wiring checker** `scripts/test/check-ci-wiring.test.mjs`.
+
+The job above is only useful if it is REALLY there. The obvious check —
+`y.includes('publishable-versions:') && y.includes('pnpm test:version-gate') && …` — is a substring scan,
+and it **false-greens**: a `ci.yml` whose entire job exists as `#` comments passes it with exit 0
+(reproduced), as does one where the commands sit under an unrelated job. The check that proves the gate
+is armed would itself be manufacturing evidence. These four hostile fixtures MUST fail; the intended job
+MUST pass (INTERFACES round-9 F2).
+
+```js
+import assert from 'node:assert/strict'
+import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { after, before, describe, it } from 'node:test'
+import { MAX_WORKFLOW_BYTES } from '../lib/guarded-read.mjs'
+import { REQUIRED_JOBS, checkCiWiring } from '../check-ci-wiring.mjs'
+
+// Synthetic fixtures under $TMPDIR only. NO writes under the real repository (INTERFACES round-5 F1);
+// the checker takes the workflow path as an argument so the hostile cases point at a temp file.
+let work = ''
+before(() => { work = mkdtempSync(join(tmpdir(), 'movp-ci-wiring-')) })
+after(() => rmSync(work, { recursive: true, force: true }))
+
+/** Write a fixture workflow and return its path. @param {string} name @param {string} yaml */
+const fixture = (name, yaml) => {
+  const path = join(work, `${name}.yml`)
+  writeFileSync(path, yaml)
+  return path
+}
+
+const ARMED_JOB = `
+  publishable-versions:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v6
+        with: { version: 9.12.0 }
+      - uses: actions/setup-node@v6
+        with: { node-version: 22, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test:version-gate
+      - run: pnpm check:publishable-versions
+`
+
+/** The real ci.yml shape: a top-level `jobs:`, a neighbouring job, and a job literally NAMED `jobs`. */
+const GOOD = `name: ci
+on:
+  push:
+    branches: [main]
+
+jobs:
+  package-artifacts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: pnpm check:packages
+${ARMED_JOB}
+  jobs:
+    runs-on: ubuntu-latest
+    steps:
+      - run: pnpm test:jobs
+`
+
+describe('checkCiWiring — the intended workflow', () => {
+  it('PASSES: the job exists under jobs: and invokes both commands', () => {
+    assert.deepEqual(checkCiWiring(fixture('good', GOOD)), [])
+  })
+
+  // The real ci.yml contains a job literally NAMED `jobs:` (ci.yml:173). Matching the trimmed text
+  // alone would anchor on it and scan the wrong block.
+  it('anchors on the TOP-LEVEL jobs: mapping, not a job named "jobs"', () => {
+    const noTopLevel = GOOD.replace(/^jobs:$/m, 'not-jobs:')
+    const problems = checkCiWiring(fixture('no-jobs', noTopLevel))
+    assert.equal(problems.length, 1)
+    assert.match(problems[0], /ci_wiring_jobs_block_missing/)
+  })
+})
+
+describe('checkCiWiring — hostile workflows that MUST fail (each false-greened the substring scan)', () => {
+  // THE reproduced defect: `y.includes('publishable-versions:')` is true for a COMMENTED-OUT job.
+  it('FAILS: the job and both commands appear ONLY inside # comments', () => {
+    const commented = GOOD.replace(ARMED_JOB, `${ARMED_JOB.replace(/^(.*)$/gm, '#$1')}\n`)
+    const problems = checkCiWiring(fixture('comments-only', commented))
+    assert.equal(problems.length, 1)
+    assert.match(problems[0], /ci_wiring_job_missing: .* has no "publishable-versions:" job/)
+  })
+
+  it('FAILS: the right commands live under a DIFFERENT job', () => {
+    const wrongJob = GOOD.replace(
+      ARMED_JOB,
+      `
+  publishable-versions:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+  some-other-job:
+    runs-on: ubuntu-latest
+    steps:
+      - run: pnpm test:version-gate
+      - run: pnpm check:publishable-versions
+`,
+    )
+    const problems = checkCiWiring(fixture('wrong-job', wrongJob))
+    assert.equal(problems.length, 2) // BOTH commands are outside the job's block
+    assert.match(problems[0], /ci_wiring_run_missing: .* job "publishable-versions" does not invoke `pnpm test:version-gate`/)
+    assert.match(problems[1], /ci_wiring_run_missing: .* does not invoke `pnpm check:publishable-versions`/)
+  })
+
+  it('FAILS: the job is present but ONE command is missing', () => {
+    const oneMissing = GOOD.replace('      - run: pnpm check:publishable-versions\n', '')
+    const problems = checkCiWiring(fixture('one-missing', oneMissing))
+    assert.equal(problems.length, 1)
+    assert.match(problems[0], /ci_wiring_run_missing: .* does not invoke `pnpm check:publishable-versions`/)
+  })
+
+  it('FAILS: the job name is DUPLICATED (never silently pick one)', () => {
+    const duplicated = GOOD.replace(ARMED_JOB, `${ARMED_JOB}${ARMED_JOB}`)
+    const problems = checkCiWiring(fixture('duplicate', duplicated))
+    assert.equal(problems.length, 1)
+    assert.match(problems[0], /ci_wiring_job_duplicated: .* declares the "publishable-versions:" job 2 times/)
+  })
+
+  it('reports EVERY failing table entry, not just the first', () => {
+    const problems = checkCiWiring(fixture('good-multi', GOOD), {
+      ...REQUIRED_JOBS,
+      // 06e's future entry, not wired yet
+      'template-gallery': { runs: ['pnpm check:template-gallery'] },
+    })
+    assert.equal(problems.length, 1)
+    assert.match(problems[0], /ci_wiring_job_missing: .* has no "template-gallery:" job/)
+  })
+})
+
+// `contains` is what 06e uses for assertions that are NOT `run:` commands — the `supabase/setup-cli`
+// version pin, the four-template matrix. 06e's current check is a file-wide `y.includes('2.109.1')`,
+// which passes when the string sits in a comment or in ANOTHER job: the exact false-green round-9 F2
+// closed. These three cases pin the block-scoping that makes `contains` a real assertion.
+describe('checkCiWiring — `contains` is scoped to the job BLOCK, not the file', () => {
+  /** A `template-smoke` job that pins the Supabase CLI, plus a neighbour that also mentions a version. */
+  const withSmoke = (smokeBody, neighbourBody = '      - run: pnpm lint\n') => `name: ci
+on:
+  push:
+    branches: [main]
+
+jobs:
+  template-smoke:
+    runs-on: ubuntu-latest
+    steps:
+${smokeBody}
+  neighbour:
+    runs-on: ubuntu-latest
+    steps:
+${neighbourBody}`
+
+  const TABLE = { 'template-smoke': { runs: ['supabase db reset'], contains: ['2.109.1'] } }
+
+  it('PASSES when the literal is inside the job block', () => {
+    const yaml = withSmoke(
+      `      - uses: supabase/setup-cli@v2
+        with: { version: 2.109.1 }
+      - run: supabase db reset
+`,
+    )
+    assert.deepEqual(checkCiWiring(fixture('contains-ok', yaml), TABLE), [])
+  })
+
+  it('FAILS when the literal appears only in a DIFFERENT job', () => {
+    const yaml = withSmoke(
+      `      - uses: supabase/setup-cli@v2
+        with: { version: latest }
+      - run: supabase db reset
+`,
+      `      - uses: supabase/setup-cli@v2
+        with: { version: 2.109.1 }
+`, // the pin is on the NEIGHBOUR — a file-wide includes() would green here
+    )
+    const problems = checkCiWiring(fixture('contains-wrong-job', yaml), TABLE)
+    assert.equal(problems.length, 1)
+    assert.match(problems[0], /ci_wiring_contains_missing: .* job "template-smoke" does not contain "2\.109\.1"/)
+  })
+
+  it('FAILS when the literal appears only in a COMMENT inside the job', () => {
+    const yaml = withSmoke(
+      `      # pin the CLI to 2.109.1 (TODO — not done yet)
+      - uses: supabase/setup-cli@v2
+        with: { version: latest }
+      - run: supabase db reset
+`,
+    )
+    const problems = checkCiWiring(fixture('contains-comment', yaml), TABLE)
+    assert.equal(problems.length, 1)
+    assert.match(problems[0], /ci_wiring_contains_missing: .* does not contain "2\.109\.1"/)
+  })
+})
+
+describe('checkCiWiring — the workflow is read through the guard (INTERFACES round-9 F1)', () => {
+  it('rejects a SYMLINKED workflow WITHOUT reading its target', () => {
+    const secret = join(work, 'credentials')
+    writeFileSync(secret, 'aws_secret_access_key = SUPERSECRET\n')
+    const path = join(work, 'linked.yml')
+    symlinkSync(secret, path) // .github/workflows/ci.yml -> ~/.aws/credentials
+    assert.throws(() => checkCiWiring(path), (err) => {
+      assert.match(String(err), /workflow_symlink_rejected/)
+      assert.doesNotMatch(String(err), /SUPERSECRET|aws_secret/) // the target was never opened
+      return true
+    })
+  })
+
+  it('rejects an OVERSIZED workflow BEFORE buffering it', () => {
+    const path = join(work, 'huge.yml')
+    writeFileSync(path, `${GOOD}\n# ${'x'.repeat(MAX_WORKFLOW_BYTES)}`)
+    assert.throws(() => checkCiWiring(path), /workflow_too_large/)
+  })
+
+  it('throws workflow_unreadable (not a raw ENOENT) for a missing workflow', () => {
+    assert.throws(() => checkCiWiring(join(work, 'nope.yml')), (err) => {
+      assert.match(String(err), /workflow_unreadable: .* cannot be inspected/)
+      assert.doesNotMatch(String(err), /ENOENT|no such file/)
+      return true
+    })
+  })
+})
+```
+
+Run — **Expected: FAIL** (`Cannot find module '.../scripts/check-ci-wiring.mjs'`):
 
 ```
-node -e "const y=require('node:fs').readFileSync('.github/workflows/ci.yml','utf8'); for(const s of ['publishable-versions:','pnpm test:version-gate','pnpm check:publishable-versions']) if(!y.includes(s)) throw new Error('ci.yml is missing: '+s); console.log('ci.yml: publishable-version gate armed')"
+node --test scripts/test/check-ci-wiring.test.mjs
 ```
 
-**Expected:** `ci.yml: publishable-version gate armed`. If `actionlint` is on PATH, also run
-`actionlint .github/workflows/ci.yml` — Expected: no errors.
+**5d. Implement `scripts/check-ci-wiring.mjs`** — a dependency-free, indentation-aware structural scan.
+**Do NOT add a YAML dependency**: none is resolvable (`yaml` appears in the root `package.json` only as a
+pnpm override) and a new dep needs approval. GitHub remains the authoritative YAML parser; this check
+only has to prove each job exists and invokes its commands.
+
+```js
+#!/usr/bin/env node
+// The CI-wiring gate: proves each gate job below EXISTS in `.github/workflows/ci.yml` and INVOKES its
+// required commands. A registered-but-never-run gate is a safety net that is never armed.
+//
+// SCOPE LIMIT — this is NOT a YAML parser and must never grow into one. It is an indentation-aware
+// LINE SCAN with exactly one job: prove that each named job key exists under the top-level `jobs:`
+// mapping, and that each required string appears INSIDE that job's own block. GitHub remains the
+// authoritative YAML parser (a malformed workflow fails there, loudly). No YAML dependency is added:
+// none is resolvable in this repo (`yaml` appears in the root `package.json` only as a pnpm override)
+// and a new dependency needs approval. If you find yourself adding anchors, flow scalars, or block
+// scalars here, STOP — the check has outgrown its purpose.
+//
+// It replaces a substring scan (`y.includes('publishable-versions:') && …`), which FALSE-GREENS when
+// those strings appear only inside `#` comments or under an unrelated job (INTERFACES round-9 F2).
+//
+// Reads the workflow through `readTextGuarded` — never a raw `readFileSync`. A committed
+// `.github/workflows/ci.yml -> ~/.aws/credentials` symlink would otherwise be followed and its bytes
+// scanned (INTERFACES round-9 F1).
+import { pathToFileURL } from 'node:url'
+import { MAX_WORKFLOW_BYTES, readTextGuarded } from './lib/guarded-read.mjs'
+
+/**
+ * @typedef {object} JobRequirement
+ * @property {string[]} runs Exact `run:` commands that must appear as `- run: <cmd>` INSIDE the job.
+ * @property {string[]} [contains] OPTIONAL literal strings that must appear ANYWHERE inside the job's
+ *   OWN block — for assertions that are not `run:` commands (a pinned action version, a matrix entry).
+ *   STILL WITHIN THE SCOPE LIMIT: this is an indentation-SCOPED block search, not a YAML parser — it is
+ *   merely not restricted to `run:` lines. It is block-bounded and comment-stripped, so it can NEVER
+ *   degrade into the file-wide `y.includes(...)` false-green it exists to replace. Do NOT grow it into
+ *   key/value lookups, path expressions, or anchor resolution.
+ */
+
+/**
+ * THE shared CI-wiring table: job name → what that job MUST contain.
+ * 06d OWNS this script and seeds the table; **later parts only APPEND an entry** (06e appends
+ * `template-gallery` + `template-smoke`). Do NOT write a second CI-wiring checker — one script, one table.
+ * @type {Record<string, JobRequirement>}
+ */
+export const REQUIRED_JOBS = {
+  'publishable-versions': {
+    runs: ['pnpm test:version-gate', 'pnpm check:publishable-versions'],
+  },
+  // 06e APPENDS its entries here; nothing else in this file changes. For example, 06e's `template-smoke`
+  // pins the Supabase CLI, which is NOT a `run:` command — that is what `contains` is for:
+  //   'template-smoke': { runs: ['supabase db reset'], contains: ['2.109.1'] },
+}
+
+export const DEFAULT_WORKFLOW = '.github/workflows/ci.yml'
+
+/** @param {string} line */
+const indentOf = (line) => line.length - line.trimStart().length
+
+/** Strip surrounding quotes so `- run: "pnpm x"` and `- run: pnpm x` compare equal.
+ *  @param {string} value */
+function unquote(value) {
+  const first = value[0]
+  if ((first === '"' || first === "'") && value.length >= 2 && value.at(-1) === first) {
+    return value.slice(1, -1)
+  }
+  return value
+}
+
+/**
+ * @param {string} [workflowPath]
+ * @param {Record<string, JobRequirement>} [requiredJobs]
+ * @returns {string[]} human-readable problems; `[]` means the gate passes. THROWS (`workflow_*`) if the
+ *   workflow cannot be safely read.
+ */
+export function checkCiWiring(workflowPath = DEFAULT_WORKFLOW, requiredJobs = REQUIRED_JOBS) {
+  const text = readTextGuarded(workflowPath, MAX_WORKFLOW_BYTES, 'workflow')
+
+  // Strip comment-only and blank lines BEFORE any structural analysis. THE defect this closes: a
+  // workflow whose entire gate job exists only as `#` comments passed the old substring scan with
+  // exit 0 — the check that proves the gate is armed was itself a false green.
+  const lines = text
+    .split('\n')
+    .filter((line) => line.trim() !== '' && !line.trimStart().startsWith('#'))
+
+  // The TOP-LEVEL `jobs:` mapping, at indent 0. GOTCHA: this repo's ci.yml also contains a job literally
+  // NAMED `jobs:` at indent 2 (ci.yml:173) — matching on the trimmed text alone finds the WRONG one.
+  const jobsIdx = lines.findIndex((line) => indentOf(line) === 0 && line.trim() === 'jobs:')
+  if (jobsIdx === -1) {
+    return [`ci_wiring_jobs_block_missing: ${workflowPath} has no top-level "jobs:" mapping`]
+  }
+
+  /** Every line of the `jobs:` mapping: up to the next top-level (indent 0) key. */
+  const block = []
+  for (let i = jobsIdx + 1; i < lines.length; i += 1) {
+    if (indentOf(lines[i]) === 0) break
+    block.push(lines[i])
+  }
+  if (block.length === 0) {
+    return [`ci_wiring_jobs_block_missing: ${workflowPath} has an empty "jobs:" mapping`]
+  }
+
+  // A job KEY is a bare `name:` line at the jobs mapping's own indent — not a substring anywhere.
+  const jobIndent = indentOf(block[0])
+  /** @type {string[]} */
+  const problems = []
+
+  for (const [jobName, requirement] of Object.entries(requiredJobs)) {
+    /** @type {number[]} */
+    const starts = []
+    for (let i = 0; i < block.length; i += 1) {
+      if (indentOf(block[i]) !== jobIndent) continue
+      const key = block[i].trim().match(/^([A-Za-z0-9_.-]+):$/)
+      if (key !== null && key[1] === jobName) starts.push(i)
+    }
+
+    if (starts.length === 0) {
+      problems.push(
+        `ci_wiring_job_missing: ${workflowPath} has no "${jobName}:" job under "jobs:" (a job name in a comment or a substring elsewhere does NOT count)`,
+      )
+      continue
+    }
+    if (starts.length > 1) {
+      // Duplicate keys are a YAML error GitHub would reject; never silently pick one and pass.
+      problems.push(
+        `ci_wiring_job_duplicated: ${workflowPath} declares the "${jobName}:" job ${starts.length} times`,
+      )
+      continue
+    }
+
+    // The job's OWN block: bounded by the next key at the same-or-shallower indent. A `run:` (or any
+    // other literal) in a NEIGHBOURING job is outside it — which is the whole point. Comments are
+    // already stripped above, so a commented-out line is outside it too.
+    /** @type {string[]} */
+    const jobLines = []
+    for (let i = starts[0] + 1; i < block.length && indentOf(block[i]) > jobIndent; i += 1) {
+      jobLines.push(block[i])
+    }
+
+    /** @type {Set<string>} */
+    const runs = new Set()
+    for (const line of jobLines) {
+      const run = line.trim().match(/^-\s+run:\s+(.+)$/)
+      if (run !== null) runs.add(unquote(run[1].trim()))
+    }
+    for (const command of requirement.runs) {
+      if (!runs.has(command)) {
+        problems.push(
+          `ci_wiring_run_missing: ${workflowPath} job "${jobName}" does not invoke \`${command}\` (expected an exact \`- run: ${command}\` entry inside that job)`,
+        )
+      }
+    }
+
+    // `contains`: a literal that is NOT a `run:` command (a pinned action version, a matrix entry).
+    // Searched ONLY within `jobLines` — never the whole file. That block-scoping is what makes this a
+    // real assertion instead of the `y.includes('2.109.1')` false-green it replaces.
+    const jobText = jobLines.join('\n')
+    for (const literal of requirement.contains ?? []) {
+      if (!jobText.includes(literal)) {
+        problems.push(
+          `ci_wiring_contains_missing: ${workflowPath} job "${jobName}" does not contain "${literal}" (it must appear inside THAT job's block — a match in another job or a comment does NOT count)`,
+        )
+      }
+    }
+  }
+
+  return problems
+}
+
+// Exit-code contract: 0 = every required job is armed · 1 = a real finding (a job, a `run:`, or a
+// `contains` literal is missing/duplicated) · 2 = OPERATIONAL failure (the workflow is a symlink,
+// oversized, or unreadable). An operational failure is NEVER 0 — automation reads the code.
+//
+// GOTCHA: guard `process.argv[1]` before `pathToFileURL` — it is UNDEFINED when this module is imported
+// from an eval context (`node -e`, the REPL), and `pathToFileURL(undefined)` THROWS `ERR_INVALID_ARG_TYPE`
+// at import time. That turns a library import into a crash. (Hit for real while verifying this plan.)
+const entryPoint = process.argv[1] === undefined ? '' : pathToFileURL(process.argv[1]).href
+if (import.meta.url === entryPoint) {
+  const workflowPath = process.argv[2] ?? DEFAULT_WORKFLOW
+  /** @type {string[]} */
+  let problems
+  try {
+    problems = checkCiWiring(workflowPath)
+  } catch (err) {
+    console.error(
+      `ci-wiring gate: OPERATIONAL FAILURE — ${err instanceof Error ? err.message : String(err)}`,
+    )
+    process.exit(2)
+  }
+  for (const problem of problems) console.error(problem)
+  if (problems.length > 0) process.exit(1)
+  const names = Object.keys(REQUIRED_JOBS)
+  console.log(`ci wiring: ${names.length} gate job(s) armed in ${workflowPath} — ${names.join(', ')}`)
+}
+```
+
+Re-run the test — **Expected: PASS**, `pass 13 / fail 0`. Then run the checker against the real `ci.yml`
+you just edited in 5b:
+
+```
+node --test scripts/test/check-ci-wiring.test.mjs
+node scripts/check-ci-wiring.mjs
+```
+
+**Expected:** `ci wiring: 1 gate job(s) armed in .github/workflows/ci.yml — publishable-versions`, exit 0.
+(Before the 5b edit the SAME command exits **1** with `ci_wiring_job_missing` — verified against the
+current tree.) If `actionlint` is on PATH, also run `actionlint .github/workflows/ci.yml` — Expected: no
+errors. `check-ci-wiring.mjs` deliberately does not duplicate actionlint: it proves the gate is ARMED,
+not that the whole workflow is valid YAML.
 
 **6. Bump each publishable `package.json`** `"version": "0.0.0"` → `"version": "0.1.0"` (the 12 files
 listed under Files). Edit only the `version` field; leave `publishConfig`, `main`, `exports` untouched.
@@ -679,10 +1269,10 @@ pnpm -w test && pnpm -w typecheck
 ### Gate (machine-checkable)
 
 ```
-node --test scripts/test/guarded-read.test.mjs scripts/test/check-publishable-versions.test.mjs \
+node --test scripts/test/guarded-read.test.mjs scripts/test/check-publishable-versions.test.mjs scripts/test/check-ci-wiring.test.mjs \
   && node scripts/check-publishable-versions.mjs \
   && pnpm --filter @movp/platform build \
-  && node -e "const y=require('node:fs').readFileSync('.github/workflows/ci.yml','utf8'); for(const s of ['publishable-versions:','pnpm test:version-gate','pnpm check:publishable-versions']) if(!y.includes(s)) throw new Error('ci.yml is missing: '+s); console.log('ci.yml: publishable-version gate armed')"
+  && node scripts/check-ci-wiring.mjs
 ```
 
 > **GOTCHA — never end an `&&` chain with `; test $? -eq N` (INTERFACES round-8 F1).** `&&`
@@ -695,16 +1285,30 @@ node --test scripts/test/guarded-read.test.mjs scripts/test/check-publishable-ve
 > There is deliberately **no trailing scoped `git grep`** here: `check-publishable-versions.mjs` already
 > performs exactly that scoped-pathspec check with correct 0/1/2 status discrimination (round-7 F1), so a
 > second copy would be redundant *and* was the thing dragging the `$?` arithmetic in.
+>
+> **GOTCHA — the 4th component is a SCRIPT, not a `node -e` one-liner (INTERFACES round-9).** A `node -e`
+> string is CommonJS: it cannot cleanly `import` the ESM guard, which is exactly why the round-8 version
+> reached for a raw `readFileSync` and re-opened the untrusted-I/O hole. And its `includes()` scan
+> false-greened on a commented-out job. `node scripts/check-ci-wiring.mjs` reads through `readTextGuarded`
+> and checks the STRUCTURE. Do not inline it back.
 
-**Expected:** `node --test` prints `pass 17 / fail 0` (8 `readJsonGuarded` + 9 version-gate — the
-version gate's three git branches are each pinned: status 0 with a match FAILS, status 1 PASSES,
-status 2 / spawn-error THROWS rather than reporting "no pins"; on a root/win32 runner the EACCES case
-self-skips → `pass 16 / skip 1`, still `fail 0`); the version script prints its success line — exit 0,
-and it is the component that FAILS this chain with exit **1** on a real finding (a wrong version or a
-`0.0.0` consumer pin) or **2** on an operational failure, never 0; the platform build prints
-`platformVersion 0.1.0`; the ci.yml assertion prints `ci.yml: publishable-version gate armed`.
-`check-release-preflight.mjs` is unchanged **(N/A with evidence: it reads no version — it
-only shells `npm org --help`, `npm whoami`, `npm org ls movp`).**
+**Expected:** `node --test` prints `pass 36 / fail 0` — 14 guarded-read (6 `readTextGuarded` + 8
+`readJsonGuarded`) + 9 version-gate + 13 ci-wiring. The version gate's three git branches are each
+pinned (status 0 with a match FAILS, status 1 PASSES, status 2 / spawn-error THROWS rather than
+reporting "no pins"); the ci-wiring checker's four hostile workflows each FAIL (comments-only,
+right-commands-wrong-job, one-command-missing, duplicate-job-name) and the intended job PASSES; and
+`contains` is proven block-scoped (a literal in a NEIGHBOURING job or in a COMMENT FAILS; inside the job
+PASSES). On a root/win32 runner the two EACCES cases self-skip → `pass 34 / skip 2`, still `fail 0`.
+
+The version script prints its success line — exit 0, and it FAILS this chain with exit **1** on a real
+finding (a wrong version or a `0.0.0` consumer pin) or **2** on an operational failure, never 0. The
+platform build prints `platformVersion 0.1.0`. The ci-wiring gate prints
+`ci wiring: 1 gate job(s) armed in .github/workflows/ci.yml — publishable-versions` (exit 0); it exits
+**1** if step 5b's job is missing/duplicated or either `run:` is absent, and **2** if `ci.yml` is a
+symlink, oversized, or unreadable.
+
+`check-release-preflight.mjs` is unchanged **(N/A with evidence: it reads no version — it only shells
+`npm org --help`, `npm whoami`, `npm org ls movp`).**
 
 ---
 
@@ -1082,7 +1686,12 @@ export async function snapshotTree(root, roots = DEFAULT_ROOTS) {
 // GOTCHA: use `process.stdout.write`, NEVER `console.log` — console.log appends a trailing newline
 // that the file form does not write, so the two forms would differ by one byte and the diff-based
 // gates that compare a piped manifest against a written one would fail spuriously.
-if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+//
+// GOTCHA: `process.argv[1]` is `undefined` when this module is IMPORTED from an eval context
+// (`node -e`, the REPL), and `pathToFileURL(undefined)` THROWS `ERR_INVALID_ARG_TYPE` — turning a
+// library import into a crash. 06e imports `snapshotTree` from this file, so the guard is load-bearing.
+const entryPoint = process.argv[1] === undefined ? '' : pathToFileURL(process.argv[1]).href
+if (import.meta.url === entryPoint) {
   const [root, outFile] = process.argv.slice(2)
   if (!root) {
     console.error('usage: tree-snapshot.mjs <root> [outFile]')

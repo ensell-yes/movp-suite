@@ -846,17 +846,36 @@ calls the pure builder, logs). Kept in a SEPARATE file so tests import `build-li
 a real snapshot of the repo's migration tree:
 
 ```ts
-import { readFileSync } from 'node:fs'
+import { lstatSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { buildPlatformArtifact } from './build-lib.ts'
+import { MAX_MANIFEST_BYTES } from './verify.ts' // the guard's size bound — one constant, not a second copy
 
 const here = dirname(fileURLToPath(import.meta.url))
 const packageDir = join(here, '..')
 const repoRoot = join(packageDir, '..', '..')
 
 function platformVersion(): string {
-  const pkg: unknown = JSON.parse(readFileSync(join(packageDir, 'package.json'), 'utf8'))
+  // Same guard the artifact reads use (INTERFACES round-9 F1): the rule is EVERY read path, not just
+  // the ones that bit us. lstat BEFORE the read — a symlinked `package.json` is followed by
+  // `readFileSync`, and `JSON.parse`'s failure message EMBEDS a snippet of the input
+  // (`Unexpected token 'a', "aws_secret"... is not valid JSON`), so a symlink to ~/.aws/credentials
+  // would print secret bytes into the build log. Bare `catch` — never interpolate the parse error.
+  const pkgPath = join(packageDir, 'package.json')
+  const info = lstatSync(pkgPath, { throwIfNoEntry: false })
+  if (!info) throw new Error('@movp/platform package.json missing')
+  if (info.isSymbolicLink()) throw new Error('@movp/platform package.json is a symlink')
+  if (!info.isFile()) throw new Error('@movp/platform package.json is not a regular file')
+  if (info.size > MAX_MANIFEST_BYTES) throw new Error('@movp/platform package.json exceeds size bound')
+
+  let pkg: unknown
+  try {
+    pkg = JSON.parse(readFileSync(pkgPath, 'utf8'))
+  } catch {
+    throw new Error('@movp/platform package.json is not valid JSON')
+  }
+  if (typeof pkg !== 'object' || pkg === null) throw new Error('@movp/platform package.json is not an object')
   const version = (pkg as { version?: unknown }).version
   if (typeof version !== 'string') throw new Error('@movp/platform package.json has no string version')
   return version
