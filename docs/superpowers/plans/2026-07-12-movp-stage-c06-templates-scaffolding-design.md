@@ -80,9 +80,13 @@ monorepo becomes their first consumer (dogfooding) and must stay 100% green thro
 - **One schema authority.** A single Node-AND-Deno-loadable ESM schema module is the sole source.
   `movp.config.mjs` (Node tooling) **re-exports** it; Deno edge functions import the **same** module.
 - **Canonical fingerprint = pure utility, defined here** (not in C6c). A shared pure function hashes
-  the canonical schema projection; the `schema_runtime_mismatch` guard hashes the Node- and
-  Deno-loaded schemas **directly** and fails **before startup** if they differ — with no dependency
-  on the C6c manifest (C6c later *serializes* this same fingerprint). This prevents the split-brain
+  the canonical schema projection; C6c later *serializes* this same fingerprint (no dependency on
+  the C6c manifest).
+- **Executable cross-runtime guard.** Because a Node process cannot import the Deno-resolved schema
+  in-process, ship a pre-serve/pre-deploy CLI command **`movp verify-schema-runtime`**: Node imports
+  `movp.config.mjs` and computes its fingerprint; the command **spawns Deno** with the scaffold's
+  `deno.json` to import the Edge schema and compute its fingerprint; it compares the two and fails
+  **before function startup** with a stable `schema_runtime_mismatch`. This closes the split-brain
   where codegen migrates one DB while GraphQL/MCP exposes another.
 - **Injection:** `generate({schema})`, `createDomain(ctx,{schema})`, and the CLI accept the loaded
   schema (drop the static imports); MCP/GraphQL builders unchanged. Deno `deno.json` resolves
@@ -96,21 +100,29 @@ monorepo becomes their first consumer (dogfooding) and must stay 100% green thro
 
 ### C6c — Immutable project codegen deltas + schema manifest
 
-- **Immutable deltas.** Today `generate()` deletes unregistered `*_movp_generated.sql`
-  (`:133-137`) and overwrites deltas unconditionally (`:153-158`). Downstream contract: a schema
-  change → a **newly-named** local delta; baseline AND **every existing delta** are
-  compare-before-write / fail-on-drift; codegen **never deletes** generated migrations in a normal
-  run. Ship a project-local forward-only guard in every scaffold.
+- **Immutable deltas + explicit allocation.** Today `generate()` deletes unregistered
+  `*_movp_generated.sql` (`:133-137`) and overwrites deltas unconditionally (`:153-158`). Downstream
+  contract: baseline AND **every existing delta** are compare-before-write / fail-on-drift; codegen
+  **never deletes** generated migrations in a normal run. **Allocation is explicit**, mirroring the
+  monorepo's `GENERATED_DELTAS` registry (`generate.ts:7,30`): a project-local delta registry maps
+  extension collections/events → delta files. On a schema change with **no owning registry entry**,
+  codegen **rejects with a stable `new_generated_delta_required` error and writes nothing**; a
+  `movp new-delta <name>` command registers ownership and emits **exactly one** additive migration.
+  Ship a project-local forward-only guard in every scaffold.
 - **Versioned manifest** `movp.schema.json`: `{manifestVersion, generatorVersion, schemaFingerprint,
-  collections:[{name, internal, layer, fields:[{name,type,cardinality,reporting_role,searchable,
-  embeddable}]}]}`, deterministic. `schemaFingerprint` is the **C6b canonical-projection hash**,
-  serialized here (not defined here) so runtime and manifest agree by construction.
-- **Consistency contract (ownership-scoped).** The projection matches `movp_fields` columns exactly
-  (`emit-sql.ts:11`). Because codegen upserts metadata without deleting stale rows (`emit-sql.ts:9`),
-  the emitter MUST additionally **delete only `layer='project'` rows** absent from the current
-  project schema — **platform rows (`layer='platform'`) are never touched** by project codegen (per
-  C6a). Removing a *platform* field/collection is rejected (it belongs to a platform release), not a
-  project-codegen deletion.
+  collections:[{name, internal, label, workspaceScoped, layer,
+  fields:[{name, type, label, cardinality, reporting_role, searchable, embeddable}]}]}`,
+  deterministic. `schemaFingerprint` is the **C6b canonical-projection hash**, serialized here (not
+  defined here) so runtime and manifest agree by construction.
+- **Consistency contract (ownership-scoped).** Define a named **`metadataProjection`** = exactly the
+  DB-compared columns: `movp_collections` (name, label, label_plural, workspace_scoped, layer) and
+  `movp_fields` (collection_name, name, type, label, cardinality, reporting_role, searchable,
+  embeddable, layer) — `emit-sql.ts:7,11`. `internal` is **manifest-only runtime metadata** (not a
+  DB column, not compared). Because codegen upserts metadata without deleting stale rows
+  (`emit-sql.ts:9`), the emitter MUST **delete only `layer='project'` rows** absent from the current
+  project schema — **platform rows are never touched** (per C6a). Removing a *project* field/
+  collection is an **explicit logical deprecation or a rejected breaking change**, never a silent
+  drop; removing a *platform* field/collection is rejected (it belongs to a platform release).
 - Gates: scaffold → `db reset` → add a collection → regenerate → baseline + **every prior delta**
   byte-identical, exactly one additive migration added, none removed; manifest snapshot; a `db reset`
   consistency assertion where missing / altered / EXTRA(stale) rows each fail with a **stable error id**.
@@ -155,8 +167,8 @@ monorepo becomes their first consumer (dogfooding) and must stay 100% green thro
 | Part | Gate |
 |---|---|
 | C6a | Committed consumer fixture `db reset` green, no source-repo paths; reordered/missing/digest-mismatch platform artifact rejected; fixture extension emits only its own DDL, platform metadata (`layer='platform'`) byte-intact after removing an extension field |
-| C6b | Monorepo green with injected schema; novel-public + internal:true fixture → only public reaches generic CLI/GraphQL/MCP; Deno-only schema change → `schema_runtime_mismatch` before startup, computed by the pure fingerprint utility with **no manifest** |
-| C6c | Regenerate keeps baseline + every delta byte-identical, one additive migration, none removed; manifest snapshot + `movp_fields` consistency (incl. stale-row delete) with stable error ids |
+| C6b | Monorepo green with injected schema; novel-public + internal:true fixture → only public reaches generic CLI/GraphQL/MCP; `movp verify-schema-runtime` spawns Deno and fails a Deno-only schema change with `schema_runtime_mismatch` before startup (pure fingerprint, no manifest) |
+| C6c | Baseline + every delta byte-identical on regenerate; unowned extension change → `new_generated_delta_required` + **zero writes**, `movp new-delta` → exactly one additive migration; manifest snapshot; `metadataProjection` consistency (incl. `label`; `layer='project'`-only stale-row delete) with stable error ids for missing/altered/extra rows |
 | C6d | Scaffold CRM-lite → Verdaccio install (no workspace links) → `db reset` → start real GraphQL + MCP edge fns → authenticated HTTP GraphQL + streamable-MCP + CLI create/list green; copier rejects unsafe inputs |
 | C6e | CI matrix over all 4 templates green (pack once) |
 | C6f | Docs build in CI; manifest/DB consistency gate |
