@@ -644,7 +644,7 @@ git commit -m "feat(docs): C6f.4 manifest<->schema consistency gate reusing C6c 
 
 - [ ] **Step 1: Obtain approval and add the dependency**
 
-**STOP** and request approval to add `@astrojs/starlight` (see Global Constraints). Once approved, run `npm view @astrojs/starlight peerDependencies` and choose the version whose `astro` peer accepts `^6.0.0`; if none exists, STOP and ask. Then update `docs-site/package.json`:
+`@astrojs/starlight` is **APPROVED 2026-07-12** (sign-off recorded in INTERFACES "Approved new dependencies") — no approval STOP. You MUST still run `npm view @astrojs/starlight peerDependencies` and choose the version whose `astro` peer accepts `^6.0.0`; **if none exists, STOP and ask (do NOT downgrade Astro).** Then update `docs-site/package.json`:
 
 ```json
 {

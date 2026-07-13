@@ -115,6 +115,13 @@ Base monorepo owns `64321/64322/…` (+0, per root CLAUDE.md). Each scaffold/fix
 | +400 (`64721/64722…`) | 06e support-desk |
 | +500 (`64821/64822…`) | 06e knowledge-base |
 
+## Approved new dependencies (sign-off recorded 2026-07-12)
+
+Both are APPROVED — the executor does NOT stop on them:
+- **`verdaccio`** (06d) — dev-only, CI + local test harness only; never a runtime/shipped dep.
+- **`@astrojs/starlight`** (06f) — docs-site framework; pick a version whose peer range accepts the
+  repo's `astro@^6`. If NO compatible version exists, STOP and ask (do NOT downgrade Astro).
+
 ## Stable error codes (all parts)
 
 `schema_runtime_mismatch` · `new_generated_delta_required` · `platform_artifact_invalid` ·
