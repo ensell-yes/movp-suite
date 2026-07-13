@@ -1310,9 +1310,9 @@ template (hosted-MCP default).
 Pack + publish the whole bundle to a local Verdaccio, scaffold CRM-lite into a temp dir, install with
 no workspace links, and drive the real edge surfaces + CLI + `verify-schema-runtime`.
 
-> **New dependency — get approval first.** This task adds `verdaccio` `^6` as a **dev-only** dependency
-> of the harness (root `devDependencies`). Per the global rule, STOP and confirm approval before
-> `pnpm add -Dw verdaccio@^6`. It is hermetic local-registry tooling, never shipped.
+> **New dependency — APPROVED 2026-07-12.** This task adds `verdaccio` `^6` as a **dev-only** dependency
+> of the harness (root `devDependencies`). Sign-off is recorded (INTERFACES "Approved new dependencies") —
+> proceed with `pnpm add -Dw verdaccio@^6`. It is hermetic local-registry tooling, never shipped.
 
 ### Files
 
