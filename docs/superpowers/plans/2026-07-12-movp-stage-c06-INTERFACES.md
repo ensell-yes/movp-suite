@@ -149,6 +149,24 @@ Both are APPROVED — the executor does NOT stop on them:
   `checkMetadataConsistency` passes (and fails with the stable code on a mutated row). 06f consumes
   THAT established signal — it does not treat a manifest-derived DB state as live evidence.
 
+## Plan review round 2 — locked resolutions (2026-07-13)
+
+- **F1 atomic safe-write (06c owns a shared helper; reused for registry/manifest/generated migrations).**
+  `lstat`-then-`writeFile` is TOCTOU-raceable and `writeFile({mode})` does NOT chmod an existing file.
+  Use ONE helper: create a `0o600` sibling temp file with EXCLUSIVE creation (`flag: 'wx'`), `lstat`
+  the destination and refuse a symlink/non-regular target, then `rename` the temp over the destination
+  (atomic). Reuse for `movp.deltas.json`, `movp.schema.json`, and generated migrations.
+- **F3 06e gate is fully inlined (06e owns).** Replace "copy + reconcile 06d's gate" prose with the
+  COMPLETE `fixtures/verdaccio-gallery/gate.sh` — explicit tarball enumeration/publication for BOTH
+  the local-pack path and a prepopulated `ARTIFACTS_DIR`. No "reconcile with 06d" instruction remains.
+- **F4 no `as never` (06f owns).** Define a C6f-local typed error (e.g. `DocsConsistencyError` with a
+  `DocsConsistencyCode` union that INCLUDES `manifest_fingerprint_mismatch`) — do NOT cast a string
+  to `never` on `MetadataConsistencyError`. The stale-manifest path exposes the code through its real type.
+- **F2 CLI version — KEPT AS `version: latest` (pushback, not a defect).** All existing CI jobs use
+  `supabase/setup-cli@v2` `version: latest` (a deliberate C1 fix: an older pinned CLI rejected the repo's
+  newer `config.toml` keys). C6 jobs MATCH `latest` — pinning only C6 would create cross-job version skew.
+  A repo-wide exact-pin is a separate cross-cutting change, out of C6 scope.
+
 ## Stable error codes (all parts)
 
 `schema_runtime_mismatch` · `new_generated_delta_required` · `platform_artifact_invalid` ·

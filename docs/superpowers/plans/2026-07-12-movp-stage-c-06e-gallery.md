@@ -1034,82 +1034,283 @@ and fan out across all four templates, plus the Docker-free gallery gate.
 
 ### Files
 
-- **Create:** `fixtures/verdaccio-gallery/gate.sh` (executable) — a `$TEMPLATE`-parameterized copy of
-  `fixtures/verdaccio-crm-lite/gate.sh`.
-- **Create:** `fixtures/verdaccio-gallery/pack.sh` (executable) — the pack-once half factored out.
+- **Create:** `fixtures/verdaccio-gallery/gate.sh` (executable) — the COMPLETE `$TEMPLATE`-parameterized
+  self-contained gallery gate authored inline in Step 2 (INTERFACES F3: no "copy/reconcile 06d's gate").
+- **Create:** `fixtures/verdaccio-gallery/pack.sh` (executable) — the CI pack-once producer authored
+  inline in Step 1 (stages every template into `create-movp`, then packs the whole bundle to `<outdir>`).
 - **Modify:** `.github/workflows/ci.yml` (add `template-gallery`, `pack-artifacts`, `template-smoke`).
 - **Modify:** root `package.json` (add `check:verdaccio-gallery` script alongside 06d's `check:verdaccio-crm`).
 - **Modify:** `docs/superpowers/plans/README.md` (Stage C EXECUTION STATUS — mark C6e landed).
 
 ### Interfaces
 
-- **Consumes (06d):** `fixtures/verdaccio-crm-lite/gate.sh` (the pack/publish-once → scaffold → install →
-  codegen → reset → serve GraphQL + MCP → authenticated HTTP GraphQL + streamable-MCP `callTool` + CLI
-  create/list harness), the `verdaccio` devDependency, and the `+200`/`+300`/`+400`/`+500` port blocks.
+- **Consumes (06d):** the published bundle (`@movp/*` + `@movp/platform` + `create-movp`), the
+  `create-movp` scaffolder + copier tokens, the CRM-lite app-shell layout, the `verdaccio` devDependency,
+  the edge-serve env-file pattern from `scripts/slice-e2e.sh` (lines 136-171), and the
+  `+200`/`+300`/`+400`/`+500` port blocks. The gallery gate (Step 2) is authored in full here — it does
+  NOT copy or reconcile against `fixtures/verdaccio-crm-lite/gate.sh`.
 - **Produces:** `fixtures/verdaccio-gallery/gate.sh <template>` and a CI matrix over
   `[crm-lite, marketing-site, support-desk, knowledge-base]`.
 
 ### Steps
 
-**1. Factor the pack step into `fixtures/verdaccio-gallery/pack.sh`.** Read the pack half of 06d's
-`fixtures/verdaccio-crm-lite/gate.sh` (the `pnpm pack` / `npm pack` of each publishable `@movp/*` +
-`@movp/platform` + `create-movp`). Create `pack.sh <outdir>` that runs exactly those pack commands,
-writing every tarball into `<outdir>`:
+**1. Create the pack-once producer `fixtures/verdaccio-gallery/pack.sh`** (mark executable). The CI
+`pack-artifacts` job runs `pnpm build` and then `pack.sh ./artifacts`, uploading the tarballs the
+`template-smoke` matrix consumes via `ARTIFACTS_DIR`. Because `create-movp` ships the template source in
+its tarball (06d `package.json` `"files": ["dist","templates"]`), pack.sh MUST stage ALL FOUR templates
+into `packages/create-movp/templates/` before packing — otherwise the single shared tarball could not
+scaffold every matrix leg. The publishable set is exactly the 12 names in `check-publishable-versions.mjs`
+plus `create-movp` (self-contained here — no 06d cross-reference):
 
 ```bash
 #!/usr/bin/env bash
+# Pack every publishable workspace artifact ONCE into <outdir>. Assumes `pnpm build` (dist/) already ran
+# (the CI pack-artifacts job runs it first). create-movp ships the templates in its tarball, so stage
+# ALL FOUR templates into it before packing so one shared bundle can scaffold any matrix leg.
 set -euo pipefail
 OUT="${1:?usage: pack.sh <outdir>}"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 mkdir -p "$OUT"
-# Pack the SAME package set 06d's gate publishes (mirror its list verbatim):
-for pkg in auth cli codegen core-schema domain flows graphql mcp notifications obs search platform; do
-  ( cd "packages/$pkg" && pnpm pack --pack-destination "$(cd "$OUT" && pwd)" )
+ABS_OUT="$(cd "$OUT" && pwd)"
+
+# Stage every template into create-movp so the single packed tarball can scaffold any of them.
+rm -rf "$REPO_ROOT/packages/create-movp/templates"
+mkdir -p "$REPO_ROOT/packages/create-movp/templates"
+for t in crm-lite marketing-site support-desk knowledge-base; do
+  cp -R "$REPO_ROOT/templates/$t" "$REPO_ROOT/packages/create-movp/templates/$t"
 done
-( cd packages/create-movp && pnpm pack --pack-destination "$(cd "$OUT" && pwd)" )
+
+for pkg in auth cli codegen core-schema domain flows graphql mcp notifications obs search platform create-movp; do
+  ( cd "$REPO_ROOT/packages/$pkg" && pnpm pack --pack-destination "$ABS_OUT" )
+done
 echo "pack: wrote $(ls "$OUT"/*.tgz | wc -l | tr -d ' ') tarballs to $OUT"
 ```
 
-> **Reconcile with 06d:** confirm the exact package list against `scripts/check-package-artifacts.mjs`
-> (06d Task 1 lists: `auth, cli, codegen, core-schema, domain, flows, graphql, mcp, notifications, obs,
-> search, platform`) and `create-movp`. Match 06d's pack command form (`pnpm pack` vs `npm pack`) exactly.
+**Expected:** `pack: wrote 13 tarballs to <outdir>` (12 `@movp/*` publishables + `create-movp`).
 
-**2. Generalize 06d's gate.** Create `fixtures/verdaccio-gallery/gate.sh` by copying
-`fixtures/verdaccio-crm-lite/gate.sh` and parameterizing it by the FIRST positional argument:
+**2. Author the COMPLETE self-contained gallery gate `fixtures/verdaccio-gallery/gate.sh`** (mark
+executable — `chmod +x`). This is the full script — paste it verbatim; it does NOT copy or reconcile
+against 06d's gate (INTERFACES F3). It takes ONE positional argument (`$TEMPLATE`) and covers BOTH
+tarball sources with an identical publish path: a prepopulated `ARTIFACTS_DIR` (CI, packed once by
+`pack.sh`) OR a local pack (build → stage all templates into `create-movp` → `npm pack` every artifact).
+It stands up a hermetic Verdaccio whose config + storage live under the scratch dir (no fixture-dir
+pollution — no separate `verdaccio.yaml` file needed), then runs the **F2-locked order** per template:
+publish → scaffold (copy files ONLY) → `npm install` (from Verdaccio, no workspace links) → `npm run
+codegen` → `supabase db reset` → serve real GraphQL + MCP → drive the schema-derived surfaces. The
+per-template `case` block carries the port block AND the expected project-collection surfaces (GraphQL
+root field = camelCase-plural of the collection; MCP tool = `<collection>.list`), so the smoke is
+real-surface yet template-agnostic in structure:
 
 ```bash
 #!/usr/bin/env bash
+# C6e gallery acceptance (ONE template per invocation). Publishes the @movp/* + @movp/platform +
+# create-movp bundle to a local Verdaccio, scaffolds $TEMPLATE via the PUBLISHED create-movp (no
+# workspace links), then npm install -> npm run codegen -> supabase db reset -> serves the real GraphQL
+# + MCP edge functions -> drives an authenticated GraphQL query + streamable-MCP tools/call against the
+# template's schema-derived project collection. Self-contained: no dependency on the 06d crm-lite fixture.
+#
+# Tarball source (identical publish path either way):
+#   ARTIFACTS_DIR set   -> publish the pre-packed tarballs already in that dir (CI: packed once upstream).
+#   ARTIFACTS_DIR unset -> build, stage every template into create-movp, npm pack every artifact locally.
+#
+# Requires: Docker, supabase, deno, node, npm, pnpm, curl, psql.
 set -euo pipefail
+
 TEMPLATE="${1:?usage: gate.sh <template>}"   # crm-lite | marketing-site | support-desk | knowledge-base
-```
 
-Then replace every hardcoded `crm-lite` occurrence in the copied body with `"$TEMPLATE"` (the `cp -R
-"$REPO_ROOT/templates/crm-lite" ...` staging line, the `create movp` template answer piped to the CLI,
-and the `templates/crm-lite` install path), and derive the port block so the reset + smoke bind the
-right stack:
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+REGISTRY="http://127.0.0.1:4873"
+WORK="$(mktemp -d "${TMPDIR:-/tmp}/movp-gallery-${TEMPLATE}.XXXXXX")"
+PROJECT="movp-${TEMPLATE}-demo"
+WS="33333333-3333-3333-3333-333333333333"
 
-```bash
+# Per-template port block (INTERFACES "Port-block allocation") + the schema-derived project surfaces the
+# smoke asserts. GQL_FIELD = camelCase-plural of the project collection; MCP_TOOL = <collection>.list
+# (verified packages/mcp/src/server.ts:70 — the MCP server registers `${collection}.list`).
 case "$TEMPLATE" in
-  crm-lite)        API_PORT=64521; DB_PORT=64522 ;;
-  marketing-site)  API_PORT=64621; DB_PORT=64622 ;;
-  support-desk)    API_PORT=64721; DB_PORT=64722 ;;
-  knowledge-base)  API_PORT=64821; DB_PORT=64822 ;;
+  crm-lite)        API_PORT=64521; DB_PORT=64522; GQL_FIELD="companies";      MCP_TOOL="company.list" ;;
+  marketing-site)  API_PORT=64621; DB_PORT=64622; GQL_FIELD="authors";        MCP_TOOL="author.list" ;;
+  support-desk)    API_PORT=64721; DB_PORT=64722; GQL_FIELD="supportTickets"; MCP_TOOL="support_ticket.list" ;;
+  knowledge-base)  API_PORT=64821; DB_PORT=64822; GQL_FIELD="kbArticles";     MCP_TOOL="kb_article.list" ;;
   *) echo "unknown template: $TEMPLATE" >&2; exit 1 ;;
 esac
 DB_URL="postgresql://postgres:postgres@127.0.0.1:${DB_PORT}/postgres"
+
+FN_PID=""; VERDACCIO_PID=""
+cleanup() {
+  [ -n "${FN_PID:-}" ] && kill "$FN_PID" 2>/dev/null || true
+  [ -n "${VERDACCIO_PID:-}" ] && kill "$VERDACCIO_PID" 2>/dev/null || true
+  ( cd "$WORK/$PROJECT" 2>/dev/null && supabase stop --no-backup >/dev/null 2>&1 ) || true
+  rm -rf "$WORK"
+}
+trap cleanup EXIT
+
+# 1. Assemble the tarball dir. Either the CI-provided ARTIFACTS_DIR (packed once upstream) or a fresh
+#    local pack of every workspace artifact. Both branches yield a dir of *.tgz published identically.
+PUBLISHABLE=(auth cli codegen core-schema domain flows graphql mcp notifications obs search platform)
+ALL_TEMPLATES=(crm-lite marketing-site support-desk knowledge-base)
+if [ -n "${ARTIFACTS_DIR:-}" ]; then
+  PACK_DIR="$ARTIFACTS_DIR"
+  ls "$PACK_DIR"/*.tgz >/dev/null 2>&1 || { echo "ARTIFACTS_DIR has no *.tgz tarballs: $PACK_DIR"; exit 1; }
+else
+  PACK_DIR="$WORK/tarballs"
+  mkdir -p "$PACK_DIR"
+  # Build every dist (tsup) + the platform bundle + create-movp before packing.
+  ( cd "$REPO_ROOT" && pnpm -w build )
+  ( cd "$REPO_ROOT" && pnpm --filter @movp/platform build )
+  ( cd "$REPO_ROOT" && pnpm --filter create-movp build )
+  # create-movp ships templates in its tarball; stage ALL FOUR so the bundle can scaffold any template.
+  rm -rf "$REPO_ROOT/packages/create-movp/templates"
+  mkdir -p "$REPO_ROOT/packages/create-movp/templates"
+  for t in "${ALL_TEMPLATES[@]}"; do
+    cp -R "$REPO_ROOT/templates/$t" "$REPO_ROOT/packages/create-movp/templates/$t"
+  done
+  # Explicit npm pack enumeration of every workspace artifact -> tarballs in PACK_DIR.
+  for pkg in "${PUBLISHABLE[@]}" create-movp; do
+    ( cd "$REPO_ROOT/packages/$pkg" && npm pack --pack-destination "$PACK_DIR" >/dev/null )
+  done
+fi
+
+# 2. Start a hermetic Verdaccio (config + storage under $WORK — nothing written to the fixture dir).
+cat >"$WORK/verdaccio.yaml" <<YAML
+storage: $WORK/storage
+uplinks:
+  npmjs:
+    url: https://registry.npmjs.org/
+packages:
+  '@movp/*':
+    access: \$all
+    publish: \$all
+  'create-movp':
+    access: \$all
+    publish: \$all
+  '**':
+    access: \$all
+    proxy: npmjs
+log:
+  type: stdout
+  format: pretty
+  level: warn
+YAML
+node "$REPO_ROOT/node_modules/verdaccio/bin/verdaccio" -c "$WORK/verdaccio.yaml" >"$WORK/verdaccio.log" 2>&1 &
+VERDACCIO_PID=$!
+for _ in $(seq 1 30); do curl -sf "$REGISTRY/-/ping" >/dev/null 2>&1 && break; sleep 1; done
+
+# 3. Publish EVERY tarball to Verdaccio (throwaway token; Verdaccio accepts any under $all). Fresh
+#    $WORK/storage each run, so every version publishes cleanly with no "already exists" conflict.
+export npm_config_registry="$REGISTRY"
+npm config set "//127.0.0.1:4873/:_authToken" "fake-token" --location project 2>/dev/null || true
+for tgz in "$PACK_DIR"/*.tgz; do
+  npm publish "$tgz" --registry "$REGISTRY" >/dev/null 2>&1 || { echo "publish $(basename "$tgz") failed"; exit 1; }
+done
+
+# 4. Scaffold $TEMPLATE into a clean temp dir via the PUBLISHED create-movp (no workspace context).
+#    Scaffolding COPIES files only — it never imports the schema or runs generate() (INTERFACES F2:
+#    the scaffold's @movp/* do not exist until `npm install` in step 5). Prompt order: template, name, ws.
+cd "$WORK"
+printf '%s\n%s\n%s\n' "$TEMPLATE" "$PROJECT" "$WS" | npm --registry "$REGISTRY" create movp@0.1.0
+[ -d "$WORK/$PROJECT" ] || { echo "scaffold did not create $PROJECT"; exit 1; }
+cd "$WORK/$PROJECT"
+
+# 5. Install from Verdaccio with NO workspace links; assert nothing links back to the monorepo source.
+npm install --registry "$REGISTRY"
+if grep -REl '"(file:|workspace:|link:)' package.json package-lock.json >/dev/null 2>&1; then
+  echo "gate: file:/workspace:/link: specifier found in the scaffold — not standalone"; exit 1;
+fi
+if grep -Rq 'supasuite/packages' package-lock.json 2>/dev/null; then
+  echo "gate: lockfile references the monorepo source tree — not standalone"; exit 1;
+fi
+
+# 6. Codegen runs POST-install (INTERFACES F2). The project baseline + movp.schema.json are emitted HERE
+#    by the scaffold's own tsx + @movp/codegen — install (step 5) -> codegen -> db reset (step 7).
+npm run codegen
+ls supabase/migrations/*_movp_generated.sql >/dev/null 2>&1 || { echo "no generated project baseline"; exit 1; }
+
+# 7. Start the isolated per-template stack (config.toml ports = this template's +N block) + reset
+#    (config.toml [db.seed] runs ./seed.sql, bootstrapping the demo workspace + rows).
+supabase start
+supabase db reset
+
+# 8. verify-schema-runtime (06b): Node config fingerprint == Deno edge fingerprint.
+npm run verify-schema-runtime | grep -q '"ok":true' || { echo "verify-schema-runtime not ok"; exit 1; }
+
+# 9. Load env + mint a real member JWT (same gotrue flow as scripts/slice-e2e.sh).
+eval "$(supabase status -o env | sed 's/^\([A-Z_]*\)=/export \1=/')"
+: "${API_URL:?}"; : "${ANON_KEY:?}"; : "${SERVICE_ROLE_KEY:?}"
+curl -sS "$API_URL/auth/v1/admin/users" -H "Authorization: Bearer $SERVICE_ROLE_KEY" \
+  -H "apikey: $SERVICE_ROLE_KEY" -H "content-type: application/json" \
+  -d '{"email":"gallery@example.test","password":"Passw0rd!1","email_confirm":true}' >/dev/null
+TOKEN="$(curl -sS "$API_URL/auth/v1/token?grant_type=password" -H "apikey: $ANON_KEY" \
+  -H "content-type: application/json" -d '{"email":"gallery@example.test","password":"Passw0rd!1"}' \
+  | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>process.stdout.write(JSON.parse(d).access_token))')"
+[ -n "$TOKEN" ] || { echo "failed to mint token"; exit 1; }
+USER_ID="$(node -e 'const t=process.argv[1].split(".")[1];process.stdout.write(JSON.parse(Buffer.from(t,"base64url")).sub)' "$TOKEN")"
+# The seed created the demo workspace with a placeholder membership; add the REAL minted user as a member.
+psql "$DB_URL" -v ON_ERROR_STOP=1 \
+  -c "insert into public.workspace (id,name) values ('$WS','Gallery') on conflict do nothing;" \
+  -c "insert into public.workspace_membership (workspace_id,user_id,role) values ('$WS','$USER_ID','owner') on conflict do nothing;"
+
+# 10. Serve the scaffold's REAL edge functions (env-file pattern — shell-assigned env vars can fail to
+#     propagate into the edge runtime on this stack; keep MOVP_JWT_ISSUER in a file). The CLI serves
+#     every function and takes no positional function list.
+FN_ENV_FILE="supabase/.env.local"
+printf 'MOVP_JWT_ISSUER=%s\n' "$API_URL/auth/v1" >"$FN_ENV_FILE"
+supabase functions serve --env-file "$FN_ENV_FILE" >"$WORK/functions.log" 2>&1 &
+FN_PID=$!
+GRAPHQL_READY=0
+for _ in $(seq 1 60); do
+  BODY="$(curl -sS "$API_URL/functions/v1/graphql" -H "Authorization: Bearer $TOKEN" -H "apikey: $ANON_KEY" \
+    -H "content-type: application/json" -d '{"query":"query{__typename}"}' || true)"
+  printf '%s' "$BODY" | grep -q '"__typename"' && { GRAPHQL_READY=1; break; }
+  sleep 1
+done
+[ "$GRAPHQL_READY" = "1" ] || { echo "graphql not ready"; tail -n 120 "$WORK/functions.log"; exit 1; }
+
+# 11. Real-surface GraphQL smoke: the composed schema EXPOSES the template's project field, and the
+#     field RESOLVES against a real table (items present, no errors) under the member JWT. Template-
+#     agnostic in structure; the exact field name comes from the per-template case block above.
+FIELDS="$(curl -sS "$API_URL/functions/v1/graphql" -H "Authorization: Bearer $TOKEN" -H "apikey: $ANON_KEY" \
+  -H "content-type: application/json" -d '{"query":"query{__type(name:\"Query\"){fields{name}}}"}')"
+echo "$FIELDS" | grep -qF "\"$GQL_FIELD\"" || { echo "Query type missing project field $GQL_FIELD: $FIELDS"; exit 1; }
+GQL="$(curl -sS "$API_URL/functions/v1/graphql" -H "Authorization: Bearer $TOKEN" -H "apikey: $ANON_KEY" \
+  -H "content-type: application/json" \
+  -d "{\"query\":\"query{$GQL_FIELD(workspaceId:\\\"$WS\\\", first:5){items{id}}}\"}")"
+echo "$GQL" | grep -q '"items"' || { echo "GraphQL $GQL_FIELD query returned no items array: $GQL"; exit 1; }
+echo "$GQL" | grep -q '"errors"' && { echo "GraphQL $GQL_FIELD query errored: $GQL"; exit 1; }
+
+# 12. Real-surface MCP smoke: the streamable-MCP server registers <collection>.list; assert the EXACT
+#     tool is in tools/list, then tools/call it (no jsonrpc error) over HTTP.
+MCP_LIST="$(curl -sS "$API_URL/functions/v1/mcp" -H "Authorization: Bearer $TOKEN" -H "apikey: $ANON_KEY" \
+  -H "content-type: application/json" -H "accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}')"
+echo "$MCP_LIST" | grep -qF "\"$MCP_TOOL\"" || { echo "MCP tools/list missing exact tool $MCP_TOOL: $MCP_LIST"; exit 1; }
+MCP_CALL="$(curl -sS "$API_URL/functions/v1/mcp" -H "Authorization: Bearer $TOKEN" -H "apikey: $ANON_KEY" \
+  -H "content-type: application/json" -H "accept: application/json, text/event-stream" \
+  -d "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"$MCP_TOOL\",\"arguments\":{\"workspaceId\":\"$WS\"}}}")"
+echo "$MCP_CALL" | grep -q '"error"' && { echo "MCP tools/call $MCP_TOOL errored: $MCP_CALL"; exit 1; }
+
+echo "gate: verdaccio-gallery ($TEMPLATE) acceptance PASS"
 ```
 
-If a pre-packed artifacts dir is present (`ARTIFACTS_DIR`, set by CI), publish those tarballs to Verdaccio
-instead of re-packing; otherwise call `pack.sh` locally. Keep the rest of 06d's gate body verbatim, in
-this **F2-locked order** (INTERFACES F2 — codegen is POST-install, never inline at scaffold):
-**publish-once to Verdaccio → scaffold (copy files ONLY — no `import`/`generate()` here; the scaffold's
-`@movp/*` do not exist yet) → `npm install --registry "$REGISTRY"` (no workspace links) → `npm run
-codegen` → `supabase db reset` → serve real GraphQL + MCP → drive GraphQL/MCP/CLI → assert no
-`file:`/workspace links**. Do NOT move codegen before `npm install`. Final line: `gate: verdaccio-gallery
-($TEMPLATE) acceptance PASS`. Mark both scripts executable (`chmod +x fixtures/verdaccio-gallery/*.sh`).
+> **`set -e` note (do NOT rewrite these idioms):** `... | grep -q X && { echo ...; exit 1; }` is safe
+> under `set -e` — the `grep` is the command BEFORE the final `&&`, so its non-zero exit is exempt from
+> `-e` (the good case, where the pattern is absent, continues). This is why the two error-detection lines
+> (`grep -q '"errors"'`, `grep -q '"error"'`) do not need an `|| true` guard.
 
-> **Reconcile with 06d before running:** open `fixtures/verdaccio-crm-lite/gate.sh` and adopt its exact
-> `REGISTRY` / `WORK` / `PROJECT` / `WS` variable names and its serve-readiness poll verbatim — only the
-> template name + port block + the "publish pre-packed tarballs if present" branch are parameterized here.
+Mark both scripts executable: `chmod +x fixtures/verdaccio-gallery/gate.sh fixtures/verdaccio-gallery/pack.sh`.
+
+**Acceptance (INTERFACES F3):** the gate must run identically from local packs and from a prepopulated
+`ARTIFACTS_DIR`, across all four templates. Where Docker + Verdaccio are available, exercise both inputs:
+
+```
+# local-pack path (packs + publishes locally):
+for t in crm-lite marketing-site support-desk knowledge-base; do bash fixtures/verdaccio-gallery/gate.sh "$t"; done
+# prepopulated-artifacts path (pack once, then publish those tarballs per template):
+bash fixtures/verdaccio-gallery/pack.sh /tmp/movp-artifacts
+for t in crm-lite marketing-site support-desk knowledge-base; do ARTIFACTS_DIR=/tmp/movp-artifacts bash fixtures/verdaccio-gallery/gate.sh "$t"; done
+```
+
+**Expected** each run's tail: `gate: verdaccio-gallery (<template>) acceptance PASS`.
 
 **3. Add the root script** to `package.json` (after 06d's `check:verdaccio-crm`):
 
@@ -1218,10 +1419,10 @@ Docker-free composition gate.
 
 1. **06d has landed; its contract is consumed verbatim.** Template layout, copier tokens
    (`__PROJECT_NAME__` / `__WORKSPACE_ID__`), `package.json.template` convention, the CRM-lite app shell,
-   and `fixtures/verdaccio-crm-lite/gate.sh` are all fixed by the finalized 06d plan. The gallery
-   templates are byte-identical to CRM-lite except their domain schema, config ports, seed, pages, and
-   README. Reconcile the generalized `gate.sh` / `pack.sh` against the real CRM-lite gate before running
-   (Task 4 steps 1–2).
+   and the CRM-lite app shell are all fixed by the finalized 06d plan. The gallery templates are
+   byte-identical to CRM-lite except their domain schema, config ports, seed, pages, and README. The
+   gallery `gate.sh` / `pack.sh` are authored in full in Task 4 steps 1–2 (INTERFACES F3) — they are
+   self-contained and require no reconciliation against `fixtures/verdaccio-crm-lite/gate.sh`.
 2. **Templates ship `package.json.template`, never `package.json`.** The copier renames it at scaffold
    time; this keeps `templates/*` workspace globbing from linking the unpublished `@movp/* @^0.1.0` pins.
    The gallery gate asserts both (present template, absent bare file) per template.
