@@ -1040,11 +1040,11 @@ and fan out across all four templates, plus the Docker-free gallery gate.
   `copyFileGuarded`** from the built `packages/create-movp/dist/index.js`; it does **not** define a
   guarded copier of its own, and it performs **no raw `copyFileSync` / `readFileSync`** on any source
   path (INTERFACES round-4 F1).
-- **Create:** `fixtures/verdaccio-gallery/snapshot-tree.mjs` — the F2 gate utility: a deterministic
-  content-hash manifest of the subtrees the pack stages FROM (`packages/create-movp/` + `templates/`).
-  `pack.sh` / `gate.sh` snapshot BEFORE staging and compare AFTER, so the gate asserts **"staging
-  changed nothing"**, not "the worktree is pristine" (INTERFACES round-4 F2). Owned by 06e's fixture
-  (self-contained per INTERFACES F3 — no cross-import from `fixtures/verdaccio-crm-lite/`).
+- **Create (none — CONSUME):** the snapshot manifest utility is **06d's `scripts/tree-snapshot.mjs`**
+  (INTERFACES round-5 F2). 06e writes NO snapshot script of its own; `pack.sh` and `gate.sh` invoke
+  06d's. An earlier draft of this plan created a duplicate `fixtures/verdaccio-gallery/snapshot-tree.mjs`
+  — that file is DELETED and must not be reintroduced (two implementations of one bounded-hash guard =
+  drift). See "Consumes (06d)" below for the contract.
 - **Create:** `fixtures/verdaccio-gallery/gate.sh` (executable) — the COMPLETE `$TEMPLATE`-parameterized
   self-contained gallery gate authored inline in Step 2 (INTERFACES F3: no "copy/reconcile 06d's gate").
 - **Create:** `fixtures/verdaccio-gallery/pack.sh` (executable) — the CI pack-once producer authored
@@ -1076,10 +1076,20 @@ and fan out across all four templates, plus the Docker-free gallery gate.
   functions `npm create movp` runs. **06e defines NO guarded copier of its own** (INTERFACES round-3 F1;
   two implementations of the same guard = drift). 06d also owns their unit tests; 06e pins only the
   gallery-level pack invariants (Step 1d).
+- **Consumes (06d) — the ONE shared snapshot helper `scripts/tree-snapshot.mjs`** (INTERFACES round-5
+  F2). Invoked as `node scripts/tree-snapshot.mjs <repoRoot>`; prints to stdout a deterministic manifest
+  of the subtrees the pack stages FROM (`packages/create-movp/` + `templates/`), one path-sorted row per
+  entry. Contract 06d owns and 06e relies on: `lstat`-based (a symlink is RECORDED by its target string,
+  never followed), file bytes hashed in **bounded chunks** (never buffers a whole file — a large
+  untracked file must not OOM the gate that exists to tolerate a dirty worktree), `node_modules` skipped,
+  and **never prints file content** (paths + hashes only, so the diff is safe to dump into a CI log).
+  `pack.sh` / `gate.sh` capture it BEFORE staging and again AFTER, and pass iff the two are
+  byte-identical — the gate asserts **"staging changed nothing"**, NOT "the worktree is pristine". 06e
+  **does not reimplement it** and does not fork it into the fixture dir; 06d owns its unit tests.
 - **Produces:** `fixtures/verdaccio-gallery/gate.sh <template>`,
-  `fixtures/verdaccio-gallery/stage-create-movp.mjs` (variadic over the four templates),
-  `fixtures/verdaccio-gallery/snapshot-tree.mjs` (the F2 "staging changed nothing" manifest), and a CI
-  matrix over `[crm-lite, marketing-site, support-desk, knowledge-base]`.
+  `fixtures/verdaccio-gallery/stage-create-movp.mjs` (variadic over the four templates), and a CI
+  matrix over `[crm-lite, marketing-site, support-desk, knowledge-base]`. **No snapshot script** — that
+  is 06d's `scripts/tree-snapshot.mjs`.
 
 ### Steps
 
@@ -1146,102 +1156,26 @@ for (const t of templates) {
 console.log(`staged create-movp (${templates.join(', ')}) → ${stagingDir}`)
 ```
 
-**1b. The F2 snapshot utility `fixtures/verdaccio-gallery/snapshot-tree.mjs`** (INTERFACES round-4 F2).
-The invariant the pack must hold is **"staging changed nothing in the source subtrees"** — NOT "the
-worktree is pristine". Asserting `packages/create-movp/templates` is absent, or that
+**1b. The F2 snapshot manifest — CONSUME 06d's `scripts/tree-snapshot.mjs`; write NOTHING** (INTERFACES
+round-5 F2). The invariant the pack must hold is **"staging changed nothing in the source subtrees"** —
+NOT "the worktree is pristine". Asserting `packages/create-movp/templates` is absent, or that
 `git status --porcelain` is empty, tests the WRONG thing: it falsely fails any developer who has
 unrelated WIP or a pre-existing untracked file, and it is blind to a mutation that happens to leave git
-status unchanged. So: emit a deterministic content-hash manifest of `packages/create-movp/` +
-`templates/`, capture it BEFORE staging, capture it again AFTER, and pass iff the two are
-byte-identical. Pre-existing untracked files and unrelated edits are PRESERVED and irrelevant to the
-gate — they appear identically in both snapshots.
+status unchanged. The manifest is what makes the right assertion possible: capture it BEFORE staging,
+capture it again AFTER, pass iff the two are byte-identical. Pre-existing untracked files and unrelated
+edits are PRESERVED and irrelevant to the gate — they appear identically in both snapshots.
 
-```js
-#!/usr/bin/env node
-// C6e F2 gate utility: print a deterministic content-hash manifest of the subtrees the pack stages
-// FROM (packages/create-movp/ + templates/). pack.sh and gate.sh snapshot BEFORE staging and diff
-// AFTER: the gate passes iff staging changed NOTHING. It does NOT assert a pristine worktree — a
-// developer's untracked files and unrelated edits are preserved and simply appear in both snapshots.
-//
-// Untrusted-io discipline: lstat (never stat/readFile through a symlink) so a symlinked entry is
-// RECORDED, never followed; hash file bytes in bounded chunks (no whole-file buffer); print only
-// paths + hashes, never content.
-import { createHash } from 'node:crypto'
-import { closeSync, lstatSync, openSync, readSync, readdirSync, readlinkSync } from 'node:fs'
-import { join, relative, sep } from 'node:path'
+> **DRY — do NOT write a snapshot script.** There is exactly ONE, and **06d owns it**:
+> **`scripts/tree-snapshot.mjs`**, invoked as `node scripts/tree-snapshot.mjs <repoRoot>`. It is
+> `lstat`-based (a symlink is RECORDED by its target string, never followed), hashes file bytes in
+> **bounded chunks** (it never buffers a whole file — otherwise a large untracked file would OOM the very
+> gate that exists to tolerate a dirty worktree), emits a path-sorted manifest, skips `node_modules`, and
+> **never prints file content** (paths + hashes only). A round-4 draft of this plan created a second,
+> fixture-local `fixtures/verdaccio-gallery/snapshot-tree.mjs`; it is DELETED. Do not recreate it, do not
+> copy it into the fixture dir, do not "adapt" it. `pack.sh` and `gate.sh` invoke 06d's script by path.
 
-const SKIP_DIRS = new Set(['node_modules', '.git', '.turbo'])
-const CHUNK = 1 << 20 // 1 MiB — bound before buffer
-
-const repoRoot = process.argv[2]
-if (!repoRoot) {
-  console.error('usage: snapshot-tree.mjs <repoRoot>')
-  process.exit(2)
-}
-
-function hashFile(abs, size) {
-  const h = createHash('sha256')
-  const fd = openSync(abs, 'r')
-  try {
-    const buf = Buffer.allocUnsafe(Math.min(CHUNK, Math.max(size, 1)))
-    let read
-    while ((read = readSync(fd, buf, 0, buf.length, null)) > 0) h.update(buf.subarray(0, read))
-  } finally {
-    closeSync(fd)
-  }
-  return h.digest('hex')
-}
-
-// Manifest row: `<relpath>\t<kind> <hash>` — path FIRST so the sort (and therefore any diff) is
-// path-ordered and readable. Never any file content.
-const rows = []
-function walk(abs) {
-  for (const name of readdirSync(abs)) {
-    const child = join(abs, name)
-    const st = lstatSync(child) // lstat: a symlink is recorded by its target STRING, never followed
-    const rel = relative(repoRoot, child).split(sep).join('/')
-    if (st.isSymbolicLink()) {
-      rows.push(`${rel}\tL ${createHash('sha256').update(readlinkSync(child)).digest('hex')}`)
-    } else if (st.isDirectory()) {
-      rows.push(`${rel}\tD -`) // dir rows make a newly-created empty dir (e.g. a stray templates/) visible
-      if (!SKIP_DIRS.has(name)) walk(child)
-    } else if (st.isFile()) {
-      rows.push(`${rel}\tF ${hashFile(child, st.size)}`)
-    } else {
-      rows.push(`${rel}\tO -`) // socket/fifo/device — recorded, never opened
-    }
-  }
-}
-
-for (const sub of [join('packages', 'create-movp'), 'templates']) {
-  const abs = join(repoRoot, sub)
-  try {
-    if (!lstatSync(abs).isDirectory()) throw new Error(`${sub} is not a directory`)
-  } catch {
-    continue // absent subtree: nothing to snapshot (both snapshots agree)
-  }
-  walk(abs)
-}
-
-rows.sort()
-process.stdout.write(rows.join('\n') + '\n')
-```
-
-**Verify it is deterministic and content-addressed** (two back-to-back runs agree; a touched byte shows
-up):
-
-```
-node fixtures/verdaccio-gallery/snapshot-tree.mjs "$PWD" > /tmp/movp-snap-a
-node fixtures/verdaccio-gallery/snapshot-tree.mjs "$PWD" > /tmp/movp-snap-b
-diff -q /tmp/movp-snap-a /tmp/movp-snap-b && echo 'snapshot deterministic'
-printf '\n' >> templates/marketing-site/README.md
-node fixtures/verdaccio-gallery/snapshot-tree.mjs "$PWD" > /tmp/movp-snap-c
-diff -q /tmp/movp-snap-a /tmp/movp-snap-c >/dev/null || echo 'snapshot detects a one-byte change'
-git checkout -- templates/marketing-site/README.md
-rm -f /tmp/movp-snap-a /tmp/movp-snap-b /tmp/movp-snap-c
-```
-
-**Expected:** `snapshot deterministic` then `snapshot detects a one-byte change`.
+Its determinism, one-byte sensitivity, and dirty-tree tolerance are exercised in **Step 1d** — against a
+temporary synthetic tree, never against the real repository.
 
 **1c. Create the pack-once producer `fixtures/verdaccio-gallery/pack.sh`** (mark executable). The CI
 `pack-artifacts` job runs `pnpm build` and then `pack.sh ./artifacts`, uploading the tarballs the
@@ -1271,11 +1205,13 @@ CM_STAGE="$(mktemp -d "${TMPDIR:-/tmp}/movp-create-movp.XXXXXX")"
 SNAP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/movp-pack-snap.XXXXXX")"
 trap 'rm -rf "$CM_STAGE" "$SNAP_DIR"' EXIT
 
-# INTERFACES round-4 F2: the invariant is "staging changed NOTHING in the source subtrees", not "the
-# worktree is pristine". Snapshot packages/create-movp/ + templates/ BEFORE staging, compare AFTER.
-# A developer's unrelated WIP or pre-existing untracked files are PRESERVED — they appear in BOTH
-# snapshots and must never fail this gate.
-node "$FIXTURE_DIR/snapshot-tree.mjs" "$REPO_ROOT" >"$SNAP_DIR/before.txt"
+# INTERFACES round-4 F2 / round-5 F2: the invariant is "staging changed NOTHING in the source subtrees",
+# not "the worktree is pristine". Snapshot packages/create-movp/ + templates/ BEFORE staging, compare
+# AFTER, using 06d's ONE shared helper `scripts/tree-snapshot.mjs` (lstat-based, chunk-bounded hash,
+# path-sorted, content never printed). GOTCHA: there is no fixture-local snapshot script — do not add
+# one. A developer's unrelated WIP or pre-existing untracked files are PRESERVED — they appear in BOTH
+# snapshots and must never fail this gate. This script only ever READS the worktree.
+node "$REPO_ROOT/scripts/tree-snapshot.mjs" "$REPO_ROOT" >"$SNAP_DIR/before.txt"
 
 # Stage all four templates into a TEMP publishable create-movp tree (source worktree untouched). An
 # external-symlink template file — or a symlinked template ROOT — FAILS here with
@@ -1283,7 +1219,7 @@ node "$FIXTURE_DIR/snapshot-tree.mjs" "$REPO_ROOT" >"$SNAP_DIR/before.txt"
 node "$FIXTURE_DIR/stage-create-movp.mjs" "$REPO_ROOT" "$CM_STAGE" \
   crm-lite marketing-site support-desk knowledge-base
 
-node "$FIXTURE_DIR/snapshot-tree.mjs" "$REPO_ROOT" >"$SNAP_DIR/after.txt"
+node "$REPO_ROOT/scripts/tree-snapshot.mjs" "$REPO_ROOT" >"$SNAP_DIR/after.txt"
 if ! diff -u "$SNAP_DIR/before.txt" "$SNAP_DIR/after.txt" >"$SNAP_DIR/diff.txt"; then
   echo "pack: staging MUTATED the source subtrees (packages/create-movp/ or templates/):" >&2
   cat "$SNAP_DIR/diff.txt" >&2   # paths + hashes only — the manifest never carries file content
@@ -1307,64 +1243,110 @@ echo "pack: wrote $(ls "$OUT"/*.tgz | wc -l | tr -d ' ') tarballs to $OUT"
 **Expected:** `pack: wrote 13 tarballs to <outdir>` (12 `@movp/*` publishables + `create-movp`), with no
 source-mutation error.
 
-**1d. F1 + F2 acceptance — the locked tests, exercised against the SHARED guarded copiers.** 06d owns the
+**1d. F1 + F2 acceptance — the locked tests, exercised against the SHARED guarded copiers and 06d's
+SHARED snapshot helper, on a TEMPORARY SYNTHETIC TREE.** 06d owns the
 `copyTreeGuarded` / `copyFileGuarded` UNIT tests (its `copier.test.ts` pins external-symlink →
 `template_symlink_rejected` without reading the target — for a symlinked FILE, a symlinked tree ROOT, and
 an explicit single-file copy — plus verbatim copy and byte bounds) — do NOT duplicate them here. 06e pins
 the invariants at the level it owns: the GALLERY four-template pack.
 
-**(a) An external-symlink template file makes the pack FAIL without reading it.** Plant a symlink in a
-gallery template, confirm the pack aborts with the shared copier's code, and confirm the worktree is
-restored:
+> **STOP — no test or demo may write under the real repository** (INTERFACES round-5 F1). A round-4 draft
+> of this step dirtied a REAL `templates/marketing-site/README.md` and "restored" it with
+> `git checkout -- <file>`. That is **data loss**: `git checkout --` discards the developer's own
+> pre-existing uncommitted edits to that file, silently. A demonstration that *"staging destroys
+> nothing"* must not itself destroy anything. So: **every** check below runs against a **temporary
+> synthetic tree** (`mktemp -d`), and **`git checkout --` appears NOWHERE in this plan, the fixtures, or
+> CI.** No `printf >>`, no `mkdir`, no `rm` under `$REPO_ROOT` — the only writes go to `$SYN` / `$STAGE`.
+> This is possible because `stage-create-movp.mjs` takes `repoRoot` as its **first argv**: it stages FROM
+> the synthetic tree while still importing the REAL built `copyTreeGuarded` / `copyFileGuarded` from
+> `packages/create-movp/dist/index.js` — the exact code under test, reading the repo but never writing it.
+
+**Seed the synthetic tree once; all three checks reuse it.**
 
 ```
-printf 'TOPSECRET\n' > /tmp/movp-fake-secret
-ln -s /tmp/movp-fake-secret templates/marketing-site/notes.ts
-bash fixtures/verdaccio-gallery/pack.sh /tmp/movp-pack-symlink-check 2>&1 \
-  | grep -qF 'template_symlink_rejected' && echo 'symlink template rejected (unread)' || echo 'FAIL: pack did not reject the symlink'
-! grep -rqF 'TOPSECRET' /tmp/movp-pack-symlink-check 2>/dev/null && echo 'secret never read into any tarball'
-rm -f templates/marketing-site/notes.ts /tmp/movp-fake-secret
-rm -rf /tmp/movp-pack-symlink-check
+# A fake source tree with the two subtrees the snapshot + staging scripts care about.
+SYN="$(mktemp -d "${TMPDIR:-/tmp}/movp-syn.XXXXXX")"
+STAGE="$(mktemp -d "${TMPDIR:-/tmp}/movp-syn-stage.XXXXXX")"
+mkdir -p "$SYN/packages/create-movp/dist" "$SYN/packages/create-movp/templates" "$SYN/templates/marketing-site"
+printf '{"name":"create-movp","version":"0.0.0"}\n' > "$SYN/packages/create-movp/package.json"
+printf 'export const stub = 1\n'                    > "$SYN/packages/create-movp/dist/index.js"
+printf '# Marketing site\n'                         > "$SYN/templates/marketing-site/README.md"
+printf 'preserve me\n'                              > "$SYN/packages/create-movp/templates/preserve.txt"
+
+# F1 acceptance guard: hash the REAL repo's README now. Whatever state it is in — clean, or carrying
+# YOUR uncommitted WIP — it must be byte-IDENTICAL after every check below. Nothing here touches it.
+REAL_README_BEFORE="$(shasum -a 256 < templates/marketing-site/README.md)"
 ```
 
-**Expected:** `symlink template rejected (unread)` then `secret never read into any tarball`.
+**(a) An external-symlink template file makes staging FAIL without reading it.** Plant the symlink in the
+SYNTHETIC template (never in the repo) and confirm the shared copier aborts with its code, target unread:
 
-**(b) F2 — staging changes NOTHING, and a DIRTY worktree still passes.** The invariant is "the pack is a
-no-op on the source subtrees", NOT "the tree is pristine". Prove both halves at once: pre-create an
-untracked file *inside* `packages/create-movp/templates/` (the very path the old gate demanded be absent)
-AND dirty a tracked template file with unrelated WIP, then run the pack. It must PASS, and both files
+```
+printf 'TOPSECRET\n' > "$SYN/fake-secret"
+ln -s "$SYN/fake-secret" "$SYN/templates/marketing-site/notes.ts"
+node fixtures/verdaccio-gallery/stage-create-movp.mjs "$SYN" "$STAGE/a" marketing-site 2>&1 \
+  | grep -qF 'template_symlink_rejected' \
+  && echo 'symlink template rejected (unread)' || echo 'FAIL: staging did not reject the symlink'
+! grep -rqF 'TOPSECRET' "$STAGE/a" 2>/dev/null && echo 'secret never read into the staging tree'
+rm -f "$SYN/templates/marketing-site/notes.ts" "$SYN/fake-secret"
+```
+
+**Expected:** `symlink template rejected (unread)` then `secret never read into the staging tree`.
+(`pack.sh` and `gate.sh` compose this exact script, so the pack inherits the rejection.)
+
+**(b) The snapshot is deterministic and one-byte sensitive.**
+
+```
+node scripts/tree-snapshot.mjs "$SYN" > "$STAGE/snap-a"
+node scripts/tree-snapshot.mjs "$SYN" > "$STAGE/snap-b"
+diff -q "$STAGE/snap-a" "$STAGE/snap-b" >/dev/null && echo 'snapshot deterministic'
+printf '\n' >> "$SYN/templates/marketing-site/README.md"
+node scripts/tree-snapshot.mjs "$SYN" > "$STAGE/snap-c"
+diff -q "$STAGE/snap-a" "$STAGE/snap-c" >/dev/null || echo 'snapshot detects a one-byte change'
+```
+
+**Expected:** `snapshot deterministic` then `snapshot detects a one-byte change`. This is the sensitivity
+`pack.sh` / `gate.sh` rely on: any staging write into `packages/create-movp/` or `templates/` (a stray
+`cp -R`, a copier regression, a new dir) becomes a manifest row and fails the pack.
+
+**(c) F2 — staging changes NOTHING, and a DIRTY tree still passes.** The invariant is "staging is a no-op
+on the source subtrees", NOT "the tree is pristine". Prove both halves at once: the synthetic tree already
+carries an untracked file *inside* `packages/create-movp/templates/` (the very path the old gate demanded
+be absent); now add an unrelated WIP edit to a template file, then stage. It must PASS, and both files
 must survive byte-identical:
 
 ```
-# Pre-existing untracked file inside the package + an unrelated dirty edit to a tracked template file.
-mkdir -p packages/create-movp/templates
-printf 'preserve me\n' > packages/create-movp/templates/preserve.txt
-printf '\n<!-- local WIP -->\n' >> templates/marketing-site/README.md
-BEFORE_PRESERVE="$(shasum -a 256 < packages/create-movp/templates/preserve.txt)"
-BEFORE_README="$(shasum -a 256 < templates/marketing-site/README.md)"
+printf '\n<!-- local WIP -->\n' >> "$SYN/templates/marketing-site/README.md"
+SYN_README_BEFORE="$(shasum -a 256 < "$SYN/templates/marketing-site/README.md")"
+SYN_PRESERVE_BEFORE="$(shasum -a 256 < "$SYN/packages/create-movp/templates/preserve.txt")"
 
-bash fixtures/verdaccio-gallery/pack.sh /tmp/movp-pack-check \
-  && echo 'pack PASSED on a dirty worktree (staging changed nothing)' \
-  || { echo 'FAIL: pack rejected a legitimately dirty worktree'; exit 1; }
+node scripts/tree-snapshot.mjs "$SYN" > "$STAGE/before.txt"
+node fixtures/verdaccio-gallery/stage-create-movp.mjs "$SYN" "$STAGE/c" marketing-site
+node scripts/tree-snapshot.mjs "$SYN" > "$STAGE/after.txt"
 
-test "$(shasum -a 256 < packages/create-movp/templates/preserve.txt)" = "$BEFORE_PRESERVE" \
+diff -u "$STAGE/before.txt" "$STAGE/after.txt" \
+  && echo 'staging changed NOTHING in the source subtrees (dirty tree passes)' \
+  || { echo 'FAIL: staging mutated the source subtrees'; exit 1; }
+test "$(shasum -a 256 < "$SYN/packages/create-movp/templates/preserve.txt")" = "$SYN_PRESERVE_BEFORE" \
   && echo 'pre-existing untracked file preserved byte-identical'
-test "$(shasum -a 256 < templates/marketing-site/README.md)" = "$BEFORE_README" \
+test "$(shasum -a 256 < "$SYN/templates/marketing-site/README.md")" = "$SYN_README_BEFORE" \
   && echo 'unrelated WIP edit preserved byte-identical'
-
-# Restore the sandbox.
-rm -rf /tmp/movp-pack-check packages/create-movp/templates
-git checkout -- templates/marketing-site/README.md
 ```
 
-**Expected:** `pack PASSED on a dirty worktree (staging changed nothing)`, then
-`pre-existing untracked file preserved byte-identical`, then
-`unrelated WIP edit preserved byte-identical`.
+**Expected:** `staging changed NOTHING in the source subtrees (dirty tree passes)`, then
+`pre-existing untracked file preserved byte-identical`, then `unrelated WIP edit preserved byte-identical`.
 
-**(c) The snapshot gate has teeth.** Sensitivity is pinned by the 1b check (`snapshot detects a one-byte
-change`) — `pack.sh` diffs the exact same manifests, so any staging write into `packages/create-movp/`
-or `templates/` (a stray `cp -R`, a copier regression, a new dir) shows up as a manifest row and fails
-the pack. Do not add a second fixture for it.
+**(d) F1 acceptance — the REAL repository is byte-unchanged.** The last word of this step: the checks
+above must have left your worktree exactly as they found it, WIP and all.
+
+```
+test "$(shasum -a 256 < templates/marketing-site/README.md)" = "$REAL_README_BEFORE" \
+  && echo 'REAL repo untouched: templates/marketing-site/README.md byte-identical' \
+  || { echo 'FAIL: a test wrote under the real repository'; exit 1; }
+rm -rf "$SYN" "$STAGE"      # the ONLY cleanup — no `git checkout --`, ever
+```
+
+**Expected:** `REAL repo untouched: templates/marketing-site/README.md byte-identical`.
 
 **2. Author the COMPLETE self-contained gallery gate `fixtures/verdaccio-gallery/gate.sh`** (mark
 executable — `chmod +x`). This is the full script — paste it verbatim; it does NOT copy or reconcile
@@ -1445,14 +1427,17 @@ else
   # regular-file-only, size-bound), so an external-symlink template file FAILS the pack unread with
   # `template_symlink_rejected`. No raw `cp -R`, no `copyFileSync`, no second guard implementation.
   CM_STAGE="$WORK/create-movp-stage"   # under $WORK; the cleanup trap rm -rf's it
-  # INTERFACES round-4 F2: assert "staging changed NOTHING", not "the worktree is pristine" — a local
-  # developer run may legitimately have WIP edits and untracked files, which must be PRESERVED, not
-  # failed on. Snapshot the source subtrees before staging and diff after. The builds above already ran,
-  # so dist/ is stable across the two snapshots.
-  node "$REPO_ROOT/fixtures/verdaccio-gallery/snapshot-tree.mjs" "$REPO_ROOT" >"$WORK/src-before.txt"
+  # INTERFACES round-4 F2 / round-5 F2: assert "staging changed NOTHING", not "the worktree is pristine"
+  # — a local developer run may legitimately have WIP edits and untracked files, which must be PRESERVED,
+  # not failed on. Snapshot the source subtrees before staging and diff after, via 06d's ONE shared
+  # `scripts/tree-snapshot.mjs` (there is no fixture-local snapshot script — do not add one). The builds
+  # above already ran, so dist/ is stable across the two snapshots. This gate only ever READS the
+  # worktree — it never writes under $REPO_ROOT, and it never "restores" a file (a git-restore of a
+  # source file would DISCARD the developer's own uncommitted edits; round-5 F1). Writes go to $WORK.
+  node "$REPO_ROOT/scripts/tree-snapshot.mjs" "$REPO_ROOT" >"$WORK/src-before.txt"
   node "$REPO_ROOT/fixtures/verdaccio-gallery/stage-create-movp.mjs" \
     "$REPO_ROOT" "$CM_STAGE" "${ALL_TEMPLATES[@]}"
-  node "$REPO_ROOT/fixtures/verdaccio-gallery/snapshot-tree.mjs" "$REPO_ROOT" >"$WORK/src-after.txt"
+  node "$REPO_ROOT/scripts/tree-snapshot.mjs" "$REPO_ROOT" >"$WORK/src-after.txt"
   if ! diff -u "$WORK/src-before.txt" "$WORK/src-after.txt"; then
     echo "gate: staging MUTATED packages/create-movp/ or templates/ (see manifest diff above)" >&2
     exit 1
@@ -1700,24 +1685,32 @@ pnpm exec tsx scripts/check-template-gallery.ts \
   && test -x fixtures/verdaccio-gallery/gate.sh \
   && test -x fixtures/verdaccio-gallery/pack.sh \
   && test -f fixtures/verdaccio-gallery/stage-create-movp.mjs \
-  && test -f fixtures/verdaccio-gallery/snapshot-tree.mjs \
+  && test -f scripts/tree-snapshot.mjs \
+  && test ! -e fixtures/verdaccio-gallery/snapshot-tree.mjs \
   && grep -qF 'copyTreeGuarded' fixtures/verdaccio-gallery/stage-create-movp.mjs \
   && grep -qF 'copyFileGuarded' fixtures/verdaccio-gallery/stage-create-movp.mjs \
   && ! grep -Eq 'copyFileSync|readFileSync' fixtures/verdaccio-gallery/stage-create-movp.mjs \
-  && grep -qF 'snapshot-tree.mjs' fixtures/verdaccio-gallery/pack.sh \
-  && ! grep -Eq 'git status --porcelain' fixtures/verdaccio-gallery/pack.sh \
+  && grep -qF 'scripts/tree-snapshot.mjs' fixtures/verdaccio-gallery/pack.sh \
+  && grep -qF 'scripts/tree-snapshot.mjs' fixtures/verdaccio-gallery/gate.sh \
+  && ! grep -REq 'git status --porcelain' fixtures/verdaccio-gallery/ \
+  && ! grep -REq 'git checkout' fixtures/verdaccio-gallery/ .github/workflows/ci.yml \
   && ! grep -REq 'rm -rf .*packages/create-movp/templates|cp -R .*packages/create-movp' fixtures/verdaccio-gallery/ \
   && node -e "const y=require('node:fs').readFileSync('.github/workflows/ci.yml','utf8'); if(!['crm-lite','marketing-site','support-desk','knowledge-base'].every(t=>y.includes(t))) throw new Error('matrix missing a template'); for(const j of ['template-gallery:','pack-artifacts:','template-smoke:']) if(!y.includes(j)) throw new Error('missing job '+j); if(!y.includes('2.109.1')) throw new Error('template-smoke setup-cli not pinned to 2.109.1'); console.log('ok')"
 ```
 
-**Expected:** gallery gate reports 3 templates verified; all four fixture scripts exist (gate/pack
+**Expected:** gallery gate reports 3 templates verified; the three fixture scripts exist (gate/pack
 executable); the staging script routes EVERY copy through the SHARED `copyTreeGuarded` /
-`copyFileGuarded` with **no raw `copyFileSync`/`readFileSync` left on any source path** (round-4 F1); the
-pack gates on the `snapshot-tree.mjs` before/after manifest and **no longer on `git status --porcelain`**
-(round-4 F2 — a dirty worktree is legal); and NO fixture reintroduces a raw `cp -R`/`rm -rf` into
-`packages/create-movp`. `ci.yml` contains all four template names, the three new jobs, and the pinned
-`2.109.1` CLI. The pack invariants (symlink-reject unread; staging changed nothing; dirty worktree
-preserved and passing) are pinned by Step 1d. In CI, `template-smoke` runs each of the four templates'
+`copyFileGuarded` with **no raw `copyFileSync`/`readFileSync` left on any source path** (round-4 F1);
+`pack.sh` AND `gate.sh` gate on 06d's shared **`scripts/tree-snapshot.mjs`** before/after manifest, the
+duplicate `fixtures/verdaccio-gallery/snapshot-tree.mjs` is GONE (round-5 F2 — one helper, 06d owns it),
+and neither gates on `git status --porcelain` (round-4 F2 — a dirty worktree is legal); **no `git
+checkout` appears in any fixture or in `ci.yml`** (round-5 F1 — a "restore" would discard a developer's
+uncommitted edits; every demo runs on a `mktemp -d` synthetic tree instead, and the plan's Step 1d
+snippets contain none either); and NO fixture reintroduces
+a raw `cp -R`/`rm -rf` into `packages/create-movp`. `ci.yml` contains all four template names, the three
+new jobs, and the pinned `2.109.1` CLI. The pack invariants (symlink-reject unread; snapshot
+deterministic + one-byte sensitive; staging changed nothing; dirty tree preserved and passing; the REAL
+repo byte-unchanged) are pinned by Step 1d. In CI, `template-smoke` runs each of the four templates'
 scaffold → reset → real-surface smoke against the once-packed tarballs; `template-gallery` runs the
 Docker-free composition gate.
 

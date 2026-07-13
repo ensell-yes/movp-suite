@@ -265,14 +265,32 @@ here; the CLI/orchestration lands in Task 3.
 - **Create:** `packages/create-movp/.gitignore`
 - **Create:** `packages/create-movp/src/copier.ts`
 - **Create:** `packages/create-movp/src/index.ts`
+- **Create:** `scripts/tree-snapshot.mjs` — **THE ONE shared staging-safety snapshot** (INTERFACES F2).
+  Created HERE because this task's copier test is its first consumer; Task 5's `gate.sh` +
+  staging-safety test and **06e's template fixtures** consume this same file. 06e MUST NOT write a
+  second snapshot script.
+- **Create:** `scripts/tree-snapshot.d.mts` (its type declaration — a TS consumer importing an
+  untyped `.mjs` would otherwise get an implicit `any`)
+- **Test (create):** `packages/create-movp/test/tree-snapshot.test.ts`
 - **Test (create):** `packages/create-movp/test/copier.test.ts`
 
 ### Interfaces
 
-- **Consumes:** none (pure `node:fs`/`node:path`).
+- **Consumes:** none (pure `node:fs`/`node:path`/`node:crypto`).
 - **Produces (LOCKED — consumed by Task 3's scaffolder, Task 5's pack harness, and 06e's gallery
   templates + CI matrix. 06d OWNS these primitives; the signatures below are the stable contract 06e
   imports — do not change them when executing 06e):**
+  - `scripts/tree-snapshot.mjs` — the SHARED bounded tree snapshot (INTERFACES F2). Two interfaces,
+    both stable:
+    - **module:** `export async function snapshotTree(root: string, roots?: string[]): Promise<string>`
+      (default `roots` = `DEFAULT_ROOTS` = `['packages/create-movp', 'templates']`; pass `['.']` to
+      snapshot an arbitrary tree whole). Types ship in `scripts/tree-snapshot.d.mts`.
+    - **CLI:** `node scripts/tree-snapshot.mjs <root> <outFile>` — writes the manifest to `<outFile>`.
+    Deterministic, path-sorted `<kind> <sha256|target|-> <relpath>` manifest. **Bounded:** every file
+    is hashed by streaming 64 KiB chunks (`createReadStream` + `createHash`) — never `readFileSync`,
+    so a large untracked file cannot OOM the gate that exists to tolerate a dirty worktree.
+    `lstat`-based: a symlink is recorded by its target STRING and never followed. Skips `node_modules`
+    /`.git`/`.turbo`. NEVER prints file content (path + hash only).
   - `interface CopyOptions { templateDir: string; targetDir: string; tokens: Record<string, string> }`
   - `function resolveTargetDir(parentDir: string, projectName: string): string` — validates the name
     charset, rejects `..`, resolves under `parentDir`, requires the result absent. Throws
@@ -379,16 +397,230 @@ gitignored, **not forbidden**: no gate may assert this directory is absent, and 
 — a developer's files there are theirs. The gate's F2 snapshot proves staging did not TOUCH it,
 which is the invariant that actually matters.)
 
-**5. Write the failing test** `packages/create-movp/test/copier.test.ts`:
+**5. Create the ONE shared snapshot helper (INTERFACES F2) — test first.**
+
+Every "did this step mutate the tree?" assertion in 06d **and 06e** goes through this single file. Do
+not write a second snapshot implementation anywhere (an inline `readFileSync`-based one in a test
+counts): the bug it exists to prevent is precisely a snapshot that buffers whole files and OOMs on a
+large untracked one.
+
+**5a. `packages/create-movp/test/tree-snapshot.test.ts`** — the failing test:
 
 ```ts
 import { createHash } from 'node:crypto'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { snapshotTree } from '../../../scripts/tree-snapshot.mjs'
+
+// The helper's chunk size. Every case below CROSSES it — the bug this file pins is a whole-file
+// `readFileSync`, which passes any single-chunk test.
+const CHUNK_BYTES = 64 * 1024
+const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
+const snapshotScript = join(repoRoot, 'scripts', 'tree-snapshot.mjs')
+
+let root = ''
+let templates = ''
+
+beforeEach(() => {
+  root = mkdtempSync(join(tmpdir(), 'movp-tree-snapshot-'))
+  templates = join(root, 'templates', 'crm-lite')
+  mkdirSync(templates, { recursive: true })
+  mkdirSync(join(root, 'packages', 'create-movp'), { recursive: true })
+})
+afterEach(() => rmSync(root, { recursive: true, force: true }))
+
+describe('snapshotTree (the ONE shared bounded snapshot — INTERFACES F2)', () => {
+  it('hashes a file MUCH larger than the chunk size correctly', async () => {
+    // ~5 MiB ≫ the 64 KiB chunk, and deliberately NOT a chunk multiple (the +7 tail).
+    const big = Buffer.alloc(80 * CHUNK_BYTES + 7, 0x61)
+    writeFileSync(join(templates, 'big.sql'), big)
+    const expected = createHash('sha256').update(big).digest('hex')
+    expect(await snapshotTree(root)).toContain(
+      `file ${expected} ${join('templates', 'crm-lite', 'big.sql')}`,
+    )
+  })
+
+  // Boundedness is a SOURCE property — an RSS/heap probe is flaky (GC timing, Buffer pooling), so pin
+  // it deterministically instead: the helper must stream. `gate.sh` greps for the same thing.
+  it('is BOUNDED: streams via createReadStream and never buffers a whole file', () => {
+    const src = readFileSync(snapshotScript, 'utf8')
+    expect(src).toContain('createReadStream')
+    expect(src).not.toMatch(/\breadFileSync\(/)
+    expect(src).not.toMatch(/\breadFile\(/)
+  })
+
+  it('detects a ONE-BYTE change inside a later chunk', async () => {
+    const bytes = Buffer.alloc(3 * CHUNK_BYTES, 0x61)
+    writeFileSync(join(templates, 'big.sql'), bytes)
+    const before = await snapshotTree(root)
+    bytes[2 * CHUNK_BYTES + 11] = 0x62 // one byte, in the THIRD chunk
+    writeFileSync(join(templates, 'big.sql'), bytes)
+    expect(await snapshotTree(root)).not.toBe(before)
+  })
+
+  it('records a symlink by its target WITHOUT following it, and never emits file content', async () => {
+    writeFileSync(join(root, 'secret'), 'ssh-key\n')
+    symlinkSync(join(root, 'secret'), join(templates, 'notes.ts'))
+    const manifest = await snapshotTree(root)
+    expect(manifest).toContain(`symlink ${join(root, 'secret')} ${join('templates', 'crm-lite', 'notes.ts')}`)
+    expect(manifest).not.toContain('ssh-key')
+  })
+
+  it('skips node_modules and is byte-stable across runs', async () => {
+    mkdirSync(join(templates, 'node_modules', 'junk'), { recursive: true })
+    writeFileSync(join(templates, 'node_modules', 'junk', 'index.js'), 'x\n')
+    writeFileSync(join(templates, 'README.md'), '# crm-lite\n')
+    const manifest = await snapshotTree(root)
+    expect(manifest).not.toContain('node_modules')
+    expect(await snapshotTree(root)).toBe(manifest)
+  })
+
+  it('reports an absent root as a stable line instead of throwing', async () => {
+    rmSync(join(root, 'packages'), { recursive: true, force: true })
+    expect(await snapshotTree(root)).toContain('absent - packages/create-movp')
+  })
+
+  it('snapshots an arbitrary tree with roots = ["."] (the copier tests\' shape)', async () => {
+    writeFileSync(join(templates, 'README.md'), '# crm-lite\n')
+    const manifest = await snapshotTree(templates, ['.'])
+    expect(manifest).toContain('file ')
+    expect(manifest).toContain('README.md')
+  })
+})
+```
+
+Run — **Expected: FAIL** (`Cannot find module '../../../scripts/tree-snapshot.mjs'`).
+
+**5b. Implement `scripts/tree-snapshot.mjs`:**
+
+```js
+#!/usr/bin/env node
+// THE shared staging-safety snapshot (INTERFACES F2). C6d OWNS it; C6d's `gate.sh` + copier tests and
+// C6e's template fixtures all consume THIS file — do not fork a second snapshot implementation.
+//
+// It emits a deterministic, path-sorted content-hash manifest of the SOURCE subtrees a pack/stage step
+// reads, so a caller can diff a BEFORE against an AFTER and assert "staging MUTATED nothing" — never
+// "the worktree is pristine" (a developer's unrelated WIP edits and untracked files are legitimate,
+// appear in BOTH manifests, and must survive).
+//
+// Invariants, each closing a real failure mode:
+//   * BOUNDED memory — every file is hashed by STREAMING it in 64 KiB chunks (`createReadStream` +
+//     `createHash`). NEVER `readFileSync`: a large untracked file (a stray pg_dump under templates/)
+//     would OOM the very gate that exists to tolerate a dirty worktree.
+//   * `lstat`, NEVER `stat` — a symlink is recorded by its target STRING and never followed or read,
+//     so the snapshot cannot become the exfiltration path the copier's guards close.
+//   * Content is NEVER printed — a line carries a path + a sha256 only; the diff goes to CI logs.
+import { createHash } from 'node:crypto'
+import { createReadStream } from 'node:fs'
+import { lstat, readdir, readlink, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
+
+/** The subtrees a `create-movp` pack/stage step reads. Everything else is out of scope. */
+export const DEFAULT_ROOTS = ['packages/create-movp', 'templates']
+/** Volatile, and never written by staging: hashing them is slow and flaky, not safer. */
+const SKIP_DIRS = new Set(['node_modules', '.git', '.turbo'])
+/** Hash chunk size. Peak memory is bounded by THIS, not by the file's size. */
+const CHUNK_BYTES = 64 * 1024
+
+/** @param {string} abs @returns {Promise<string>} sha256 — streamed, never buffers the whole file. */
+async function hashFile(abs) {
+  const hash = createHash('sha256')
+  for await (const chunk of createReadStream(abs, { highWaterMark: CHUNK_BYTES })) hash.update(chunk)
+  return hash.digest('hex')
+}
+
+/**
+ * @param {string} root absolute path of the tree to snapshot (the real repo, or a synthetic one)
+ * @param {string[]} [roots] subtrees of `root` to include (`['.']` = the whole tree)
+ * @returns {Promise<string>} sorted `<kind> <sha256|target|-> <relpath>` lines, newline-terminated
+ */
+export async function snapshotTree(root, roots = DEFAULT_ROOTS) {
+  /** @type {string[]} */
+  const lines = []
+  /** @param {string} rel */
+  const walk = async (rel) => {
+    for (const entry of (await readdir(join(root, rel))).sort()) {
+      const childRel = join(rel, entry)
+      const abs = join(root, childRel)
+      const info = await lstat(abs) // lstat, never stat — see header
+      if (info.isSymbolicLink()) {
+        lines.push(`symlink ${await readlink(abs)} ${childRel}`)
+        continue
+      }
+      if (info.isDirectory()) {
+        if (SKIP_DIRS.has(entry)) continue
+        lines.push(`dir - ${childRel}`)
+        await walk(childRel)
+        continue
+      }
+      if (!info.isFile()) {
+        lines.push(`other - ${childRel}`)
+        continue
+      }
+      lines.push(`file ${await hashFile(abs)} ${childRel}`)
+    }
+  }
+  for (const rel of roots) {
+    const abs = join(root, rel)
+    const info = await lstat(abs).catch(() => null)
+    if (!info) {
+      lines.push(`absent - ${rel}`) // an absent root is a legal, STABLE state, not an error
+      continue
+    }
+    if (info.isSymbolicLink()) {
+      lines.push(`symlink ${await readlink(abs)} ${rel}`)
+      continue
+    }
+    lines.push(`dir - ${rel}`)
+    await walk(rel)
+  }
+  return `${lines.join('\n')}\n`
+}
+
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const [root, outFile] = process.argv.slice(2)
+  if (!root || !outFile) {
+    console.error('usage: tree-snapshot.mjs <root> <outFile>')
+    process.exit(2)
+  }
+  await writeFile(outFile, await snapshotTree(root))
+}
+```
+
+**5c. `scripts/tree-snapshot.d.mts`** — without this, a `.ts` consumer importing the `.mjs` gets
+`TS7016: … implicitly has an 'any' type` (verified). TS resolves `./x.mjs` → `./x.d.mts`.
+
+```ts
+/** The subtrees a `create-movp` pack/stage step reads. */
+export declare const DEFAULT_ROOTS: string[]
+/**
+ * Deterministic, path-sorted content-hash manifest of `roots` under `root`.
+ * Streams every file in bounded chunks; records symlinks WITHOUT following them; skips `node_modules`.
+ */
+export declare function snapshotTree(root: string, roots?: string[]): Promise<string>
+```
+
+Re-run — **Expected: PASS** (7 tests):
+
+```
+pnpm --filter create-movp exec vitest run tree-snapshot
+```
+
+**6. Write the failing test** `packages/create-movp/test/copier.test.ts`. Note it CONSUMES the shared
+`snapshotTree` above — it does not define its own snapshot helper (INTERFACES F2: one implementation):
+
+```ts
 import {
-  existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync,
+  existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { snapshotTree } from '../../../scripts/tree-snapshot.mjs'
 import { copyFileGuarded, copyTemplate, copyTreeGuarded, resolveTargetDir } from '../src/copier.ts'
 
 let work: string
@@ -402,24 +634,6 @@ beforeEach(() => {
 afterEach(() => rmSync(work, { recursive: true, force: true }))
 
 const tokens = { __PROJECT_NAME__: 'acme-crm', __WORKSPACE_ID__: '33333333-3333-3333-3333-333333333333' }
-
-// Deterministic content-hash manifest of a tree — used to assert a copy pass mutated NOTHING in its
-// SOURCE. lstat (never stat): a symlink is recorded by its target STRING, never followed or read.
-// Hashes + paths only; file CONTENTS are never surfaced in a diff message.
-const snapshot = (root: string): string => {
-  const lines: string[] = []
-  const walk = (rel: string): void => {
-    for (const entry of readdirSync(join(root, rel)).sort()) {
-      const childRel = rel ? join(rel, entry) : entry
-      const info = lstatSync(join(root, childRel))
-      if (info.isSymbolicLink()) lines.push(`symlink ${childRel}`)
-      else if (info.isDirectory()) { lines.push(`dir ${childRel}`); walk(childRel) }
-      else lines.push(`file ${createHash('sha256').update(readFileSync(join(root, childRel))).digest('hex')} ${childRel}`)
-    }
-  }
-  walk('')
-  return lines.join('\n')
-}
 
 describe('resolveTargetDir', () => {
   it('resolves an absent dir under the parent', () => {
@@ -572,18 +786,20 @@ describe('copyTreeGuarded (pack-harness staging — INTERFACES F1)', () => {
   })
 
   // (b) A staging pass writes ONLY into its TEMP destDir — the SOURCE tree is byte-unchanged.
-  // Hermetic (synthetic source tree, content-hash snapshot) — no `git status`, no repo-root
-  // dependency, so a developer's unrelated WIP can never fail it. The REAL repo-subtree
-  // "staging changed nothing" assertion is Task 5's before/after snapshot gate (INTERFACES F2).
-  it('leaves the SOURCE tree byte-unchanged (writes only into the TEMP destDir)', () => {
+  // Hermetic: a SYNTHETIC source tree under $TMPDIR, snapshotted with the shared `snapshotTree`
+  // (`['.']` = the whole tree). Nothing here reads or writes the real repo, and no `git status` /
+  // `git checkout` is involved, so a developer's unrelated WIP can never fail it — or be destroyed
+  // by it (INTERFACES F1). Task 5's staging-safety test makes the same assertion for the full
+  // pack-staging script, also against a synthetic tree.
+  it('leaves the SOURCE tree byte-unchanged (writes only into the TEMP destDir)', async () => {
     const src = join(work, 'src-tree')
     mkdirSync(join(src, 'supabase'), { recursive: true })
     writeFileSync(join(src, 'package.json.template'), '{"name":"__PROJECT_NAME__"}\n')
     writeFileSync(join(src, 'supabase', 'config.toml'), 'x\n')
-    const before = snapshot(src)
+    const before = await snapshotTree(src, ['.'])
     copyTreeGuarded(src, join(work, 'staged', 'crm-lite'))
     expect(existsSync(join(work, 'staged', 'crm-lite', 'package.json.template'))).toBe(true)
-    expect(snapshot(src)).toBe(before)
+    expect(await snapshotTree(src, ['.'])).toBe(before)
   })
 })
 
@@ -626,12 +842,12 @@ Run — **Expected: FAIL** (`Cannot find module '../src/copier.ts'`):
 
 ```
 pnpm install \
-  && pnpm --filter create-movp exec vitest run
+  && pnpm --filter create-movp exec vitest run copier
 ```
 
 (`pnpm install` links the new workspace package — `packages/*` is globbed by `pnpm-workspace.yaml`.)
 
-**6. Implement** `packages/create-movp/src/copier.ts`:
+**7. Implement** `packages/create-movp/src/copier.ts`:
 
 ```ts
 import { lstatSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
@@ -845,7 +1061,7 @@ export function copyFileGuarded(src: string, dest: string): { bytesCopied: numbe
 }
 ```
 
-**7. `packages/create-movp/src/index.ts`:**
+**8. `packages/create-movp/src/index.ts`:**
 
 ```ts
 // The pack-staging scripts (Task 5, and 06e's CI matrix) import `copyTreeGuarded` + `copyFileGuarded`
@@ -862,29 +1078,34 @@ export {
 } from './copier.ts'
 ```
 
-Re-run — **Expected: PASS** (4 `resolveTargetDir` + 9 `copyTemplate` + 5 `copyTreeGuarded` +
-4 `copyFileGuarded` = 22 tests across the described cases). Then typecheck:
+Re-run — **Expected: PASS** (7 `snapshotTree` + 4 `resolveTargetDir` + 9 `copyTemplate` +
+5 `copyTreeGuarded` + 4 `copyFileGuarded` = 29 tests across the described cases). Then typecheck:
 
 ```
 pnpm --filter create-movp exec vitest run
 pnpm --filter create-movp exec tsc --noEmit
 ```
 
-**8. Commit** (`feat(c6d): create-movp package + untrusted-io-hardened safe copier`).
+**9. Commit** (`feat(c6d): create-movp package + untrusted-io-hardened safe copier + shared tree snapshot`).
 
 ### Gate (machine-checkable)
 
 ```
 pnpm --filter create-movp exec vitest run \
-  && pnpm --filter create-movp exec tsc --noEmit
+  && pnpm --filter create-movp exec tsc --noEmit \
+  && test -z "$(grep -rlE '\breadFileSync\(' scripts/tree-snapshot.mjs)"
 ```
 
-**Expected:** copier suite green (22 tests); every unsafe input (`..`, bad charset, existing target,
+**Expected:** suite green (29 tests); every unsafe input (`..`, bad charset, existing target,
 symlink, **symlinked tree ROOT**, oversized file, total-cap, unknown token, unresolved token) throws
 its stable code; a binary file is copied byte-identically; `copyTreeGuarded` rejects an external
 symlink (entry OR root) without reading its target, copies verbatim (no substitution/rename), bounds
-size, and leaves the SOURCE tree byte-unchanged (content-hash snapshot); `copyFileGuarded` refuses a
-symlinked / non-regular / oversized source and copies a regular file byte-for-byte; typecheck clean.
+size, and leaves the SOURCE tree byte-unchanged (shared `snapshotTree` over a synthetic tree);
+`copyFileGuarded` refuses a symlinked / non-regular / oversized source and copies a regular file
+byte-for-byte; `snapshotTree` hashes a multi-chunk file correctly, detects a one-byte change, records
+a symlink without following it, and contains **no `readFileSync`** (the grep must return empty — it
+is the bounded-memory pin); typecheck clean. **No test in this task reads or writes anything under
+the real repo** (INTERFACES F1): every fixture tree is a `mkdtemp` under `$TMPDIR`.
 
 > The matching **no-unguarded-copy grep gate** runs in Task 5, once both consumers of these
 > primitives exist (`src/scaffold.ts` from Task 3 and `stage-create-movp.mjs` from Task 5).
@@ -1583,11 +1804,13 @@ no workspace links, and drive the real edge surfaces + CLI + `verify-schema-runt
 
 - **Create:** `fixtures/verdaccio-crm-lite/verdaccio.yaml`
 - **Create:** `fixtures/verdaccio-crm-lite/stage-create-movp.mjs` (guarded staging — INTERFACES F1)
-- **Create:** `fixtures/verdaccio-crm-lite/tree-snapshot.mjs` (staging-safety snapshot — INTERFACES F2)
 - **Create:** `fixtures/verdaccio-crm-lite/gate.sh` (executable)
 - **Create:** `fixtures/verdaccio-crm-lite/README.md`
-- **Test (create):** `packages/create-movp/test/staging-safety.test.ts` (INTERFACES F2 — staging
-  preserves pre-existing untracked files and unrelated WIP edits)
+- **Consume (do NOT re-create):** `scripts/tree-snapshot.mjs` — the shared bounded snapshot built in
+  Task 2. There is exactly ONE snapshot implementation in the repo (INTERFACES F2).
+- **Test (create):** `packages/create-movp/test/staging-safety.test.ts` (INTERFACES F1/F2 — staging
+  preserves pre-existing untracked files and unrelated WIP edits, **against a SYNTHETIC tree**; the
+  suite never writes under the real repo)
 - **Modify:** root `package.json` (`devDependencies.verdaccio`, a `check:verdaccio-crm` script)
 
 ### Interfaces
@@ -1600,18 +1823,29 @@ no workspace links, and drive the real edge surfaces + CLI + `verify-schema-runt
   `gate.sh` whose steps — snapshot → stage → snapshot-compare → publish-once → scaffold → install →
   codegen → reset → serve → drive — are the per-template smoke 06e runs across all four templates.
   The `stage` step (guarded staging into a TEMP tree, INTERFACES F1) is the shared,
-  source-worktree-safe pack mechanism 06e reuses, and `tree-snapshot.mjs` (INTERFACES F2) is the
-  shared staging-safety assertion: **"staging changed nothing", never "the tree is pristine"**. 06e
-  must reuse both rather than reimplementing a `git status --porcelain`/`test ! -e templates` check —
-  those fail a developer who merely has unrelated WIP.
+  source-worktree-safe pack mechanism 06e reuses, and **`scripts/tree-snapshot.mjs`** (Task 2,
+  INTERFACES F2) is the shared staging-safety assertion: **"staging changed nothing", never "the tree
+  is pristine"**. 06e reuses BOTH — `node scripts/tree-snapshot.mjs <root> <outFile>` from a shell
+  gate, or `import { snapshotTree } from '<repo>/scripts/tree-snapshot.mjs'` from JS/TS — and must not
+  write a second snapshot script, nor reimplement a `git status --porcelain` / `test ! -e templates`
+  check: those fail (and tempt an executor to DELETE the work of) a developer who merely has
+  unrelated WIP.
+- **Neither this gate nor any test in it writes under the real repository** (INTERFACES F1): staging,
+  Verdaccio's storage, and the npm auth token all live in `mktemp -d` dirs, and the staging-safety
+  test runs against a synthetic tree. There is no `git checkout --` anywhere in 06d — a "prove we
+  destroy nothing" check that restores files by discarding uncommitted edits destroys exactly what it
+  claims to protect.
 
 ### Steps
 
 **1. `fixtures/verdaccio-crm-lite/verdaccio.yaml`** — a minimal registry that proxies npm for
-third-party deps but hosts `@movp/*` + `create-movp` locally:
+third-party deps but hosts `@movp/*` + `create-movp` locally. `storage` is a `__STORAGE__` placeholder
+that `gate.sh` renders to a path inside its `mktemp -d` work dir: a relative `./storage` resolves next
+to this config file and would make the registry write **into the repository** (INTERFACES F1 — the
+gate writes nothing under the worktree, so there is also nothing for a cleanup step to delete):
 
 ```yaml
-storage: ./storage
+storage: __STORAGE__
 uplinks:
   npmjs:
     url: https://registry.npmjs.org/
@@ -1643,6 +1877,11 @@ invoking it, so `dist/index.js` exists.
 // C6d pack-harness staging (INTERFACES F1): assemble a create-movp publish tree in a TEMP dir. The
 // `files` whitelist ships package.json + dist/ + templates/, so those are all we stage.
 //
+// This script READS and WRITES only paths derived from its two arguments — it never writes under the
+// repo — which is exactly what lets the staging-safety test point `<repoRoot>` at a SYNTHETIC tree.
+// The guards it applies are always the REAL ones: the dist import below is resolved relative to THIS
+// file (fixtures/verdaccio-crm-lite/ → repo root), never relative to `<repoRoot>`.
+//
 // EVERY read here is guarded — the walks AND the single-file copy (F1a + F1b):
 //   * `copyTreeGuarded` lstats every directory BEFORE readdir (the ROOT included, so a symlinked
 //     `templates/crm-lite -> /external/dir` is REJECTED, not followed) and every entry before read.
@@ -1670,77 +1909,26 @@ copyTreeGuarded(join(repoRoot, 'templates', 'crm-lite'), join(stagingDir, 'templ
 console.log(`staged create-movp → ${stagingDir}`)
 ```
 
-**1c. `fixtures/verdaccio-crm-lite/tree-snapshot.mjs`** — the staging-safety snapshot (INTERFACES F2).
-The gate must assert **"staging changed nothing"**, NOT "the worktree is pristine": a developer
-routinely runs it with unrelated WIP edits and pre-existing untracked files, and a
-`git status --porcelain` / `test ! -e templates` check would falsely fail them (and tempt an executor
-to "clean" — i.e. DELETE — their untracked work). So we hash the source subtrees the staging step
-reads, BEFORE and AFTER, and require the two manifests to be byte-identical.
+**1c. The staging-safety snapshot is `scripts/tree-snapshot.mjs` — built in Task 2, CONSUMED here.**
+Do not create a second one under `fixtures/` (INTERFACES F2: ONE implementation, `lstat`-based,
+chunk-streamed, path-sorted, symlinks recorded-not-followed, `node_modules` skipped, content never
+printed). `gate.sh` uses its CLI (`node scripts/tree-snapshot.mjs <root> <outFile>`); the test below
+uses its module export (`snapshotTree(root, roots?)`). 06e consumes this same file.
 
-```js
-#!/usr/bin/env node
-// C6d staging-safety snapshot (INTERFACES F2): a deterministic content-hash manifest of the SOURCE
-// subtrees the pack step reads. gate.sh writes one BEFORE staging and one AFTER and diffs them; the
-// gate passes iff they are byte-identical. This asserts "staging MUTATED nothing" — a dirty worktree,
-// unrelated WIP, and pre-existing untracked files (e.g. packages/create-movp/templates/preserve.txt)
-// are PRESERVED and pass, because they are present in BOTH snapshots.
-import { createHash } from 'node:crypto'
-import { lstatSync, readFileSync, readdirSync, readlinkSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
-import { pathToFileURL } from 'node:url'
+The invariant it encodes is **"staging changed nothing"**, NOT "the worktree is pristine": a developer
+routinely runs this gate with unrelated WIP edits and pre-existing untracked files, and a
+`git status --porcelain` / `test ! -e templates` check would falsely fail them — and tempt an executor
+to "clean" (i.e. DELETE) their untracked work. So we hash the source subtrees the staging step reads,
+BEFORE and AFTER, and require the two manifests to be byte-identical.
 
-// The two subtrees staging reads. Everything else in the repo is out of scope for this invariant.
-const ROOTS = ['packages/create-movp', 'templates']
-// Volatile and never written by staging: hashing them is slow and flaky, not safer. (dist/ IS
-// hashed — the gate builds it BEFORE the first snapshot, so it is stable across the two.)
-const SKIP_DIRS = new Set(['node_modules', '.git', '.turbo'])
+**1d. Write the failing test** `packages/create-movp/test/staging-safety.test.ts` (INTERFACES F1/F2).
 
-/** @param {string} repoRoot @returns {string} one sorted `<kind> <sha256|target|-> <relpath>` line per entry */
-export function snapshotTree(repoRoot) {
-  /** @type {string[]} */
-  const lines = []
-  const walk = (rel) => {
-    for (const entry of readdirSync(join(repoRoot, rel)).sort()) {
-      const childRel = join(rel, entry)
-      // lstat, NEVER stat: a symlink is recorded by its target STRING and never followed or read —
-      // the snapshot must not become the exfiltration path the copier guards close.
-      const info = lstatSync(join(repoRoot, childRel))
-      if (info.isSymbolicLink()) { lines.push(`symlink ${readlinkSync(join(repoRoot, childRel))} ${childRel}`); continue }
-      if (info.isDirectory()) {
-        if (SKIP_DIRS.has(entry)) continue
-        lines.push(`dir - ${childRel}`)
-        walk(childRel)
-        continue
-      }
-      if (!info.isFile()) { lines.push(`other - ${childRel}`); continue }
-      // Hash the bytes; NEVER print them (a diff of this manifest goes to CI logs).
-      lines.push(`file ${createHash('sha256').update(readFileSync(join(repoRoot, childRel))).digest('hex')} ${childRel}`)
-    }
-  }
-  for (const root of ROOTS) {
-    const info = lstatSync(join(repoRoot, root), { throwIfNoEntry: false })
-    if (!info) { lines.push(`absent - ${root}`); continue } // an absent root is a legal, stable state
-    if (info.isSymbolicLink()) { lines.push(`symlink ${readlinkSync(join(repoRoot, root))} ${root}`); continue }
-    lines.push(`dir - ${root}`)
-    walk(root)
-  }
-  return `${lines.join('\n')}\n`
-}
-
-if (import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const [repoRoot, outFile] = process.argv.slice(2)
-  if (!repoRoot || !outFile) {
-    console.error('usage: tree-snapshot.mjs <repoRoot> <outFile>')
-    process.exit(2)
-  }
-  writeFileSync(outFile, snapshotTree(repoRoot))
-}
-```
-
-**1d. Write the failing test** `packages/create-movp/test/staging-safety.test.ts` (INTERFACES F2).
-This is the regression that pins the corrected invariant: a developer with a pre-existing untracked
-file under `packages/create-movp/templates/` AND an unrelated edit to a tracked template file runs
-the staging step — both survive byte-identical, and the snapshot comparison PASSES.
+This pins the corrected invariant AND the corrected method. Staging is exercised against a **synthetic
+repo tree in `$TMPDIR`** — seeded with a pre-existing untracked file under `packages/create-movp/
+templates/` and a dirty (WIP-edited) tracked template file — because a test that proves "staging
+destroys nothing" must not itself write to, or `git checkout --`-restore, the developer's real tree.
+The `afterAll` guard is the acceptance criterion: the REAL repo's manifest is byte-identical before
+and after the suite, so a dirty `templates/crm-lite/README.md` is provably untouched.
 
 ```ts
 import { execFileSync } from 'node:child_process'
@@ -1748,74 +1936,101 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { snapshotTree } from '../../../scripts/tree-snapshot.mjs'
 
-// test file lives at packages/create-movp/test/ → three levels up is the repo root.
+// packages/create-movp/test/ → three levels up is the repo root. NOTHING in this suite ever WRITES
+// under it (INTERFACES F1): staging runs against a SYNTHETIC tree in $TMPDIR, and the afterAll guard
+// below proves the real worktree is byte-unchanged. There is no `git checkout --` anywhere, because
+// there is nothing to restore.
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
-const fixture = join(repoRoot, 'fixtures', 'verdaccio-crm-lite')
-const pkgTemplates = join(repoRoot, 'packages', 'create-movp', 'templates')
-const preserveFile = join(pkgTemplates, 'preserve.txt')
-const dirtiedFile = join(repoRoot, 'templates', 'crm-lite', 'README.md')
+const stageScript = join(repoRoot, 'fixtures', 'verdaccio-crm-lite', 'stage-create-movp.mjs')
+const builtCopier = join(repoRoot, 'packages', 'create-movp', 'dist', 'index.js')
 
-const snapshot = (out: string): string => {
-  execFileSync('node', [join(fixture, 'tree-snapshot.mjs'), repoRoot, out], { stdio: 'pipe' })
-  return readFileSync(out, 'utf8')
-}
+const WIP_README = '# crm-lite\n\n<!-- a developer\'s uncommitted WIP edit -->\n'
 
 let work = ''
-let originalReadme = ''
-let templatesPreexisted = false
+let synth = ''
+let realBefore = ''
 
-beforeAll(() => {
-  // stage-create-movp.mjs imports the BUILT dist — build it so the test never depends on a stale or
-  // absent dist/ (tsup on this package is ~1s). It also pins dist/ for the two snapshots below: no
-  // rebuild happens between them, so its hashes are stable.
-  execFileSync('pnpm', ['--filter', 'create-movp', 'build'], { cwd: repoRoot, stdio: 'pipe' })
-}, 120_000)
+beforeAll(async () => {
+  // stage-create-movp.mjs imports the BUILT guards. Do NOT build here: a test must not write anywhere
+  // under the real repo (F1). The gate command builds first — fail loudly with the command if it did not.
+  if (!existsSync(builtCopier)) {
+    throw new Error(`missing ${builtCopier} — run: pnpm --filter create-movp build`)
+  }
+  realBefore = await snapshotTree(repoRoot)
+}, 60_000)
 
-// Set up in beforeEach / tear down in afterEach so the developer's tree is ALWAYS restored, even if
-// the assertion below throws mid-test.
+// F1 ACCEPTANCE: the real worktree is byte-UNCHANGED by this suite. A developer running it with a
+// dirty `templates/crm-lite/README.md` has that WIP edit inside BOTH manifests, so this assertion is
+// exactly the promise "the suite never touched your files".
+afterAll(async () => {
+  expect(await snapshotTree(repoRoot)).toBe(realBefore)
+}, 60_000)
+
+// The SYNTHETIC repo staging runs against: the exact layout stage-create-movp.mjs reads
+// (<root>/packages/create-movp/{package.json,dist/} + <root>/templates/crm-lite/), seeded with the two
+// things the old gate got wrong — a pre-existing UNTRACKED file under packages/create-movp/templates/,
+// and a dirty (WIP-edited) tracked template file.
 beforeEach(() => {
   work = mkdtempSync(join(tmpdir(), 'movp-staging-safety-'))
-  originalReadme = readFileSync(dirtiedFile, 'utf8')
-  templatesPreexisted = existsSync(pkgTemplates)
-  // A developer's pre-existing untracked file, exactly where the OLD gate demanded absence …
-  mkdirSync(pkgTemplates, { recursive: true })
-  writeFileSync(preserveFile, 'do not delete me\n')
-  // … and an unrelated WIP edit to a tracked template file (so `git status --porcelain` is non-empty).
-  writeFileSync(dirtiedFile, `${originalReadme}\n<!-- local WIP -->\n`)
+  synth = join(work, 'repo')
+  const pkg = join(synth, 'packages', 'create-movp')
+  mkdirSync(join(pkg, 'dist'), { recursive: true })
+  mkdirSync(join(pkg, 'templates'), { recursive: true })
+  mkdirSync(join(synth, 'templates', 'crm-lite', 'supabase'), { recursive: true })
+  writeFileSync(join(pkg, 'package.json'), '{"name":"create-movp","version":"0.1.0"}\n')
+  writeFileSync(join(pkg, 'dist', 'index.js'), 'export const stub = true\n')
+  writeFileSync(join(pkg, 'templates', 'preserve.txt'), 'do not delete me\n')
+  writeFileSync(join(synth, 'templates', 'crm-lite', 'README.md'), WIP_README)
+  writeFileSync(join(synth, 'templates', 'crm-lite', 'supabase', 'config.toml'), 'project_id = "acme"\n')
 })
+afterEach(() => rmSync(work, { recursive: true, force: true }))
 
-afterEach(() => {
-  writeFileSync(dirtiedFile, originalReadme)
-  rmSync(preserveFile, { force: true })
-  if (!templatesPreexisted) rmSync(pkgTemplates, { recursive: true, force: true })
-  rmSync(work, { recursive: true, force: true })
-})
+describe('pack staging (INTERFACES F1/F2 — "staging changed nothing", not "the tree is pristine")', () => {
+  it('preserves an untracked file + a WIP edit in the SOURCE tree, and the snapshot gate PASSES', async () => {
+    const before = await snapshotTree(synth)
+    execFileSync('node', [stageScript, synth, join(work, 'stage')], { stdio: 'pipe' })
+    const after = await snapshotTree(synth)
 
-describe('pack staging (INTERFACES F2 — "staging changed nothing", not "the tree is pristine")', () => {
-  it('preserves a pre-existing untracked file + an unrelated WIP edit, and the snapshot gate PASSES', () => {
-    const before = snapshot(join(work, 'before.txt'))
-    execFileSync('node', [join(fixture, 'stage-create-movp.mjs'), repoRoot, join(work, 'stage')], { stdio: 'pipe' })
-    const after = snapshot(join(work, 'after.txt'))
-
-    // The gate's actual assertion: the manifests are byte-identical → staging mutated nothing.
+    // The gate's actual assertion: byte-identical manifests → staging MUTATED nothing.
     expect(after).toBe(before)
     // Both the untracked file and the WIP edit survive byte-identical.
-    expect(readFileSync(preserveFile, 'utf8')).toBe('do not delete me\n')
-    expect(readFileSync(dirtiedFile, 'utf8')).toBe(`${originalReadme}\n<!-- local WIP -->\n`)
-    // And staging really did produce the publish tree, in the TEMP dir only.
+    expect(readFileSync(join(synth, 'packages', 'create-movp', 'templates', 'preserve.txt'), 'utf8'))
+      .toBe('do not delete me\n')
+    expect(readFileSync(join(synth, 'templates', 'crm-lite', 'README.md'), 'utf8')).toBe(WIP_README)
+    // …and staging really produced the publish tree — in the TEMP dir ONLY.
     expect(existsSync(join(work, 'stage', 'package.json'))).toBe(true)
-    expect(existsSync(join(work, 'stage', 'templates', 'crm-lite'))).toBe(true)
+    expect(existsSync(join(work, 'stage', 'dist', 'index.js'))).toBe(true)
+    expect(existsSync(join(work, 'stage', 'templates', 'crm-lite', 'README.md'))).toBe(true)
+  })
+
+  it('FAILS the pack on a symlinked template file instead of packing its target (F1a)', () => {
+    writeFileSync(join(work, 'secret'), 'ssh-key\n')
+    execFileSync('ln', ['-s', join(work, 'secret'), join(synth, 'templates', 'crm-lite', 'notes.ts')])
+    let stderr = ''
+    expect(() => {
+      try {
+        execFileSync('node', [stageScript, synth, join(work, 'stage')], { stdio: 'pipe' })
+      } catch (err: unknown) {
+        stderr = err instanceof Error && 'stderr' in err ? String(err.stderr) : String(err)
+        throw err
+      }
+    }).toThrow()
+    expect(stderr).toContain('template_symlink_rejected')
+    expect(stderr).not.toContain('ssh-key') // path + reason only — never the target's bytes
   })
 })
 ```
 
-Run — **Expected: FAIL** (`Cannot find module .../fixtures/verdaccio-crm-lite/tree-snapshot.mjs`)
-until steps 1b–1c land; then **PASS**:
+Run — **Expected: FAIL** (`Cannot find module .../fixtures/verdaccio-crm-lite/stage-create-movp.mjs`)
+until step 1b lands; then **PASS** (2 tests). The build is part of the command, never part of the
+test — a test may not write under the repo, and `dist/` is the one thing staging needs:
 
 ```
-pnpm --filter create-movp exec vitest run staging-safety
+pnpm --filter create-movp build \
+  && pnpm --filter create-movp exec vitest run staging-safety
 ```
 
 **2. `fixtures/verdaccio-crm-lite/gate.sh`** (mark executable `chmod +x`). This is the acceptance gate.
@@ -1837,11 +2052,14 @@ PROJECT="acme-crm"
 WS="33333333-3333-3333-3333-333333333333"
 DB_URL="postgresql://postgres:postgres@127.0.0.1:64522/postgres"
 
+# INTERFACES F1 — this gate writes NOTHING under the repository: the staging tree, Verdaccio's
+# storage, and the npm auth token all live under $WORK / $CM_STAGE (mktemp -d). So cleanup only ever
+# removes temp dirs — it never has to "restore" or delete anything in the worktree.
 cleanup() {
   [ -n "${FN_PID:-}" ] && kill "$FN_PID" 2>/dev/null || true
   [ -n "${VERDACCIO_PID:-}" ] && kill "$VERDACCIO_PID" 2>/dev/null || true
   ( cd "$WORK/$PROJECT" 2>/dev/null && supabase stop --no-backup >/dev/null 2>&1 ) || true
-  rm -rf "$FIXTURE_DIR/storage" "$WORK" "${CM_STAGE:-}"
+  rm -rf "$WORK" "${CM_STAGE:-}"
 }
 trap cleanup EXIT
 
@@ -1855,6 +2073,11 @@ if grep -nE '\b(copyFileSync|readFileSync)\(' \
      "$FIXTURE_DIR/stage-create-movp.mjs" "$REPO_ROOT/packages/create-movp/src/scaffold.ts"; then
   echo "gate: unguarded copyFileSync/readFileSync — use copyFileGuarded (INTERFACES F1b)"; exit 1;
 fi
+# The snapshot helper must STREAM (INTERFACES F2). A readFileSync-based snapshot OOMs on a large
+# untracked file — i.e. it breaks the very gate whose job is to tolerate a dirty worktree.
+if grep -nE '\breadFileSync\(' "$REPO_ROOT/scripts/tree-snapshot.mjs"; then
+  echo "gate: tree-snapshot must stream (createReadStream + createHash), never readFileSync"; exit 1;
+fi
 
 # Stage create-movp into a TEMP publish tree — NEVER mutate the source worktree (INTERFACES F1).
 # The staging script materializes templates/ through the SAME guarded copier (`copyTreeGuarded`:
@@ -1863,28 +2086,34 @@ fi
 # pack instead of being packed into the published tarball.
 #
 # INTERFACES F2 — the invariant is "STAGING CHANGED NOTHING", not "the tree is pristine". Hash the
-# source subtrees staging reads BEFORE and AFTER and require byte-identical manifests. Do NOT assert
-# `packages/create-movp/templates` is absent or that `git status --porcelain` is empty: this gate is
-# run by developers with unrelated WIP and pre-existing untracked files, which are legitimate and
-# MUST be preserved (an "assert pristine" gate also tempts a cleanup that DELETES their work).
-node "$FIXTURE_DIR/tree-snapshot.mjs" "$REPO_ROOT" "$WORK/snapshot-before.txt"
+# source subtrees staging reads BEFORE and AFTER (with the ONE shared helper, scripts/tree-snapshot.mjs
+# — 06e uses this same script) and require byte-identical manifests. Do NOT assert
+# `packages/create-movp/templates` is absent or that `git status --porcelain` is empty, and NEVER
+# `git checkout --` anything: this gate is run by developers with unrelated WIP and pre-existing
+# untracked files, which are legitimate and MUST be preserved (an "assert pristine" gate tempts a
+# cleanup that DELETES their work — the exact harm this check claims to prevent).
+node "$REPO_ROOT/scripts/tree-snapshot.mjs" "$REPO_ROOT" "$WORK/snapshot-before.txt"
 CM_STAGE="$(mktemp -d "${TMPDIR:-/tmp}/movp-create-movp.XXXXXX")"
 node "$FIXTURE_DIR/stage-create-movp.mjs" "$REPO_ROOT" "$CM_STAGE"
-node "$FIXTURE_DIR/tree-snapshot.mjs" "$REPO_ROOT" "$WORK/snapshot-after.txt"
+node "$REPO_ROOT/scripts/tree-snapshot.mjs" "$REPO_ROOT" "$WORK/snapshot-after.txt"
 if ! diff -u "$WORK/snapshot-before.txt" "$WORK/snapshot-after.txt"; then
   # The diff prints paths + sha256s only — file CONTENTS are never emitted into the log.
   echo "gate: staging MUTATED the source subtree (paths + hashes above)"; exit 1;
 fi
 
-# 2. Start Verdaccio.
-rm -rf "$FIXTURE_DIR/storage"
-node "$REPO_ROOT/node_modules/verdaccio/bin/verdaccio" -c "$FIXTURE_DIR/verdaccio.yaml" >"$WORK/verdaccio.log" 2>&1 &
+# 2. Start Verdaccio, with its storage rendered into $WORK — a relative `storage:` in the yaml would
+#    write into fixtures/ (i.e. into the repo). Nothing this gate creates lives in the worktree.
+sed "s#__STORAGE__#$WORK/verdaccio-storage#" "$FIXTURE_DIR/verdaccio.yaml" >"$WORK/verdaccio.yaml"
+node "$REPO_ROOT/node_modules/verdaccio/bin/verdaccio" -c "$WORK/verdaccio.yaml" >"$WORK/verdaccio.log" 2>&1 &
 VERDACCIO_PID=$!
 for _ in $(seq 1 30); do curl -sf "$REGISTRY/-/ping" >/dev/null 2>&1 && break; sleep 1; done
 
 # 3. Publish the bundle to Verdaccio (a throwaway token; Verdaccio accepts any with $all).
+#    The token goes in a TEMP npm userconfig: `npm config set … --location project` would write an
+#    .npmrc into the repo (clobbering the developer's) — INTERFACES F1, no writes under the worktree.
 export npm_config_registry="$REGISTRY"
-npm config set "//127.0.0.1:4873/:_authToken" "fake-token" --location project 2>/dev/null || true
+export NPM_CONFIG_USERCONFIG="$WORK/npmrc"
+printf '//127.0.0.1:4873/:_authToken=fake-token\n' >"$NPM_CONFIG_USERCONFIG"
 for pkg in auth cli codegen core-schema domain flows graphql mcp notifications obs platform search; do
   ( cd "$REPO_ROOT/packages/$pkg" && npm publish --registry "$REGISTRY" ) || { echo "publish @movp/$pkg failed"; exit 1; }
 done
@@ -1994,9 +2223,11 @@ prerequisites (Docker, supabase, deno, node, npm, psql, `verdaccio` installed), 
 `bash gate.sh`, the `+200` port-block note, and two sentences on the pack step: it stages `create-movp`
 into a TEMP tree via `stage-create-movp.mjs` (INTERFACES F1) — every read guarded, so a symlinked
 template file *or a symlinked template root* fails the pack rather than shipping — and it proves that
-with a `tree-snapshot.mjs` before/after content-hash comparison (INTERFACES F2). State explicitly:
-**you may run this gate with a dirty worktree.** It asserts staging changed nothing; it does not
-require a pristine tree, and it never deletes your untracked files.
+with a `scripts/tree-snapshot.mjs` before/after content-hash comparison (INTERFACES F2). State
+explicitly: **you may run this gate with a dirty worktree.** It asserts staging changed nothing; it
+does not require a pristine tree, it writes nothing under the repository (staging tree, registry
+storage and npm token all live in `mktemp -d` dirs), and it never deletes or `git checkout --`-reverts
+your files.
 
 **4. Add the script + dependency to root `package.json`:**
 
@@ -2011,6 +2242,7 @@ and (after approval) `"verdaccio": "^6.0.0"` in root `devDependencies`.
 
 ```
 pnpm add -Dw verdaccio@^6   # only after approval
+pnpm --filter create-movp build   # staging imports the built dist; the TEST never builds (F1)
 pnpm --filter create-movp exec vitest run staging-safety
 bash fixtures/verdaccio-crm-lite/gate.sh
 ```
@@ -2020,21 +2252,31 @@ bash fixtures/verdaccio-crm-lite/gate.sh
 ### Gate (machine-checkable)
 
 ```
-pnpm --filter create-movp exec vitest run staging-safety \
+pnpm --filter create-movp build \
+  && pnpm --filter create-movp exec vitest run staging-safety \
   && bash fixtures/verdaccio-crm-lite/gate.sh
 ```
 
 **Expected:** exit 0; final line `gate: verdaccio-crm-lite acceptance PASS`. Along the way the gate
 asserts: no raw `copyFileSync`/`readFileSync` in the staging script or scaffolder (every explicit copy
-is `copyFileGuarded` — F1b); the source subtree content-hash snapshot is **byte-identical before and
-after staging** (F2 — "staging changed nothing"; a dirty worktree and pre-existing untracked files
-under `packages/create-movp/` or `templates/` are preserved and still PASS); no
-`file:`/`workspace:`/`link:` specifier and no monorepo-source path in the scaffold or its lockfile
-(standalone install); the project baseline + platform migrations are present; `db reset` green on the
-isolated `+200` stack; `verify-schema-runtime` prints `"ok":true`; an authenticated HTTP GraphQL
-`companies` query, a streamable-MCP `tools/call company.list`, and `npm run movp -- company
+is `copyFileGuarded` — F1b); no `readFileSync` in `scripts/tree-snapshot.mjs` (F2 — the snapshot must
+stream, so a large untracked file cannot OOM it); the source subtree content-hash snapshot is
+**byte-identical before and after staging** (F2 — "staging changed nothing"; a dirty worktree and
+pre-existing untracked files under `packages/create-movp/` or `templates/` are preserved and still
+PASS); no `file:`/`workspace:`/`link:` specifier and no monorepo-source path in the scaffold or its
+lockfile (standalone install); the project baseline + platform migrations are present; `db reset`
+green on the isolated `+200` stack; `verify-schema-runtime` prints `"ok":true`; an authenticated HTTP
+GraphQL `companies` query, a streamable-MCP `tools/call company.list`, and `npm run movp -- company
 create/list` all return the seeded/created `Acme Corp`. (Prerequisites: Docker running; `supabase`,
 `deno`, `node`, `npm`, `psql` on PATH; `verdaccio` installed. **The worktree may be dirty.**)
+
+**F1 acceptance (the test suite destroys nothing):** neither the gate nor any test writes under the
+repository — staging, the registry storage, the npm token and every fixture tree are `mktemp -d` dirs,
+and `git checkout --` appears nowhere in 06d. `staging-safety.test.ts` pins this: it snapshots the
+REAL repo in `beforeAll` and asserts a byte-identical manifest in `afterAll`, so a developer who runs
+the suite with a dirty `templates/crm-lite/README.md` gets those bytes back untouched. Verify by hand
+once, if you like — leave a WIP edit in that README, run the gate command above, and `git diff` it:
+the edit is still there, byte-for-byte.
 
 ---
 
