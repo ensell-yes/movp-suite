@@ -2052,10 +2052,8 @@ guarded-read gate.
    from `packages/create-movp/src/index.ts`** alongside `copyTreeGuarded` / `copyFileGuarded` (INTERFACES
    round-6 F2 requires exactly this); if the built `dist/index.js` does not export it, STOP — do not add a
    local guard here, fix the export in 06d.
-10. **`--templates-dir` defaults to the repo-root `templates/`.** INTERFACES round-6 F2 writes the default
-    as `packages/create-movp/templates`, but that directory is *never materialized in the worktree*:
-    round-3 F1 requires templates to be staged only into a TEMP publish tree, and 06d states the source of
-    truth is the repo-root `templates/<name>/`. Defaulting to the package path would make every gate
-    invocation in Tasks 1–4 read a non-existent directory. The default is therefore `templates` — which is
-    what round-6 F2 *means* by "the real template tree". The flag's purpose (point the hostile cases at a
-    synthetic `mktemp -d` tree instead) is unchanged.
+10. **`--templates-dir` defaults to the repo-root `templates/`** — the locked INTERFACES round-6 F2
+    default. That is the source of truth for template sources; `packages/create-movp/templates` is never
+    materialized in the worktree (round-3 F1 stages templates only into a TEMP publish tree), so it must
+    not be used as a default. The flag's purpose (point the hostile cases at a synthetic `mktemp -d` tree
+    instead) is unchanged.

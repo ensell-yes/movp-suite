@@ -32,9 +32,14 @@ Ship the last runnable piece of the C6 productization seam:
 
 ## Architecture
 
-- **Version bump (Task 1).** Pure `package.json` edits + a grep gate. `check-release-preflight.mjs`
-  does not read versions (verified: it only shells `npm org/whoami/org ls`), so it needs no change —
-  Task 1 states this as an explicit N/A with evidence.
+- **Version bump (Task 1).** `package.json` edits plus a gate — `scripts/check-publishable-versions.mjs`
+  — that reads the twelve manifests through `scripts/lib/guarded-read.mjs` (`readJsonGuarded`:
+  lstat-before-read, size-bound-before-buffer, content-free errors, structural validation) and
+  discriminates `git grep`'s exit status (`0` match / `1` no-match / anything else → throw), so an
+  operational git failure can never masquerade as a clean tree. Both are unit-tested with Node's
+  built-in runner (no vitest, no build step — the gate runs before anything is built).
+  `check-release-preflight.mjs` does not read versions (verified: it only shells
+  `npm org/whoami/org ls`), so it needs no change — Task 1 states this as an explicit N/A with evidence.
 - **`create-movp` (Tasks 2–3, `packages/create-movp/`).** Unscoped published package. `src/copier.ts`
   is a **pure, synchronous, untrusted-I/O-hardened** file copier (no prompts, no network). `src/scaffold.ts`
   orchestrates: resolve target → copy template → substitute tokens → materialize platform bundle →
@@ -104,8 +109,17 @@ Ship the last runnable piece of the C6 productization seam:
   tree, or a symlinked explicit-copy/explicit-read source), `template_not_regular_file` (an
   explicit-copy or explicit-read source that is not a regular file), `template_file_too_large`,
   `template_total_too_large`, `unknown_token`, `unresolved_token`. Reused from 06a:
-  `platform_artifact_invalid`. **This list is CLOSED** — `readFileGuarded` reuses these codes; invent
-  no new one (the INTERFACES stable-error-code list is fixed).
+  `platform_artifact_invalid`. **This copier list is CLOSED** — `readFileGuarded` reuses these codes;
+  invent no new copier code (the INTERFACES stable-error-code list is fixed).
+- **Stable error codes (repo-root gates, Task 1) — a SEPARATE closed set:**
+  `scripts/lib/guarded-read.mjs` — `manifest_symlink_rejected`, `manifest_not_regular_file`,
+  `manifest_too_large`, `manifest_unreadable` (a JSON parse failure; the message carries the path +
+  reason and **NEVER** the file's bytes), `manifest_invalid_shape` (parseable but `name`/`version` are
+  not strings). `scripts/check-publishable-versions.mjs` — `version_gate_git_failed` (git exited with
+  an operational status, or could not be spawned at all). These are deliberately NOT the copier's
+  `template_*` codes: the repo-root gate and the published `create-movp` package are two different
+  module boundaries that must not import each other (INTERFACES round-7 F2), and a `package.json`
+  manifest is not a template file. Neither set adds to the INTERFACES cross-part code list.
 
 ---
 
@@ -124,7 +138,17 @@ resolve), and prove no in-repo consumer pins the literal `0.0.0`.
 - **Do NOT modify:** `packages/mcp-bridge/package.json` — it is `"private": true` and unpublished; it
   stays `0.0.0`. The monorepo root `package.json` and `templates/frontend-astro/package.json` stay
   `0.0.0` (both `"private"`; they consume workspace deps via `workspace:*`, never a version pin).
+- **Create (the guarded manifest reader):** `scripts/lib/guarded-read.mjs` (INTERFACES round-7 F2).
 - **Create (the gate):** `scripts/check-publishable-versions.mjs`.
+- **Test (create):** `scripts/test/guarded-read.test.mjs`
+- **Test (create):** `scripts/test/check-publishable-versions.test.mjs`
+
+> **Why these two tests use Node's BUILT-IN runner (`node --test`), not vitest:** Task 1 runs BEFORE
+> `packages/create-movp` exists (Task 2 creates it), and the version gate must run before ANYTHING is
+> built — so its tests cannot live in a workspace package, cannot import a package's `dist/`, and must
+> not pull in a new test dependency. `node --test` is a Node builtin: zero new dependencies, no build
+> step, no tsconfig. They are plain `.mjs`, so no `.d.mts` declaration is needed either (nothing in TS
+> imports them — unlike `scripts/tree-snapshot.mjs` in Task 2, which a `.ts` test does import).
 
 ### Interfaces
 
@@ -135,96 +159,412 @@ resolve), and prove no in-repo consumer pins the literal `0.0.0`.
   at `version: "0.1.0"`; `@movp/platform`'s `manifest.json` `platformVersion` becomes `0.1.0` on the
   next `pnpm --filter @movp/platform build` (it reads its own `package.json` version — verified in
   06a Task 3 `build.ts`).
+- **Produces (06d-internal, repo-root gates only):** `scripts/lib/guarded-read.mjs` →
+  `readJsonGuarded(path): PackageManifest` — the untrusted-I/O-hardened `package.json` reader every
+  repo-root gate uses instead of `JSON.parse(readFileSync(...))`. **This is deliberately NOT the same
+  implementation as `create-movp`'s `readFileGuarded` (Task 2), and the two must NOT be
+  "consolidated"** (INTERFACES round-7 F2): `create-movp` is a *published npm package* and cannot
+  import repo-root `scripts/` (it would not ship in the tarball), and a repo-root gate cannot import
+  `create-movp`'s build output (nothing is built when this gate runs). Two consumers, two module
+  boundaries — one guard each, same semantics.
 
 ### Steps
 
-**1. Write the failing gate** `scripts/check-publishable-versions.mjs`:
+**1. Write the failing test for the guarded manifest reader** `scripts/test/guarded-read.test.mjs`.
+
+The gate parses twelve worktree `package.json` files. Those are UNTRUSTED input: any of them could be
+a committed symlink (`packages/auth/package.json -> ~/.aws/credentials`), and `readFileSync` FOLLOWS
+symlinks. Worse, Node's `JSON.parse` error message **embeds a snippet of the input** — so the naive
+`JSON.parse(readFileSync(p))` leaks secret bytes into CI logs through its own failure path. This test
+pins the guard that closes both.
 
 ```js
-import { readFileSync } from 'node:fs'
+import assert from 'node:assert/strict'
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { after, before, describe, it } from 'node:test'
+import { MAX_MANIFEST_BYTES, readJsonGuarded } from '../lib/guarded-read.mjs'
 
-// The publishable set that Verdaccio publishes and scaffolds pin at ^0.1.0. `mcp-bridge` is
-// private/unpublished and intentionally excluded (it stays 0.0.0).
-const PUBLISHABLE = [
+// Synthetic fixtures under $TMPDIR only. NO writes under the real repository (INTERFACES round-5 F1).
+let work = ''
+before(() => { work = mkdtempSync(join(tmpdir(), 'movp-guarded-read-')) })
+after(() => rmSync(work, { recursive: true, force: true }))
+
+describe('readJsonGuarded', () => {
+  it('returns the parsed manifest for a regular, valid file', () => {
+    const path = join(work, 'ok.json')
+    writeFileSync(path, JSON.stringify({ name: '@movp/auth', version: '0.1.0' }))
+    assert.equal(readJsonGuarded(path).version, '0.1.0')
+  })
+
+  it('rejects a symlink WITHOUT reading its target', () => {
+    const secret = join(work, 'credentials')
+    writeFileSync(secret, 'aws_secret_access_key = SUPERSECRET\n')
+    const path = join(work, 'linked.json')
+    symlinkSync(secret, path) // packages/auth/package.json -> ~/.aws/credentials
+    assert.throws(() => readJsonGuarded(path), (err) => {
+      assert.match(String(err), /manifest_symlink_rejected/)
+      assert.doesNotMatch(String(err), /SUPERSECRET|aws_secret/) // the target was never opened
+      return true
+    })
+  })
+
+  it('rejects a non-regular file (a directory)', () => {
+    const dir = join(work, 'a-dir')
+    mkdirSync(dir)
+    assert.throws(() => readJsonGuarded(dir), /manifest_not_regular_file/)
+  })
+
+  it('rejects an oversized file BEFORE buffering it', () => {
+    const path = join(work, 'big.json')
+    writeFileSync(path, `{"name":"x","version":"0.1.0","pad":"${'x'.repeat(MAX_MANIFEST_BYTES)}"}`)
+    assert.throws(() => readJsonGuarded(path), /manifest_too_large/)
+  })
+
+  // THE leak: `JSON.parse` throws `Unexpected token 'a', "aws_secret"... is not valid JSON`. Re-throwing
+  // that message — or including `err.message` in ours — prints the file's bytes to CI. Assert it cannot.
+  it('rejects malformed JSON WITHOUT echoing the file content', () => {
+    const path = join(work, 'bad.json')
+    writeFileSync(path, 'aws_secret_access_key = SUPERSECRET\n')
+    assert.throws(() => readJsonGuarded(path), (err) => {
+      assert.match(String(err), /manifest_unreadable/)
+      assert.doesNotMatch(String(err), /SUPERSECRET|aws_secret/)
+      return true
+    })
+  })
+
+  it('rejects a parseable-but-structurally-invalid manifest (parseable is not valid)', () => {
+    const path = join(work, 'shape.json')
+    writeFileSync(path, JSON.stringify({ name: 123, version: '0.1.0' }))
+    assert.throws(() => readJsonGuarded(path), /manifest_invalid_shape/)
+  })
+})
+```
+
+Run — **Expected: FAIL** (`Cannot find module '.../scripts/lib/guarded-read.mjs'`):
+
+```
+node --test scripts/test/guarded-read.test.mjs
+```
+
+**2. Implement `scripts/lib/guarded-read.mjs`:**
+
+```js
+// The guarded `package.json` reader for repo-root gates. Dependency-free ESM with NO build step, on
+// purpose: `check-publishable-versions.mjs` runs BEFORE anything is built, so it cannot import a
+// package's compiled `dist/`.
+//
+// DELIBERATELY NOT the same implementation as `create-movp`'s `readFileGuarded`
+// (`packages/create-movp/src/copier.ts`, Task 2), and the two must NOT be "consolidated" (INTERFACES
+// round-7 F2). `create-movp` is a PUBLISHED npm package: it cannot import repo-root `scripts/` (those
+// files are not in its tarball), and a repo-root gate cannot import `create-movp`'s build output
+// (nothing is built when the gate runs). Consolidating them creates an import cycle or a broken
+// publish. Two module boundaries — one guard each, same semantics.
+import { lstatSync, readFileSync } from 'node:fs'
+
+/** A `package.json` is a few KiB. 256 KiB is generous and still BOUNDS the buffer. */
+export const MAX_MANIFEST_BYTES = 256 * 1024
+
+/** @typedef {{ name: string, version: string } & Record<string, unknown>} PackageManifest */
+
+/**
+ * Read + parse a `package.json` from an UNTRUSTED path (a worktree file anyone may have committed as
+ * a symlink). Throws `manifest_*` (path + reason ONLY — never the file's bytes).
+ * @param {string} path
+ * @returns {PackageManifest}
+ */
+export function readJsonGuarded(path) {
+  // GOTCHA: `lstat` FIRST, and throw on the lstat RESULT — `statSync` and `readFileSync` both FOLLOW
+  // symlinks, so a symlinked manifest pointing at ~/.aws/credentials would already be OPEN by the time
+  // any later check ran. A basename denylist cannot help: the symlink is named `package.json`.
+  const info = lstatSync(path)
+  if (info.isSymbolicLink()) throw new Error(`manifest_symlink_rejected: ${path} is a symlink`)
+  if (!info.isFile()) throw new Error(`manifest_not_regular_file: ${path} is not a regular file`)
+  // Bound BEFORE buffering: a cap applied after `readFileSync` cannot prevent the OOM it exists to stop.
+  if (info.size > MAX_MANIFEST_BYTES) {
+    throw new Error(`manifest_too_large: ${path} is ${info.size} bytes (max ${MAX_MANIFEST_BYTES})`)
+  }
+  const raw = readFileSync(path, 'utf8')
+
+  /** @type {unknown} */
+  let parsed
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    // GOTCHA (the entire reason this catch exists): Node's `JSON.parse` error message EMBEDS a snippet
+    // of the input — `Unexpected token 'a', "aws_secret"... is not valid JSON`. Re-throwing it, or
+    // interpolating `err.message`, prints the file's CONTENT into CI logs — the very leak the `lstat`
+    // above closes on the happy path. Throw the path + a reason. NEVER the bytes, NEVER a preview.
+    throw new Error(`manifest_unreadable: ${path} is not valid JSON`)
+  }
+
+  // Structurally validate BEFORE any field is dereferenced — parseable is not valid, and a cast is not
+  // validation. A malformed-but-parseable manifest throws here; it never reaches the version compare.
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw new Error(`manifest_invalid_shape: ${path} is not a JSON object`)
+  }
+  const obj = /** @type {Record<string, unknown>} */ (parsed)
+  if (typeof obj.name !== 'string') {
+    throw new Error(`manifest_invalid_shape: ${path} has no string "name"`)
+  }
+  if (typeof obj.version !== 'string') {
+    throw new Error(`manifest_invalid_shape: ${path} has no string "version"`)
+  }
+  return /** @type {PackageManifest} */ (parsed)
+}
+```
+
+Re-run — **Expected: PASS** (6 tests):
+
+```
+node --test scripts/test/guarded-read.test.mjs
+```
+
+**3. Write the failing test for the gate** `scripts/test/check-publishable-versions.test.mjs`.
+
+`git grep` exits **0** on a match, **1** on NO match (benign), and **anything else** on an operational
+failure — not a git repo (128), git not installed (spawn `ENOENT`), a bad pathspec, an unreadable
+object. A `try/catch { return [] }` swallows *both* 1 and 128, so a BROKEN gate reports "no 0.0.0
+pins" and passes. These three branches are the point of this file, so the git invocation is injectable.
+
+```js
+import assert from 'node:assert/strict'
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, beforeEach, describe, it } from 'node:test'
+import {
+  PUBLISHABLE, checkPublishableVersions, pinnedZeroConsumers,
+} from '../check-publishable-versions.mjs'
+
+// A SYNTHETIC repo root under $TMPDIR — the gate is driven against it, never against the real
+// worktree, so no test writes under the repository (INTERFACES round-5 F1) and a dirty tree cannot
+// flip a result.
+let repoRoot = ''
+
+beforeEach(() => {
+  repoRoot = mkdtempSync(join(tmpdir(), 'movp-version-gate-'))
+  for (const name of PUBLISHABLE) {
+    mkdirSync(join(repoRoot, 'packages', name), { recursive: true })
+    writeFileSync(
+      join(repoRoot, 'packages', name, 'package.json'),
+      `${JSON.stringify({ name: `@movp/${name}`, version: '0.1.0' }, null, 2)}\n`,
+    )
+  }
+})
+afterEach(() => rmSync(repoRoot, { recursive: true, force: true }))
+
+/** A stubbed `spawnSync` result: `{ status, stdout, stderr, signal, error }`. */
+const stubGit = (result) => () => ({ stdout: '', stderr: '', status: 0, signal: null, ...result })
+
+describe('pinnedZeroConsumers — the git exit status is DISCRIMINATED, never swallowed', () => {
+  it('status 0 → returns the matched lines', () => {
+    const hit = 'templates/crm-lite/package.json.template:5:    "@movp/cli": "0.0.0",'
+    assert.deepEqual(pinnedZeroConsumers(repoRoot, stubGit({ status: 0, stdout: `${hit}\n` })), [hit])
+  })
+
+  it('status 1 → no matches (the benign case)', () => {
+    assert.deepEqual(pinnedZeroConsumers(repoRoot, stubGit({ status: 1 })), [])
+  })
+
+  it('status 2 → throws LOUDLY, carrying the status', () => {
+    assert.throws(
+      () => pinnedZeroConsumers(repoRoot, stubGit({ status: 2, stderr: 'fatal: not a git repository' })),
+      /version_gate_git_failed: .*status=2/,
+    )
+  })
+
+  it('a spawn error (git not installed) → throws LOUDLY', () => {
+    const error = Object.assign(new Error('spawnSync git ENOENT'), { code: 'ENOENT' })
+    assert.throws(
+      () => pinnedZeroConsumers(repoRoot, stubGit({ status: null, error })),
+      /version_gate_git_failed: .*ENOENT/,
+    )
+  })
+})
+
+describe('checkPublishableVersions', () => {
+  it('PASSES when every publishable is 0.1.0 and git reports no match (status 1)', () => {
+    assert.deepEqual(checkPublishableVersions(repoRoot, stubGit({ status: 1 })), [])
+  })
+
+  it('FAILS when git finds a 0.0.0 pin (status 0 with a match)', () => {
+    const problems = checkPublishableVersions(
+      repoRoot, stubGit({ status: 0, stdout: 'x/package.json:5:  "@movp/cli": "0.0.0",\n' }),
+    )
+    assert.equal(problems.length, 1)
+    assert.match(problems[0], /pins a @movp dependency at 0\.0\.0/)
+  })
+
+  // The regression this gate's own bug produced: a broken git run must NOT look like a clean tree.
+  it('FAILS LOUDLY on an operational git failure (status 2) — it does NOT report "no pins"', () => {
+    assert.throws(() => checkPublishableVersions(repoRoot, stubGit({ status: 2 })), /version_gate_git_failed/)
+  })
+
+  it('FAILS when a publishable is still 0.0.0', () => {
+    writeFileSync(
+      join(repoRoot, 'packages', 'auth', 'package.json'),
+      '{"name":"@movp/auth","version":"0.0.0"}\n',
+    )
+    const problems = checkPublishableVersions(repoRoot, stubGit({ status: 1 }))
+    assert.equal(problems.length, 1)
+    assert.match(problems[0], /@movp\/auth is 0\.0\.0, expected 0\.1\.0/)
+  })
+
+  it('THROWS on a symlinked manifest instead of following it, and leaks no target bytes', () => {
+    const secret = join(repoRoot, 'credentials')
+    writeFileSync(secret, 'aws_secret_access_key = SUPERSECRET\n')
+    const manifest = join(repoRoot, 'packages', 'auth', 'package.json')
+    rmSync(manifest)
+    symlinkSync(secret, manifest)
+    assert.throws(() => checkPublishableVersions(repoRoot, stubGit({ status: 1 })), (err) => {
+      assert.match(String(err), /manifest_symlink_rejected/)
+      assert.doesNotMatch(String(err), /SUPERSECRET/)
+      return true
+    })
+  })
+})
+```
+
+Run — **Expected: FAIL** (`Cannot find module '.../scripts/check-publishable-versions.mjs'`):
+
+```
+node --test scripts/test/check-publishable-versions.test.mjs
+```
+
+**4. Implement `scripts/check-publishable-versions.mjs`** — ONE coherent script:
+
+```js
+#!/usr/bin/env node
+// The publishable-version gate. It runs BEFORE anything is built, so it is dependency-free ESM and
+// imports only `scripts/lib/` — never a package's `dist/` (see the note in `lib/guarded-read.mjs`).
+import { spawnSync } from 'node:child_process'
+import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
+import { readJsonGuarded } from './lib/guarded-read.mjs'
+
+/** The set Verdaccio publishes and scaffolds pin at ^0.1.0. `mcp-bridge` is private/unpublished and
+ *  intentionally excluded (it stays 0.0.0). */
+export const PUBLISHABLE = [
   'auth', 'cli', 'codegen', 'core-schema', 'domain', 'flows',
   'graphql', 'mcp', 'notifications', 'obs', 'platform', 'search',
 ]
-const EXPECTED = '0.1.0'
+export const EXPECTED_VERSION = '0.1.0'
+/** POSIX ERE for `git grep -E`. `workspace:*` is fine — only a literal 0.0.0 version pin is a hit. */
+export const ZERO_PIN_PATTERN = '"@movp/[a-z-]+":[[:space:]]*"0\\.0\\.0"'
+// GOTCHA: scope the grep to MANIFESTS. An UNSCOPED `git grep` over the worktree also matches this
+// gate's OWN test fixtures and any doc/plan prose quoting the pattern — the gate would fail on itself.
+// Verified against the current tree: this pathspec covers the root manifest, every
+// `packages/<name>/package.json`, and every `templates/<name>/package.json[.template]` — and nothing else.
+export const MANIFEST_PATHSPEC = ['*package.json', '*package.json.template']
 
-let failed = false
-for (const name of PUBLISHABLE) {
-  const pkgPath = join('packages', name, 'package.json')
-  const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'))
-  if (pkg.version !== EXPECTED) {
-    console.error(`version check failed: ${pkg.name} is ${pkg.version}, expected ${EXPECTED}`)
-    failed = true
-  }
+/** @param {string} repoRoot @returns {import('node:child_process').SpawnSyncReturns<string>} */
+export function runGitGrep(repoRoot) {
+  // `spawnSync` (NOT `execFileSync`): it RETURNS `{ status, stdout, stderr, error }` instead of
+  // throwing, which is what lets the caller tell "no match" (1) apart from "git broke" (128/ENOENT).
+  return spawnSync('git', ['grep', '-nE', ZERO_PIN_PATTERN, '--', ...MANIFEST_PATHSPEC], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+  })
 }
 
-// No in-repo consumer may pin the literal 0.0.0 for a @movp dependency (workspace:* is fine).
-import { execFileSync } from 'node:child_process'
-const hits = execFileSync('git', ['grep', '-nE', '"@movp/[a-z-]+":\\s*"0\\.0\\.0"'], {
-  encoding: 'utf8',
-  stdio: ['ignore', 'pipe', 'ignore'],
-}).trim().split('\n').filter(Boolean).catch?.(() => []) ?? []
-// git grep exits 1 (no match) — treat a thrown error as "no hits" via the wrapper below.
-```
+/**
+ * @param {string} repoRoot
+ * @param {(repoRoot: string) => import('node:child_process').SpawnSyncReturns<string>} [runGit]
+ * @returns {string[]} the `path:line:text` hits; `[]` when git found nothing. THROWS if git failed.
+ */
+export function pinnedZeroConsumers(repoRoot, runGit = runGitGrep) {
+  const result = runGit(repoRoot)
+  // Fail HARD and LOUD on an operational failure. A bare `catch { return [] }` here would report
+  // "no 0.0.0 pins" when git is absent or the cwd is not a repo — a broken gate that PASSES.
+  if (result.error) {
+    throw new Error(
+      `version_gate_git_failed: git grep could not run in ${repoRoot} (${result.error.code ?? result.error.message})`,
+    )
+  }
+  if (result.status === 0) return result.stdout.trim().split('\n').filter(Boolean) // matches
+  if (result.status === 1) return [] // no matches — the ONLY benign non-zero status
+  throw new Error(
+    `version_gate_git_failed: git grep in ${repoRoot} exited status=${result.status} signal=${result.signal ?? 'none'}`,
+  )
+}
 
-Replace the fragile `git grep` tail above with this robust form (git grep exits non-zero when it
-finds nothing, which would throw):
+/**
+ * @param {string} repoRoot
+ * @param {(repoRoot: string) => import('node:child_process').SpawnSyncReturns<string>} [runGit]
+ * @returns {string[]} human-readable problems; `[]` means the gate passes. THROWS on an operational failure.
+ */
+export function checkPublishableVersions(repoRoot, runGit = runGitGrep) {
+  /** @type {string[]} */
+  const problems = []
+  for (const name of PUBLISHABLE) {
+    // readJsonGuarded, NEVER `JSON.parse(readFileSync(...))`: these twelve paths are worktree files, and
+    // a symlinked one would be followed straight out of the repo — with the parse error printing its bytes.
+    const pkg = readJsonGuarded(join(repoRoot, 'packages', name, 'package.json'))
+    if (pkg.version !== EXPECTED_VERSION) {
+      problems.push(`version check failed: ${pkg.name} is ${pkg.version}, expected ${EXPECTED_VERSION}`)
+    }
+  }
+  for (const line of pinnedZeroConsumers(repoRoot, runGit)) {
+    problems.push(`consumer pins a @movp dependency at 0.0.0: ${line}`)
+  }
+  return problems
+}
 
-```js
-function pinnedZeroConsumers() {
+// Exit-code contract: 0 = pass · 1 = a real finding (wrong version / a 0.0.0 pin) · 2 = OPERATIONAL
+// failure (git broke, a manifest is a symlink/oversized/malformed). An operational failure is never 0.
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+  /** @type {string[]} */
+  let problems
   try {
-    const out = execFileSync('git', ['grep', '-nE', '"@movp/[a-z-]+":[[:space:]]*"0\\.0\\.0"'], {
-      encoding: 'utf8',
-    })
-    return out.trim().split('\n').filter(Boolean)
-  } catch {
-    return [] // git grep exit 1 = no matches
+    problems = checkPublishableVersions(process.cwd())
+  } catch (err) {
+    console.error(
+      `publishable-version gate: OPERATIONAL FAILURE — ${err instanceof Error ? err.message : String(err)}`,
+    )
+    process.exit(2)
   }
+  for (const problem of problems) console.error(problem)
+  if (problems.length > 0) process.exit(1)
+  console.log(
+    `publishable versions: all ${PUBLISHABLE.length} @movp publishables at ${EXPECTED_VERSION}, no 0.0.0 consumer pins`,
+  )
 }
-
-for (const line of pinnedZeroConsumers()) {
-  console.error(`consumer pins @movp dependency at 0.0.0: ${line}`)
-  failed = true
-}
-
-if (failed) process.exit(1)
-console.log('publishable versions: all @movp publishables at 0.1.0, no 0.0.0 consumer pins')
 ```
 
-(Author the file as ONE coherent script: the `PUBLISHABLE`/`EXPECTED` loop, the `execFileSync` import
-at the top, then `pinnedZeroConsumers()` + its loop + the final `process.exit`. Delete the throwaway
-`.catch?.` sketch — it was only to show the failure mode.)
-
-Run — **Expected: FAIL** (`... is 0.0.0, expected 0.1.0` for all 12, since nothing is bumped yet):
+Re-run the test — **Expected: PASS** (9 tests). Then run the gate itself against the real repo —
+**Expected: FAIL, exit 1** (`... is 0.0.0, expected 0.1.0` for all 12, since nothing is bumped yet):
 
 ```
-node scripts/check-publishable-versions.mjs
+node --test scripts/test/check-publishable-versions.test.mjs
+node scripts/check-publishable-versions.mjs ; test $? -eq 1
 ```
 
-**2. Add the script to root `package.json` scripts** (after `check:packages`):
+**5. Add both scripts to root `package.json` scripts** (after `check:packages`):
 
 ```json
     "check:publishable-versions": "node scripts/check-publishable-versions.mjs",
+    "test:version-gate": "node --test scripts/test/guarded-read.test.mjs scripts/test/check-publishable-versions.test.mjs",
 ```
 
-**3. Bump each publishable `package.json`** `"version": "0.0.0"` → `"version": "0.1.0"` (the 12 files
+**6. Bump each publishable `package.json`** `"version": "0.0.0"` → `"version": "0.1.0"` (the 12 files
 listed under Files). Edit only the `version` field; leave `publishConfig`, `main`, `exports` untouched.
 
-**4. Confirm no in-repo consumer pins `0.0.0`.** Run:
+**7. Confirm no in-repo consumer manifest pins `0.0.0`.** Run the SAME scoped pathspec the gate uses
+(`MANIFEST_PATHSPEC`) — an unscoped `git grep` would also match this task's own test fixtures and the
+plan prose quoting the pattern, which are not consumer pins:
 
 ```
-git grep -nE '"@movp/[a-z-]+":[[:space:]]*"0\.0\.0"'
+git grep -nE '"@movp/[a-z-]+":[[:space:]]*"0\.0\.0"' -- '*package.json' '*package.json.template'
 ```
 
-**Expected: EMPTY** (all internal deps use `workspace:*`; verified in the current tree — root
-`package.json` devDeps are `@movp/codegen`/`@movp/core-schema` `workspace:*`). If this prints a line,
-STOP and reconcile before continuing.
+**Expected: EMPTY, exit 1** (all internal deps use `workspace:*`; verified against the current tree —
+root `package.json` devDeps are `@movp/codegen`/`@movp/core-schema` `workspace:*`, and the scoped
+pathspec matches the root manifest + `packages/<name>/package.json` +
+`templates/<name>/package.json[.template]`). If this prints a line, STOP and reconcile before continuing.
 
-**5. Rebuild the platform artifact** so its manifest carries the new `platformVersion`:
+**8. Rebuild the platform artifact** so its manifest carries the new `platformVersion`:
 
 ```
 pnpm --filter @movp/platform build
@@ -232,7 +572,7 @@ pnpm --filter @movp/platform build
 
 **Expected:** prints `@movp/platform: bundled <N> migrations (platformVersion 0.1.0)`.
 
-**6. Run the whole monorepo suite** (nothing behavioural changed; a version bump must not break tests):
+**9. Run the whole monorepo suite** (nothing behavioural changed; a version bump must not break tests):
 
 ```
 pnpm -w test && pnpm -w typecheck
@@ -240,20 +580,24 @@ pnpm -w test && pnpm -w typecheck
 
 **Expected:** green.
 
-**7. Commit** (`chore(c6d): bump publishable @movp/* + @movp/platform to 0.1.0`).
+**10. Commit** (`chore(c6d): bump publishable @movp/* + @movp/platform to 0.1.0 behind a guarded version gate`).
 
 ### Gate (machine-checkable)
 
 ```
-node scripts/check-publishable-versions.mjs \
+node --test scripts/test/guarded-read.test.mjs scripts/test/check-publishable-versions.test.mjs \
+  && node scripts/check-publishable-versions.mjs \
   && pnpm --filter @movp/platform build \
-  && git grep -nE '"@movp/[a-z-]+":[[:space:]]*"0\.0\.0"' ; test $? -eq 1
+  && git grep -nE '"@movp/[a-z-]+":[[:space:]]*"0\.0\.0"' -- '*package.json' '*package.json.template' ; test $? -eq 1
 ```
 
-**Expected:** the version script prints its success line; the platform build prints `platformVersion
-0.1.0`; the final `git grep` finds nothing (exit 1, asserted). `check-release-preflight.mjs` is
-unchanged **(N/A with evidence: it reads no version — it only shells `npm org --help`, `npm whoami`,
-`npm org ls movp`).**
+**Expected:** `node --test` prints `pass 15 / fail 0` (6 `readJsonGuarded` + 9 version-gate — the
+version gate's three git branches are each pinned: status 0 with a match FAILS, status 1 PASSES,
+status 2 / spawn-error THROWS rather than reporting "no pins"); the version script prints its success
+line (exit 0 — and would exit **1** on a real finding, **2** on an operational failure, never 0);
+the platform build prints `platformVersion 0.1.0`; the final scoped `git grep` finds nothing (exit 1,
+asserted). `check-release-preflight.mjs` is unchanged **(N/A with evidence: it reads no version — it
+only shells `npm org --help`, `npm whoami`, `npm org ls movp`).**
 
 ---
 
