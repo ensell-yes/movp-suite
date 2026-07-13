@@ -16,7 +16,7 @@
 - **Zero-writes-on-drift is a hard invariant.** In project mode, compute every expected file body and compare ALL existing files BEFORE writing ANY file. If a comparison fails, throw and write nothing.
 - **Untrusted I/O discipline** ([[untrusted-io-and-resource-bounds]]): every read path does `lstat` and rejects symlinks BEFORE `readFile`; bounds size before buffering (`MAX_GENERATED_FILE_BYTES = 10 * 1024 * 1024`, already defined in `generate.ts`); validates parsed JSON structurally before dereferencing; never logs file/JSON contents (path + reason only).
 - **F1 atomic safe-write (INTERFACES round 2) — ONE shared helper for EVERY generated artifact.** `packages/codegen/src/safe-write.ts` exports `atomicWriteFile(path, contents, opts?)`; `movp.deltas.json`, `movp.schema.json`, and every project-mode generated migration write THROUGH it — no call site does its own `writeFile`. It closes two gaps in the naive `lstat`-then-`writeFile({mode})`: (1) TOCTOU — a symlink swapped in AFTER the lstat is then followed by `writeFile`; (2) `writeFile({mode})` does NOT chmod an ALREADY-EXISTING file (a pre-existing `0o644` registry stays `0o644`). Mechanism: write bytes to a sibling `<path>.<rand>.tmp` created with EXCLUSIVE `flag: 'wx'` + `mode: 0o600`; `lstat` the destination and refuse a symlink / non-regular target; `rename` the temp over the destination (atomic on one filesystem; `rename` replaces the destination inode — it never follows or writes through a symlink there, and the renamed file carries the temp's `0o600`); on ANY error `unlink` the temp.
-- **Stable error codes** (exact strings, cross-part): `new_generated_delta_required`, `platform_row_delete_forbidden`. C6c-local consistency codes: `missing_metadata_row`, `altered_metadata_row`, `stale_metadata_row`, `invalid_deltas_registry`.
+- **Stable error codes** (exact strings, cross-part): `new_generated_delta_required`, `platform_row_delete_forbidden`. C6c-local consistency codes: `missing_metadata_row`, `altered_metadata_row`, `stale_metadata_row`, `invalid_deltas_registry`. Generator-version read failures use `generator_version_unreadable`, `generator_version_symlink_rejected`, `generator_version_not_regular_file`, `generator_version_too_large`, `generator_version_invalid_json`, or `generator_version_invalid_shape`; errors name the path and reason, never file contents.
 - **Determinism:** manifest collections ordered by `name`, fields by `name`; JSON serialized as `JSON.stringify(x, null, 2) + '\n'`.
 - **After every change run the affected Vitest file and show output; commit per task.**
 
@@ -964,10 +964,15 @@ git commit -m "feat(codegen): C6c.4 movp new-delta allocates ownership + one add
 
 ```ts
 // packages/codegen/test/emit-manifest.test.ts
-import { describe, expect, it } from 'vitest'
+import { mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
+import { afterEach, describe, expect, it } from 'vitest'
 import type { CollectionDef, MovpSchema } from '@movp/core-schema'
 import { schemaFingerprint } from '@movp/core-schema'
 import { emitManifest, serializeManifest } from '../src/emit-manifest.ts'
+import { resolveGeneratorVersion } from '../src/generate.ts'
 
 const deal: CollectionDef = {
   name: 'deal',
@@ -985,6 +990,27 @@ const deal: CollectionDef = {
 function schema(cs: CollectionDef[]): MovpSchema {
   return { collections: cs, events: [], projectCollections: cs, platformCollections: [] } as unknown as MovpSchema
 }
+
+const fixtureDirs: string[] = []
+
+async function fixtureDir(): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), 'movp-generator-version-'))
+  fixtureDirs.push(dir)
+  return dir
+}
+
+async function capturedError(run: () => Promise<unknown>): Promise<string> {
+  try {
+    await run()
+  } catch (error: unknown) {
+    return String(error)
+  }
+  throw new Error('expected operation to reject')
+}
+
+afterEach(async () => {
+  await Promise.all(fixtureDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })))
+})
 
 describe('emitManifest', () => {
   it('produces the locked shape with fingerprint from 06b and deterministic ordering', () => {
@@ -1013,6 +1039,60 @@ describe('emitManifest', () => {
     const out = serializeManifest(emitManifest(s, { generatorVersion: '0.1.0' }))
     expect(out.endsWith('}\n')).toBe(true)
     expect(out).toBe(serializeManifest(emitManifest(s, { generatorVersion: '0.1.0' })))
+  })
+})
+
+describe('resolveGeneratorVersion — guarded package.json read', () => {
+  it('reads a regular package URL, including an encoded path', async () => {
+    const dir = await fixtureDir()
+    const packagePath = join(dir, 'package with space.json')
+    await writeFile(packagePath, JSON.stringify({ version: '0.1.0' }))
+    await expect(resolveGeneratorVersion(undefined, pathToFileURL(packagePath))).resolves.toBe('0.1.0')
+  })
+
+  it('rejects a symlink without reading or logging its target', async () => {
+    const dir = await fixtureDir()
+    const secret = join(dir, 'credentials')
+    const packagePath = join(dir, 'package.json')
+    await writeFile(secret, 'aws_secret_access_key = SUPERSECRET\n')
+    await symlink(secret, packagePath)
+    const error = await capturedError(() => resolveGeneratorVersion(undefined, pathToFileURL(packagePath)))
+    expect(error).toMatch(/generator_version_symlink_rejected/)
+    expect(error).not.toMatch(/SUPERSECRET|aws_secret/)
+  })
+
+  it('rejects a non-regular file', async () => {
+    const dir = await fixtureDir()
+    await expect(resolveGeneratorVersion(undefined, pathToFileURL(dir))).rejects.toThrow(
+      /generator_version_not_regular_file/,
+    )
+  })
+
+  it('rejects an oversized package before buffering it', async () => {
+    const dir = await fixtureDir()
+    const packagePath = join(dir, 'package.json')
+    await writeFile(packagePath, Buffer.alloc(10 * 1024 * 1024 + 1))
+    await expect(resolveGeneratorVersion(undefined, pathToFileURL(packagePath))).rejects.toThrow(
+      /generator_version_too_large/,
+    )
+  })
+
+  it('rejects malformed JSON without logging its content', async () => {
+    const dir = await fixtureDir()
+    const packagePath = join(dir, 'package.json')
+    await writeFile(packagePath, 'aws_secret_access_key = SUPERSECRET\n')
+    const error = await capturedError(() => resolveGeneratorVersion(undefined, pathToFileURL(packagePath)))
+    expect(error).toMatch(/generator_version_invalid_json/)
+    expect(error).not.toMatch(/SUPERSECRET|aws_secret/)
+  })
+
+  it('validates the parsed version before dereferencing it', async () => {
+    const dir = await fixtureDir()
+    const packagePath = join(dir, 'package.json')
+    await writeFile(packagePath, JSON.stringify({ version: 123 }))
+    await expect(resolveGeneratorVersion(undefined, pathToFileURL(packagePath))).rejects.toThrow(
+      /generator_version_invalid_shape/,
+    )
   })
 })
 ```
@@ -1098,22 +1178,65 @@ export function serializeManifest(manifest: SchemaManifest): string {
 Wire into project mode. In `generate.ts` `generateProject`, resolve `generatorVersion` and write the manifest when `manifestPath` is set. Add near the imports:
 
 ```ts
+import { fileURLToPath } from 'node:url'
 import { emitManifest, serializeManifest } from './emit-manifest.ts'
 ```
 
 Add a resolver (reads the codegen package version deterministically; project mode value flows into the manifest):
 
 ```ts
-async function resolveGeneratorVersion(explicit?: string): Promise<string> {
+export async function resolveGeneratorVersion(
+  explicit?: string,
+  packageUrl = new URL('../package.json', import.meta.url),
+): Promise<string> {
   if (explicit !== undefined) return explicit
-  const url = new URL('../package.json', import.meta.url)
+  // `fileURLToPath`, not `decodeURIComponent(url.pathname)`: the latter leaves Windows paths as
+  // `/C:/...`. `packageUrl` is injectable only so tests can use synthetic files outside the worktree;
+  // production callers omit it and resolve this package's own manifest.
+  const packagePath = fileURLToPath(packageUrl)
   const f = await fs()
-  const raw = await f.readFile(decodeURIComponent(url.pathname), 'utf8')
-  const parsed: unknown = JSON.parse(raw)
-  if (typeof parsed === 'object' && parsed !== null && 'version' in parsed && typeof (parsed as { version: unknown }).version === 'string') {
-    return (parsed as { version: string }).version
+
+  // The worktree is untrusted input. `readFile` follows symlinks, so lstat and bound BEFORE buffering.
+  let info: Awaited<ReturnType<Fs['lstat']>>
+  try {
+    info = await f.lstat(packagePath)
+  } catch {
+    throw new Error(`generator_version_unreadable: ${packagePath} cannot be inspected`)
   }
-  throw new Error('cannot resolve @movp/codegen version for manifest')
+  if (info.isSymbolicLink()) {
+    throw new Error(`generator_version_symlink_rejected: ${packagePath} is a symlink`)
+  }
+  if (!info.isFile()) {
+    throw new Error(`generator_version_not_regular_file: ${packagePath} is not a regular file`)
+  }
+  if (info.size > MAX_GENERATED_FILE_BYTES) {
+    throw new Error(
+      `generator_version_too_large: ${packagePath} exceeds ${MAX_GENERATED_FILE_BYTES} bytes`,
+    )
+  }
+
+  let raw: string
+  try {
+    raw = await f.readFile(packagePath, 'utf8')
+  } catch {
+    throw new Error(`generator_version_unreadable: ${packagePath} cannot be read`)
+  }
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    // JSON.parse error messages include input snippets. Never interpolate the parse error or bytes.
+    throw new Error(`generator_version_invalid_json: ${packagePath} is not valid JSON`)
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw new Error(`generator_version_invalid_shape: ${packagePath} is not an object`)
+  }
+  const version = (parsed as { version?: unknown }).version
+  if (typeof version === 'string') {
+    return version
+  }
+  throw new Error(`generator_version_invalid_shape: ${packagePath} has no string version`)
 }
 ```
 
@@ -1143,7 +1266,7 @@ export {
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `pnpm --filter @movp/codegen exec vitest run test/emit-manifest.test.ts test/generate-project.test.ts`
-Expected: PASS — 2 manifest tests + Task 3 project tests still green.
+Expected: PASS — 8 manifest/version tests + Task 3 project tests still green.
 
 - [ ] **Step 5: Commit**
 
@@ -1152,7 +1275,7 @@ git add packages/codegen/src/emit-manifest.ts packages/codegen/src/generate.ts p
 git commit -m "feat(codegen): C6c.5 movp.schema.json manifest emitter (fingerprint from 06b)"
 ```
 
-**Gate:** `pnpm --filter @movp/codegen exec vitest run test/emit-manifest.test.ts` PASS. `m.schemaFingerprint === schemaFingerprint(s)` asserted; serialization deterministic + trailing newline.
+**Gate:** `pnpm --filter @movp/codegen exec vitest run test/emit-manifest.test.ts` PASS (8 tests). `m.schemaFingerprint === schemaFingerprint(s)` asserted; serialization deterministic + trailing newline; generator-version resolution uses `fileURLToPath`, rejects symlink/non-file/oversized input before reading, and malformed JSON cannot leak its bytes.
 
 ---
 
