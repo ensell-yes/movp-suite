@@ -1960,9 +1960,13 @@ generalized gate per `matrix.template` (so the artifacts are packed a single tim
         with: { version: 9.12.0 }
       - uses: actions/setup-node@v6
         with: { node-version: 22, cache: pnpm }
+      # pin — matches integration-smoke (ci.yml:130); INTERFACES round-3 F2.
+      # Keep the comment on its OWN line: `check-ci-wiring.mjs` asserts the EXACT normalized line
+      # `with: { version: 2.109.1 }` (round-10 F2), so a trailing comment here is needless friction.
       - uses: supabase/setup-cli@v2
-        with: { version: 2.109.1 }   # pin — matches integration-smoke (ci.yml:130); INTERFACES round-3 F2
-      - run: supabase --version | grep -qF '2.109.1'   # fail loud if the pinned CLI drifts
+        with: { version: 2.109.1 }
+      # fail loud if the pinned CLI drifts at runtime
+      - run: supabase --version | grep -qF '2.109.1'
       - uses: actions/download-artifact@v4
         with: { name: movp-tarballs, path: ./artifacts }
       - run: pnpm install --frozen-lockfile
@@ -1974,37 +1978,56 @@ generalized gate per `matrix.template` (so the artifacts are packed a single tim
 **6. Verify the workflow actually wires the jobs — APPEND to 06d's `REQUIRED_JOBS`, do NOT write a
 second checker.** 06d owns `scripts/check-ci-wiring.mjs` (INTERFACES round-9 F2): a dependency-free,
 indentation-aware structural check that locates each named job under the indent-0 `jobs:` key and
-requires its `runs:` / `contains:` entries **inside that job's own block**.
+requires its `runs:` / `lines:` entries **inside that job's own block**, matched against NORMALIZED lines
+(trailing comment stripped quote-aware, whitespace collapsed, leading `- ` removed).
 
-> **Why this replaced the old `node -e "… y.includes(…)"` one-liner.** A file-wide `includes()` does not
-> check a property; it checks that a string exists *somewhere*. Two ways it false-greens here, both
-> real: (1) the strings can appear only in `#` comments, and (2) — verified against the current
-> `ci.yml` — **`2.109.1` already appears exactly once, in the `integration-smoke` job (line 130)**. So
-> the old assertion "template-smoke setup-cli not pinned to 2.109.1" passes **today**, with no
-> `template-smoke` job in existence. It was vacuous on arrival: a *different* job's pin satisfied it
-> permanently. Block-scoped `contains` is what makes the assertion real.
+> **Why this replaced the old `node -e "… y.includes(…)"` one-liner — and why `lines`, not a substring.**
+> A substring search does not check a property; it checks that a string exists *somewhere*. Three ways
+> it false-greens here, all verified against the real tree:
+> 1. The strings can appear only in `#` comments.
+> 2. **`2.109.1` already appears in `ci.yml` today**, in the `integration-smoke` job (line 130). So the
+>    old file-wide assertion "template-smoke setup-cli not pinned to 2.109.1" passed **with no
+>    `template-smoke` job in existence** — vacuous on arrival.
+> 3. Narrowing the search to the job block does **not** fix this (round-9 tried): `template-smoke`
+>    itself contains `2.109.1` twice — the real pin AND the runtime `grep -qF '2.109.1'` drift check —
+>    so a block-scoped `contains: ['2.109.1']` still passes with `version: latest`. **Shrinking the
+>    haystack does not turn a substring search into an assertion.**
+>
+> `lines` fixes the MECHANISM: an EXACT match against a normalized line inside the job block (trailing
+> comments stripped quote-aware, whitespace collapsed). A comment cannot satisfy it, a `grep` argument
+> cannot satisfy it, another job cannot satisfy it. **Residual limit, stated not papered over:** `lines`
+> proves the `uses:` and the pinned `with:` both exist in this job, not that they are *adjacent* —
+> adjacency needs a real YAML parser, which the checker's scope limit forbids.
 
 Append these three entries to `REQUIRED_JOBS` in `scripts/check-ci-wiring.mjs` (this file is the ONE
-shared CI-wiring checker — nothing else in it changes):
+shared CI-wiring checker — nothing else in it changes). Note `template-smoke`'s gate step is a
+**multi-key step** (`- env:` … `run:`), so `run:` is an indented property, not a `- run:` list item —
+the checker accepts both (round-10 F1):
 
 ```js
   'pack-artifacts': {
-    runs: ['bash fixtures/verdaccio-gallery/pack.sh'],
+    runs: ['bash fixtures/verdaccio-gallery/pack.sh ./artifacts'],
   },
   'template-gallery': {
     runs: [
+      'pnpm --filter create-movp build',
       'pnpm exec tsx scripts/check-template-gallery.ts',
       'bash scripts/check-template-gallery-guards.sh',
     ],
-    // The 4-way matrix must name every template INSIDE this job — a template listed in some other
-    // job's matrix must not satisfy it.
-    contains: ['crm-lite', 'marketing-site', 'support-desk', 'knowledge-base'],
   },
   'template-smoke': {
-    runs: ['bash fixtures/verdaccio-gallery/gate.sh'],
-    // `supabase/setup-cli` pinned in THIS job — `integration-smoke` already pins 2.109.1, so a
-    // file-wide check would pass with no template-smoke job at all (that was the bug).
-    contains: ['2.109.1'],
+    runs: [
+      "supabase --version | grep -qF '2.109.1'",
+      // The multi-key `- env:` / `run:` step — an indented `run:` property, NOT a `- run:` list item.
+      'bash fixtures/verdaccio-gallery/gate.sh ${{ matrix.template }}',
+    ],
+    // EXACT normalized lines — this is the job that actually owns the CLI pin AND the 4-way matrix.
+    // (Round 9 wrongly put the matrix on `template-gallery`; it lives here.)
+    lines: [
+      'uses: supabase/setup-cli@v2',
+      'with: { version: 2.109.1 }',
+      'template: [crm-lite, marketing-site, support-desk, knowledge-base]',
+    ],
   },
 ```
 
@@ -2065,9 +2088,10 @@ The last two components are the round-9 F2 fix. The `grep` is a tripwire against
 unguarded `readFileSync` of the workflow; the **proof** is `check-ci-wiring.mjs`, which reads `ci.yml`
 through `readTextGuarded` and verifies each job STRUCTURALLY — the four jobs must exist as real keys
 under the indent-0 `jobs:` (the real `ci.yml` also has a job *named* `jobs:` at line 173, which is why
-naive anchoring breaks), and each `run:` / `contains:` literal must sit inside its own job's block. The
-substring `node -e` one-liner this replaces false-greened on comments, on a wrong-job match, and on a
-duplicate job name.
+naive anchoring breaks), and each `runs:` command / `lines:` structural line must match a NORMALIZED line
+inside its own job's block. The substring `node -e` one-liner this replaces false-greened on comments, on
+a wrong-job match, and on a duplicate job name — and a merely block-scoped substring (`contains:`, the
+round-9 attempt) still false-greened on `template-smoke`'s own `grep -qF '2.109.1'` drift-check line.
 
 **Expected:** gallery gate reports 3 templates verified and the guarded-read gate reports
 `guarded-reads: hostile-tree gate PASS` (a symlinked `seed.sql` / page / schema module and an oversized

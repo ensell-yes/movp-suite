@@ -359,6 +359,39 @@ Both are APPROVED — the executor does NOT stop on them:
   one-liner — a `node -e` string is CommonJS and cannot cleanly `import` the ESM guard. The Task 1
   gate invokes the script.
 
+## Plan review round 10 — locked resolutions (2026-07-13)
+
+Both findings are defects in the round-9 fix itself. The CI-wiring checker was written without reading
+06e's actual workflow YAML, and its `contains` mechanism repeats the very bug it replaced.
+
+- **F1 (HIGH, correctness) `checkCiWiring` rejects the workflow it exists to verify (06d + 06e).** Two
+  contract mismatches, either of which makes 06e's required gate permanently RED:
+  1. The parser matches only `- run: <cmd>`. But `template-smoke`'s gate step is a **multi-key step** —
+     `- env:` / `ARTIFACTS_DIR: …` / `run: bash …gate.sh ${{ matrix.template }}` — where `run:` is an
+     indented property, not a list item. Fix: accept a `run:` step property at EITHER position.
+  2. The four-template matrix requirement was assigned to `template-gallery`, but the matrix
+     (`template: [crm-lite, marketing-site, support-desk, knowledge-base]`) actually lives in
+     **`template-smoke`**. Fix: move it.
+  Acceptance: the checker must be tested against **06e's exact combined YAML sample**, pasted verbatim
+  — not a simplified fixture. A hand-made fixture is what let this pass in the first place.
+- **F2 (MEDIUM, observability) `contains` is still a substring scan — replace the MECHANISM, not the
+  scope (06d).** Round 9 narrowed `y.includes(x)` from file-wide to job-block and called it fixed. It
+  is not: `template-smoke` contains `2.109.1` **twice** — the real pin `with: { version: 2.109.1 }`
+  AND a runtime drift check `- run: supabase --version | grep -qF '2.109.1'`. So
+  `contains: ['2.109.1']` passes with `version: latest`. Shrinking the haystack does not turn a
+  substring search into an assertion.
+  Fix: **replace `contains` with `lines: string[]` — an EXACT match against a normalized line inside
+  the job block.** Normalize by collapsing runs of whitespace and stripping a trailing comment
+  (quote-aware: a `#` inside `'…'`/`"…"` is NOT a comment, so `grep -qF '2.109.1'` survives intact).
+  Required lines become structural facts, not floating literals:
+  `'uses: supabase/setup-cli@v2'`, `'with: { version: 2.109.1 }'`,
+  `'template: [crm-lite, marketing-site, support-desk, knowledge-base]'`.
+  A comment cannot satisfy them; a `grep` argument cannot satisfy them; another job cannot satisfy them.
+  **Stated residual limit** (do not overclaim): `lines` proves both the `uses:` and the pinned `with:`
+  exist in the job, not that they are adjacent — proving adjacency needs a YAML parser, which the scope
+  limit forbids. That gap is acceptable and must be stated, not silently papered over.
+  This stays inside the scope limit: an indentation-scoped, exact-line match is not a YAML parser.
+
 ## Stable error codes (all parts)
 
 `schema_runtime_mismatch` · `new_generated_delta_required` · `platform_artifact_invalid` ·

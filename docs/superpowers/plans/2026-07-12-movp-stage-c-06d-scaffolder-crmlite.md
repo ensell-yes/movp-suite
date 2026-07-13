@@ -47,7 +47,11 @@ Ship the last runnable piece of the C6 productization seam:
   a raw `readFileSync` is not a guard). `scripts/check-ci-wiring.mjs` proves the gate jobs are actually
   ARMED in `.github/workflows/ci.yml` with a dependency-free, indentation-aware **structural** scan —
   never a substring `includes()`, which false-greens on a job that exists only inside `#` comments or
-  under an unrelated job (INTERFACES round-9 F2).
+  under an unrelated job (INTERFACES round-9 F2). Its `REQUIRED_JOBS` table asserts **exact normalized
+  lines**, not substrings (a block-scoped substring still false-greened the `2.109.1` pin, because the
+  job greps for that same literal at runtime), and it recognizes a `run:` step at **either** position —
+  list item or multi-key property — so it accepts the real workflow it exists to verify (round-10 F1/F2).
+  It is validated against **06e's actual four-job YAML, pasted verbatim**, not a hand-made fixture.
 - **`create-movp` (Tasks 2–3, `packages/create-movp/`).** Unscoped published package. `src/copier.ts`
   is a **pure, synchronous, untrusted-I/O-hardened** file copier (no prompts, no network). `src/scaffold.ts`
   orchestrates: resolve target → copy template → substitute tokens → materialize platform bundle →
@@ -134,8 +138,9 @@ Ship the last runnable piece of the C6 productization seam:
   - `scripts/check-publishable-versions.mjs` — `version_gate_git_failed` (git exited with an operational
     status, or could not be spawned at all).
   - `scripts/check-ci-wiring.mjs` — `ci_wiring_jobs_block_missing`, `ci_wiring_job_missing`,
-    `ci_wiring_job_duplicated`, `ci_wiring_run_missing`, `ci_wiring_contains_missing` (a required literal
-    is absent from THAT job's block). (Its `workflow_*` read faults come from `readTextGuarded` above.)
+    `ci_wiring_job_duplicated`, `ci_wiring_run_missing`, `ci_wiring_line_missing` (a required EXACT
+    normalized line is absent from THAT job's block). (Its `workflow_*` read faults come from
+    `readTextGuarded` above.)
 
   These are deliberately NOT the copier's `template_*` codes: the repo-root gate and the published
   `create-movp` package are two different module boundaries that must not import each other (INTERFACES
@@ -166,8 +171,9 @@ resolve), and prove no in-repo consumer pins the literal `0.0.0`.
   each gate job is armed in `ci.yml` (INTERFACES round-9 F2, step 5d).
 - **Test (create):** `scripts/test/guarded-read.test.mjs` (14 tests — 6 `readTextGuarded` + 8 `readJsonGuarded`)
 - **Test (create):** `scripts/test/check-publishable-versions.test.mjs` (9 tests)
-- **Test (create):** `scripts/test/check-ci-wiring.test.mjs` (13 tests — the 4 hostile workflows, the
-  intended one, the guarded-read seam, and the 3 block-scoped `contains` cases)
+- **Test (create):** `scripts/test/check-ci-wiring.test.mjs` (16 tests — the 4 hostile workflows, the
+  intended one, the guarded-read seam, the 4 exact-line `lines` cases, and — the acceptance test —
+  **06e's real four-job workflow pasted VERBATIM**, which the round-9 checker REJECTED)
 - **Modify (scripts block only):** root `package.json` — add `check:publishable-versions`,
   `check:ci-wiring` + `test:version-gate` (step 5). Its `version` stays `0.0.0`.
 - **Modify (arm the gate in CI):** `.github/workflows/ci.yml` — add the `publishable-versions` job
@@ -212,26 +218,48 @@ resolve), and prove no in-repo consumer pins the literal `0.0.0`.
   **`REQUIRED_JOBS` table**, `Record<string, JobRequirement>` where:
 
   ```js
-  /** @typedef {{ runs: string[], contains?: string[] }} JobRequirement */
+  /** @typedef {{ runs: string[], lines?: string[] }} JobRequirement */
   export const REQUIRED_JOBS = {
     'publishable-versions': {
       runs: ['pnpm test:version-gate', 'pnpm check:publishable-versions'],
     },
-    // 06e APPENDS its entries here; nothing else changes.
+    // 06e APPENDS its three entries here; nothing else in this file changes.
   }
   ```
 
-  - **`runs`** — exact `run:` commands that must appear as `- run: <cmd>` INSIDE that job's block.
-  - **`contains`** (optional) — literal strings that must appear anywhere inside **that job's OWN block**
-    (bounded by the next key at same-or-shallower indent, comments already stripped). For assertions that
-    are NOT `run:` commands: **06e uses it to pin `supabase/setup-cli` to `2.109.1` in `template-smoke`
-    and to name all four templates in the `template-gallery` matrix.** This is what stops 06e falling
-    back to a file-wide `y.includes('2.109.1')` — which, verified against the CURRENT tree, returns TRUE
-    because `integration-smoke` already pins `2.109.1`, so it would pass even with **no `template-smoke`
-    job at all**. Same false-green class as round-9 F2, closed the same way: scope the search to the block.
+  Both fields are matched against the job block's **NORMALIZED** lines. Normalizing a line means: strip a
+  trailing `#` comment **quote-aware** (a `#` inside `'…'`/`"…"` is a literal, not a comment, so
+  `grep -qF '2.109.1'` survives intact) → collapse runs of whitespace → trim → strip a leading list-item
+  `- `.
+
+  - **`runs`** — the exact, FULL `run:` command string, **arguments included** (`bash
+    fixtures/verdaccio-gallery/pack.sh ./artifacts`, not `bash`). The dash-strip above is what lets one
+    form match a `run:` step at **EITHER position** — a list item (`- run: <cmd>`) or an indented property
+    of a **multi-key step** (`- env:` / `ARTIFACTS_DIR: …` / `run: <cmd>`, which is exactly how 06e's
+    `template-smoke` gate step is written). Both normalize to `run: <cmd>`. Matching only the list-item
+    form is what made the round-9 checker REJECT the very workflow it exists to verify (round-10 F1).
+  - **`lines`** (optional) — exact NORMALIZED lines that must appear inside **that job's OWN block**
+    (bounded by the next key at same-or-shallower indent). For assertions that are NOT `run:` commands:
+    **06e uses it to pin `supabase/setup-cli` to `2.109.1` and to name all four templates in the
+    `template-smoke` matrix** (the matrix lives in `template-smoke`, not `template-gallery`).
+
+    **This is an EXACT LINE match, not a substring scan — that distinction is the whole point** (round-10
+    F2). The round-9 design used `contains: ['2.109.1']`, a substring search merely *scoped* to the job
+    block; but `template-smoke` carries the literal `2.109.1` **twice** — the real pin
+    `with: { version: 2.109.1 }` AND a runtime drift check `- run: supabase --version | grep -qF
+    '2.109.1'` — so it PASSED even with `version: latest`, satisfied entirely by the `grep` argument
+    (reproduced). Shrinking the haystack does not turn a substring search into an assertion. Requiring the
+    exact line `with: { version: 2.109.1 }` cannot be satisfied by a comment, by a `grep` argument, or by
+    another job.
+
+    **Stated residual limit — do not overclaim:** `lines` proves that `uses: supabase/setup-cli@v2` and
+    `with: { version: 2.109.1 }` both EXIST in the job, **not that they are adjacent** (i.e. not that the
+    `with:` belongs to that `uses:`). Proving adjacency needs a real YAML parser, which the SCOPE LIMIT
+    forbids. That gap is accepted deliberately and stated here rather than papered over.
 
   **06d OWNS this script and seeds the table with `publishable-versions`; later parts only APPEND an
-  entry** — 06e appends `template-gallery` + `template-smoke` and changes nothing else in the file.
+  entry** — 06e appends `pack-artifacts` + `template-gallery` + `template-smoke` and changes nothing else
+  in the file.
   **Do NOT write a second CI-wiring checker.** (Duplicate-helper drift has already been caught four times
   in this plan series — `tree-snapshot.mjs`, `readFileGuarded`, the snapshot CLI contract, and the guarded
   reader itself. This note is what prevents the fifth.) The workflow path is an argument (default
@@ -926,11 +954,13 @@ describe('checkCiWiring — hostile workflows that MUST fail (each false-greened
   })
 })
 
-// `contains` is what 06e uses for assertions that are NOT `run:` commands — the `supabase/setup-cli`
-// version pin, the four-template matrix. 06e's current check is a file-wide `y.includes('2.109.1')`,
-// which passes when the string sits in a comment or in ANOTHER job: the exact false-green round-9 F2
-// closed. These three cases pin the block-scoping that makes `contains` a real assertion.
-describe('checkCiWiring — `contains` is scoped to the job BLOCK, not the file', () => {
+// `lines` is what 06e uses for assertions that are NOT `run:` commands — the `supabase/setup-cli`
+// version pin, the four-template matrix. It is an EXACT match against a NORMALIZED line, NOT a substring
+// scan. That distinction is the entire point of round-10 F2: `template-smoke` carries the literal
+// `2.109.1` TWICE (the real pin AND a `grep -qF '2.109.1'` drift check), so the round-9
+// `contains: ['2.109.1']` substring scan PASSED even with `version: latest` — satisfied purely by the
+// grep argument. These four cases pin the exact-line semantics that make it a real assertion.
+describe('checkCiWiring — `lines` is an EXACT normalized-line match inside the job BLOCK', () => {
   /** A `template-smoke` job that pins the Supabase CLI, plus a neighbour that also mentions a version. */
   const withSmoke = (smokeBody, neighbourBody = '      - run: pnpm lint\n') => `name: ci
 on:
@@ -947,44 +977,196 @@ ${smokeBody}
     steps:
 ${neighbourBody}`
 
-  const TABLE = { 'template-smoke': { runs: ['supabase db reset'], contains: ['2.109.1'] } }
+  const TABLE = {
+    'template-smoke': {
+      runs: ["supabase --version | grep -qF '2.109.1'"],
+      lines: ['uses: supabase/setup-cli@v2', 'with: { version: 2.109.1 }'],
+    },
+  }
 
-  it('PASSES when the literal is inside the job block', () => {
+  it('PASSES when the exact pinned lines are in the block (normalizing whitespace + a trailing comment)', () => {
     const yaml = withSmoke(
       `      - uses: supabase/setup-cli@v2
-        with: { version: 2.109.1 }
-      - run: supabase db reset
+        with: {  version:  2.109.1  }   # pin — matches integration-smoke
+      - run: supabase --version | grep -qF '2.109.1'   # fail loud if the CLI drifts
 `,
     )
-    assert.deepEqual(checkCiWiring(fixture('contains-ok', yaml), TABLE), [])
+    assert.deepEqual(checkCiWiring(fixture('lines-ok', yaml), TABLE), [])
   })
 
-  it('FAILS when the literal appears only in a DIFFERENT job', () => {
+  // THE round-10 F2 REGRESSION TEST. Under the round-9 `contains: ['2.109.1']` this workflow PASSED: the
+  // substring IS present — in the `grep -qF '2.109.1'` run line — so a job pinned to `latest` false-greened
+  // (reproduced). The exact line `with: { version: 2.109.1 }` is absent, so `lines` FAILS it, correctly.
+  it('FAILS when the pin says `version: latest` even though a run line still greps for 2.109.1', () => {
     const yaml = withSmoke(
       `      - uses: supabase/setup-cli@v2
         with: { version: latest }
-      - run: supabase db reset
+      - run: supabase --version | grep -qF '2.109.1'
+`,
+    )
+    const problems = checkCiWiring(fixture('lines-latest', yaml), TABLE)
+    assert.equal(problems.length, 1) // the `runs` grep entry still matches — ONLY the pin is missing
+    assert.match(problems[0], /ci_wiring_line_missing: .* job "template-smoke" has no line `with: \{ version: 2\.109\.1 \}`/)
+  })
+
+  it('FAILS when the required line appears only in a COMMENT inside the job', () => {
+    const yaml = withSmoke(
+      `      # TODO — pin it: with: { version: 2.109.1 }
+      - uses: supabase/setup-cli@v2
+        with: { version: latest }
+      - run: supabase --version | grep -qF '2.109.1'
+`,
+    )
+    const problems = checkCiWiring(fixture('lines-comment', yaml), TABLE)
+    assert.equal(problems.length, 1)
+    assert.match(problems[0], /ci_wiring_line_missing: .* has no line `with: \{ version: 2\.109\.1 \}`/)
+  })
+
+  it('FAILS when the required line appears only in a DIFFERENT job', () => {
+    const yaml = withSmoke(
+      `      - uses: supabase/setup-cli@v2
+        with: { version: latest }
+      - run: supabase --version | grep -qF '2.109.1'
 `,
       `      - uses: supabase/setup-cli@v2
         with: { version: 2.109.1 }
 `, // the pin is on the NEIGHBOUR — a file-wide includes() would green here
     )
-    const problems = checkCiWiring(fixture('contains-wrong-job', yaml), TABLE)
+    const problems = checkCiWiring(fixture('lines-wrong-job', yaml), TABLE)
     assert.equal(problems.length, 1)
-    assert.match(problems[0], /ci_wiring_contains_missing: .* job "template-smoke" does not contain "2\.109\.1"/)
+    assert.match(problems[0], /ci_wiring_line_missing: .* job "template-smoke" has no line `with: \{ version: 2\.109\.1 \}`/)
+  })
+})
+
+// ==============================================================================================
+// THE ACCEPTANCE TEST (INTERFACES round-10 F1). The round-9 checker passed hand-made fixtures and would
+// have REJECTED the real workflow: its parser matched only `- run: <cmd>` (list-item form), but
+// `template-smoke`'s gate step is a MULTI-KEY step whose `run:` is an indented PROPERTY. A checker that
+// rejects the very workflow it exists to verify makes 06e's required gate permanently RED. Verified: the
+// round-9 parser emits `ci_wiring_run_missing` for the gate.sh step against the YAML below.
+//
+// So this fixture is 06e's ACTUAL ci.yml jobs, pasted VERBATIM — not a simplified stand-in.
+//
+// GOTCHA when pasting into a JS template literal, TWO characters need a backslash and NOTHING else does:
+//   1. `${` opens an interpolation — GitHub's `${{ … }}` MUST be written `\${{ … }}` (yields `${{ … }}`).
+//   2. a backtick closes the literal — the ` ` ` inside 06e's comment lines MUST be written `\``.
+// Both are escapes, not content changes: the STRING is byte-for-byte 06e's YAML. Nothing else is edited.
+// Note the FULL_TABLE entries below are ordinary '' / "" strings, so there `${{ matrix.template }}` and
+// the quoted `grep -qF '2.109.1'` are written UNescaped.
+//
+// Bonus coverage that falls out of pasting the real thing: 06e's comment block literally contains
+// `# \`with: { version: 2.109.1 }\`` — a COMMENTED copy of a required `lines` entry. If comment-stripping
+// ever regressed, THIS fixture would false-green. The real file is a better hostile fixture than a
+// hand-made one; that is the round-10 lesson.
+// ==============================================================================================
+const REAL_CI = `name: ci
+on:
+  push:
+    branches: [main]
+
+jobs:
+${ARMED_JOB}
+  template-gallery:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v6
+        with: { version: 9.12.0 }
+      - uses: actions/setup-node@v6
+        with: { node-version: 22, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      # check-template-gallery.ts imports the untrusted-io guards from the BUILT create-movp dist —
+      # build before running it (INTERFACES round-6 F2). The guards gate rebuilds it itself, harmlessly.
+      - run: pnpm --filter create-movp build
+      - run: pnpm exec tsx scripts/check-template-gallery.ts
+      - run: bash scripts/check-template-gallery-guards.sh
+
+  pack-artifacts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v6
+        with: { version: 9.12.0 }
+      - uses: actions/setup-node@v6
+        with: { node-version: 22, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: bash fixtures/verdaccio-gallery/pack.sh ./artifacts
+      - uses: actions/upload-artifact@v4
+        with: { name: movp-tarballs, path: ./artifacts }
+
+  template-smoke:
+    needs: [pack-artifacts]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        template: [crm-lite, marketing-site, support-desk, knowledge-base]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v6
+        with: { version: 9.12.0 }
+      - uses: actions/setup-node@v6
+        with: { node-version: 22, cache: pnpm }
+      # pin — matches integration-smoke (ci.yml:130); INTERFACES round-3 F2.
+      # Keep the comment on its OWN line: \`check-ci-wiring.mjs\` asserts the EXACT normalized line
+      # \`with: { version: 2.109.1 }\` (round-10 F2), so a trailing comment here is needless friction.
+      - uses: supabase/setup-cli@v2
+        with: { version: 2.109.1 }
+      # fail loud if the pinned CLI drifts at runtime
+      - run: supabase --version | grep -qF '2.109.1'
+      - uses: actions/download-artifact@v4
+        with: { name: movp-tarballs, path: ./artifacts }
+      - run: pnpm install --frozen-lockfile
+      - env:
+          ARTIFACTS_DIR: \${{ github.workspace }}/artifacts
+        run: bash fixtures/verdaccio-gallery/gate.sh \${{ matrix.template }}
+`
+
+/** 06d's seed entry PLUS the three 06e APPENDS — the table exactly as it stands once 06e lands. */
+const FULL_TABLE = {
+  ...REQUIRED_JOBS,
+  'pack-artifacts': {
+    runs: ['bash fixtures/verdaccio-gallery/pack.sh ./artifacts'],
+  },
+  'template-gallery': {
+    runs: [
+      'pnpm --filter create-movp build',
+      'pnpm exec tsx scripts/check-template-gallery.ts',
+      'bash scripts/check-template-gallery-guards.sh',
+    ],
+  },
+  'template-smoke': {
+    runs: [
+      "supabase --version | grep -qF '2.109.1'",
+      'bash fixtures/verdaccio-gallery/gate.sh ${{ matrix.template }}', // the MULTI-KEY step
+    ],
+    lines: [
+      'uses: supabase/setup-cli@v2',
+      'with: { version: 2.109.1 }',
+      'template: [crm-lite, marketing-site, support-desk, knowledge-base]',
+    ],
+  },
+}
+
+describe("checkCiWiring — 06e's REAL workflow, pasted verbatim (round-10 F1 acceptance)", () => {
+  it('PASSES with ZERO problems against all four real jobs', () => {
+    assert.deepEqual(checkCiWiring(fixture('real-ci', REAL_CI), FULL_TABLE), [])
   })
 
-  it('FAILS when the literal appears only in a COMMENT inside the job', () => {
-    const yaml = withSmoke(
-      `      # pin the CLI to 2.109.1 (TODO — not done yet)
-      - uses: supabase/setup-cli@v2
-        with: { version: latest }
-      - run: supabase db reset
+  // Proves the PASS above is not vacuous: the multi-key `- env:` / `run:` step is precisely the one the
+  // round-9 parser could not see at all. Delete it and the gate must go RED.
+  it('FAILS when the MULTI-KEY gate step is removed (the round-9 parser could not see it)', () => {
+    const withoutGate = REAL_CI.replace(
+      `      - env:
+          ARTIFACTS_DIR: \${{ github.workspace }}/artifacts
+        run: bash fixtures/verdaccio-gallery/gate.sh \${{ matrix.template }}
 `,
+      '',
     )
-    const problems = checkCiWiring(fixture('contains-comment', yaml), TABLE)
+    const problems = checkCiWiring(fixture('real-no-gate', withoutGate), FULL_TABLE)
     assert.equal(problems.length, 1)
-    assert.match(problems[0], /ci_wiring_contains_missing: .* does not contain "2\.109\.1"/)
+    assert.match(problems[0], /ci_wiring_run_missing: .* job "template-smoke" does not invoke `bash fixtures\/verdaccio-gallery\/gate\.sh \$\{\{ matrix\.template \}\}`/)
   })
 })
 
@@ -1035,11 +1217,13 @@ only has to prove each job exists and invokes its commands.
 //
 // SCOPE LIMIT — this is NOT a YAML parser and must never grow into one. It is an indentation-aware
 // LINE SCAN with exactly one job: prove that each named job key exists under the top-level `jobs:`
-// mapping, and that each required string appears INSIDE that job's own block. GitHub remains the
-// authoritative YAML parser (a malformed workflow fails there, loudly). No YAML dependency is added:
-// none is resolvable in this repo (`yaml` appears in the root `package.json` only as a pnpm override)
-// and a new dependency needs approval. If you find yourself adding anchors, flow scalars, or block
-// scalars here, STOP — the check has outgrown its purpose.
+// mapping, and that each required NORMALIZED LINE appears INSIDE that job's own block. An
+// indentation-scoped EXACT-LINE match is still not a YAML parser — it is merely not restricted to
+// `run:` lines. GitHub remains the authoritative YAML parser (a malformed workflow fails there,
+// loudly). No YAML dependency is added: none is resolvable in this repo (`yaml` appears in the root
+// `package.json` only as a pnpm override) and a new dependency needs approval. If you find yourself
+// adding key/value lookups, path expressions, anchors, flow scalars, or block scalars here, STOP — the
+// check has outgrown its purpose.
 //
 // It replaces a substring scan (`y.includes('publishable-versions:') && …`), which FALSE-GREENS when
 // those strings appear only inside `#` comments or under an unrelated job (INTERFACES round-9 F2).
@@ -1052,28 +1236,43 @@ import { MAX_WORKFLOW_BYTES, readTextGuarded } from './lib/guarded-read.mjs'
 
 /**
  * @typedef {object} JobRequirement
- * @property {string[]} runs Exact `run:` commands that must appear as `- run: <cmd>` INSIDE the job.
- * @property {string[]} [contains] OPTIONAL literal strings that must appear ANYWHERE inside the job's
- *   OWN block — for assertions that are not `run:` commands (a pinned action version, a matrix entry).
- *   STILL WITHIN THE SCOPE LIMIT: this is an indentation-SCOPED block search, not a YAML parser — it is
- *   merely not restricted to `run:` lines. It is block-bounded and comment-stripped, so it can NEVER
- *   degrade into the file-wide `y.includes(...)` false-green it exists to replace. Do NOT grow it into
- *   key/value lookups, path expressions, or anchor resolution.
+ * @property {string[]} runs Exact `run:` commands — the FULL command string, ARGUMENTS INCLUDED (`bash
+ *   fixtures/verdaccio-gallery/pack.sh ./artifacts`, not `bash`) — that must appear as a `run:` step
+ *   inside the job, at EITHER position: a list item (`- run: <cmd>`) or an indented property of a
+ *   MULTI-KEY step (`- env:` / `ARTIFACTS_DIR: …` / `run: <cmd>`). Both normalize to `run: <cmd>`.
+ *   Matching only the list-item form is what made the round-9 checker REJECT 06e's real `template-smoke`
+ *   gate step — the checker rejecting the very workflow it verifies (round-10 F1).
+ * @property {string[]} [lines] OPTIONAL exact NORMALIZED lines that must appear inside the job's OWN
+ *   block — for assertions that are not `run:` commands (a pinned action version, a matrix entry).
+ *   This is an EXACT LINE match, NOT a substring scan. The round-9 design used a block-scoped substring
+ *   (`contains`), but `template-smoke` carries `2.109.1` TWICE — the real pin AND a `grep -qF '2.109.1'`
+ *   drift check — so it PASSED with `version: latest`, satisfied purely by the grep argument. Shrinking
+ *   the haystack does not turn a substring search into an assertion (round-10 F2).
+ *   STILL WITHIN THE SCOPE LIMIT: an indentation-scoped exact-line match is not a YAML parser.
+ *   STATED RESIDUAL LIMIT — do not overclaim: `lines` proves `uses: supabase/setup-cli@v2` and
+ *   `with: { version: 2.109.1 }` both EXIST in the job, NOT that they are adjacent (not that the `with:`
+ *   belongs to that `uses:`). Proving adjacency needs a real YAML parser, which the SCOPE LIMIT forbids.
+ *   That gap is accepted deliberately. Do NOT grow this into key/value lookups or anchor resolution.
  */
 
 /**
  * THE shared CI-wiring table: job name → what that job MUST contain.
  * 06d OWNS this script and seeds the table; **later parts only APPEND an entry** (06e appends
- * `template-gallery` + `template-smoke`). Do NOT write a second CI-wiring checker — one script, one table.
+ * `pack-artifacts` + `template-gallery` + `template-smoke`). Do NOT write a second CI-wiring checker —
+ * one script, one table.
  * @type {Record<string, JobRequirement>}
  */
 export const REQUIRED_JOBS = {
   'publishable-versions': {
     runs: ['pnpm test:version-gate', 'pnpm check:publishable-versions'],
   },
-  // 06e APPENDS its entries here; nothing else in this file changes. For example, 06e's `template-smoke`
-  // pins the Supabase CLI, which is NOT a `run:` command — that is what `contains` is for:
-  //   'template-smoke': { runs: ['supabase db reset'], contains: ['2.109.1'] },
+  // 06e APPENDS its three entries here; nothing else in this file changes. For example, 06e's
+  // `template-smoke` pins the Supabase CLI, which is NOT a `run:` command — that is what `lines` is for:
+  //   'template-smoke': {
+  //     runs: ["supabase --version | grep -qF '2.109.1'",
+  //            'bash fixtures/verdaccio-gallery/gate.sh ${{ matrix.template }}'],
+  //     lines: ['uses: supabase/setup-cli@v2', 'with: { version: 2.109.1 }'],
+  //   },
 }
 
 export const DEFAULT_WORKFLOW = '.github/workflows/ci.yml'
@@ -1081,8 +1280,41 @@ export const DEFAULT_WORKFLOW = '.github/workflows/ci.yml'
 /** @param {string} line */
 const indentOf = (line) => line.length - line.trimStart().length
 
-/** Strip surrounding quotes so `- run: "pnpm x"` and `- run: pnpm x` compare equal.
- *  @param {string} value */
+/**
+ * Strip a trailing `#` comment, QUOTE-AWARE: a `#` inside `'…'` or `"…"` is a literal, not a comment, so
+ * `- run: supabase --version | grep -qF '2.109.1'   # fail loud` keeps its quoted `'2.109.1'` INTACT.
+ * (A naive `line.split('#')[0]` would truncate that run command and break the `runs` match.) Per YAML, a
+ * comment `#` starts a comment only at line start or after whitespace — `a#b` is not a comment.
+ * @param {string} line
+ */
+function stripComment(line) {
+  /** @type {string | null} */
+  let quote = null
+  for (let i = 0; i < line.length; i += 1) {
+    const ch = line[i]
+    if (quote !== null) {
+      if (ch === quote) quote = null
+      continue
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch
+      continue
+    }
+    if (ch === '#' && (i === 0 || /\s/.test(line[i - 1]))) return line.slice(0, i)
+  }
+  return line
+}
+
+/**
+ * Normalize a line for EXACT comparison: strip a trailing comment (quote-aware) → collapse runs of
+ * whitespace → trim → strip a leading list-item `- `. That last step is what lets ONE form match a step
+ * property at EITHER position: `- run: X` (list item) and a multi-key step's indented `run: X` both
+ * normalize to `run: X` (round-10 F1), so a single `/^run: …/` match handles both.
+ * @param {string} line
+ */
+const normalizeLine = (line) => stripComment(line).replace(/\s+/g, ' ').trim().replace(/^- /, '')
+
+/** Strip surrounding quotes so `run: "pnpm x"` and `run: pnpm x` compare equal. @param {string} value */
 function unquote(value) {
   const first = value[0]
   if ((first === '"' || first === "'") && value.length >= 2 && value.at(-1) === first) {
@@ -1152,37 +1384,42 @@ export function checkCiWiring(workflowPath = DEFAULT_WORKFLOW, requiredJobs = RE
       continue
     }
 
-    // The job's OWN block: bounded by the next key at the same-or-shallower indent. A `run:` (or any
-    // other literal) in a NEIGHBOURING job is outside it — which is the whole point. Comments are
-    // already stripped above, so a commented-out line is outside it too.
+    // The job's OWN block, NORMALIZED. Bounded by the next key at the same-or-shallower indent, so a
+    // `run:` (or any other line) in a NEIGHBOURING job is outside it — which is the whole point.
+    // Comment-only lines were dropped above, so a commented-out line is outside it too.
     /** @type {string[]} */
     const jobLines = []
     for (let i = starts[0] + 1; i < block.length && indentOf(block[i]) > jobIndent; i += 1) {
-      jobLines.push(block[i])
+      jobLines.push(normalizeLine(block[i]))
     }
 
+    // A `run:` step at EITHER position: `- run: X` (list item) and a multi-key step's indented `run: X`
+    // BOTH normalize to `run: X`, so ONE match handles both (round-10 F1). The matched command is the
+    // FULL string, arguments included — `bash fixtures/verdaccio-gallery/pack.sh ./artifacts`.
     /** @type {Set<string>} */
     const runs = new Set()
     for (const line of jobLines) {
-      const run = line.trim().match(/^-\s+run:\s+(.+)$/)
+      const run = line.match(/^run:\s+(.+)$/)
       if (run !== null) runs.add(unquote(run[1].trim()))
     }
     for (const command of requirement.runs) {
       if (!runs.has(command)) {
         problems.push(
-          `ci_wiring_run_missing: ${workflowPath} job "${jobName}" does not invoke \`${command}\` (expected an exact \`- run: ${command}\` entry inside that job)`,
+          `ci_wiring_run_missing: ${workflowPath} job "${jobName}" does not invoke \`${command}\` (expected an exact \`run: ${command}\` step inside that job — as \`- run:\` or as a multi-key step's \`run:\` property)`,
         )
       }
     }
 
-    // `contains`: a literal that is NOT a `run:` command (a pinned action version, a matrix entry).
-    // Searched ONLY within `jobLines` — never the whole file. That block-scoping is what makes this a
-    // real assertion instead of the `y.includes('2.109.1')` false-green it replaces.
-    const jobText = jobLines.join('\n')
-    for (const literal of requirement.contains ?? []) {
-      if (!jobText.includes(literal)) {
+    // `lines`: an EXACT match against a NORMALIZED line of the job's block — NEVER a substring scan.
+    // A substring scan is exactly what round-10 F2 removed: `template-smoke` carries `2.109.1` TWICE
+    // (the real pin AND a `grep -qF '2.109.1'` drift check), so `jobText.includes('2.109.1')` passed
+    // even with `version: latest`. Requiring the exact line `with: { version: 2.109.1 }` cannot be
+    // satisfied by a comment, by a grep argument, or by another job.
+    const jobLineSet = new Set(jobLines)
+    for (const required of requirement.lines ?? []) {
+      if (!jobLineSet.has(required)) {
         problems.push(
-          `ci_wiring_contains_missing: ${workflowPath} job "${jobName}" does not contain "${literal}" (it must appear inside THAT job's block — a match in another job or a comment does NOT count)`,
+          `ci_wiring_line_missing: ${workflowPath} job "${jobName}" has no line \`${required}\` (an EXACT normalized line inside THAT job's block — a substring, a comment, a grep argument, or a match in another job does NOT count)`,
         )
       }
     }
@@ -1192,7 +1429,7 @@ export function checkCiWiring(workflowPath = DEFAULT_WORKFLOW, requiredJobs = RE
 }
 
 // Exit-code contract: 0 = every required job is armed · 1 = a real finding (a job, a `run:`, or a
-// `contains` literal is missing/duplicated) · 2 = OPERATIONAL failure (the workflow is a symlink,
+// required `lines` entry is missing/duplicated) · 2 = OPERATIONAL failure (the workflow is a symlink,
 // oversized, or unreadable). An operational failure is NEVER 0 — automation reads the code.
 //
 // GOTCHA: guard `process.argv[1]` before `pathToFileURL` — it is UNDEFINED when this module is imported
@@ -1218,7 +1455,7 @@ if (import.meta.url === entryPoint) {
 }
 ```
 
-Re-run the test — **Expected: PASS**, `pass 13 / fail 0`. Then run the checker against the real `ci.yml`
+Re-run the test — **Expected: PASS**, `pass 16 / fail 0`. Then run the checker against the real `ci.yml`
 you just edited in 5b:
 
 ```
@@ -1292,13 +1529,24 @@ node --test scripts/test/guarded-read.test.mjs scripts/test/check-publishable-ve
 > false-greened on a commented-out job. `node scripts/check-ci-wiring.mjs` reads through `readTextGuarded`
 > and checks the STRUCTURE. Do not inline it back.
 
-**Expected:** `node --test` prints `pass 36 / fail 0` — 14 guarded-read (6 `readTextGuarded` + 8
-`readJsonGuarded`) + 9 version-gate + 13 ci-wiring. The version gate's three git branches are each
+**Expected:** `node --test` prints `pass 39 / fail 0` — 14 guarded-read (6 `readTextGuarded` + 8
+`readJsonGuarded`) + 9 version-gate + 16 ci-wiring. The version gate's three git branches are each
 pinned (status 0 with a match FAILS, status 1 PASSES, status 2 / spawn-error THROWS rather than
 reporting "no pins"); the ci-wiring checker's four hostile workflows each FAIL (comments-only,
-right-commands-wrong-job, one-command-missing, duplicate-job-name) and the intended job PASSES; and
-`contains` is proven block-scoped (a literal in a NEIGHBOURING job or in a COMMENT FAILS; inside the job
-PASSES). On a root/win32 runner the two EACCES cases self-skip → `pass 34 / skip 2`, still `fail 0`.
+right-commands-wrong-job, one-command-missing, duplicate-job-name) and the intended job PASSES; `lines`
+is proven to be an EXACT normalized-line match, not a substring scan (a `version: latest` pin FAILS even
+though a `grep -qF '2.109.1'` run line keeps the literal in the block — the round-10 F2 regression; a
+required line in a COMMENT or in a NEIGHBOURING job also FAILS); and — the acceptance test —
+**06e's real four-job workflow, pasted verbatim, PASSES with ZERO problems**, while deleting its
+multi-key `- env:`/`run:` gate step turns it RED. On a root/win32 runner the two EACCES cases self-skip →
+`pass 37 / skip 2`, still `fail 0`.
+
+> **Why the verbatim-06e test is the load-bearing one (round-10 F1).** The round-9 checker passed five
+> hand-made fixtures and would still have REJECTED the real workflow — its parser matched only the
+> list-item `- run: <cmd>` form, and `template-smoke`'s gate step is a multi-key step whose `run:` is an
+> indented property. A gate that rejects the very workflow it exists to verify is worse than no gate: it
+> is permanently RED and gets disabled. A fixture you wrote yourself cannot catch that class of defect —
+> only the real artifact can. Do not "simplify" this fixture.
 
 The version script prints its success line — exit 0, and it FAILS this chain with exit **1** on a real
 finding (a wrong version or a `0.0.0` consumer pin) or **2** on an operational failure, never 0. The
