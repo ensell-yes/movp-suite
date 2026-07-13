@@ -1036,8 +1036,15 @@ and fan out across all four templates, plus the Docker-free gallery gate.
 
 - **Create:** `fixtures/verdaccio-gallery/stage-create-movp.mjs` — the gallery pack-staging script
   (INTERFACES round-3 F1). Materializes a TEMP `create-movp` publish tree with all four templates,
-  never mutating the source worktree. It CONSUMES 06d's shared `copyTreeGuarded` from the built
-  `packages/create-movp/dist/index.js`; it does **not** define a guarded copier of its own.
+  never mutating the source worktree. It CONSUMES 06d's shared `copyTreeGuarded` **and
+  `copyFileGuarded`** from the built `packages/create-movp/dist/index.js`; it does **not** define a
+  guarded copier of its own, and it performs **no raw `copyFileSync` / `readFileSync`** on any source
+  path (INTERFACES round-4 F1).
+- **Create:** `fixtures/verdaccio-gallery/snapshot-tree.mjs` — the F2 gate utility: a deterministic
+  content-hash manifest of the subtrees the pack stages FROM (`packages/create-movp/` + `templates/`).
+  `pack.sh` / `gate.sh` snapshot BEFORE staging and compare AFTER, so the gate asserts **"staging
+  changed nothing"**, not "the worktree is pristine" (INTERFACES round-4 F2). Owned by 06e's fixture
+  (self-contained per INTERFACES F3 — no cross-import from `fixtures/verdaccio-crm-lite/`).
 - **Create:** `fixtures/verdaccio-gallery/gate.sh` (executable) — the COMPLETE `$TEMPLATE`-parameterized
   self-contained gallery gate authored inline in Step 2 (INTERFACES F3: no "copy/reconcile 06d's gate").
 - **Create:** `fixtures/verdaccio-gallery/pack.sh` (executable) — the CI pack-once producer authored
@@ -1054,17 +1061,25 @@ and fan out across all four templates, plus the Docker-free gallery gate.
   the edge-serve env-file pattern from `scripts/slice-e2e.sh` (lines 136-171), and the
   `+200`/`+300`/`+400`/`+500` port blocks. The gallery gate (Step 2) is authored in full here — it does
   NOT copy or reconcile against `fixtures/verdaccio-crm-lite/gate.sh`.
-- **Consumes (06d) — the guarded-copy primitive:** **`copyTreeGuarded(srcDir, destDir)`**, exported from
-  `packages/create-movp/src/copier.ts` and re-exported by the built `dist/index.js`. It is the sibling of
-  `copyTemplate` that copies VERBATIM (no token substitution) under the EXACT same untrusted-io guards:
-  `lstat`-before-read symlink reject (`template_symlink_rejected`), `EXCLUDED_DIRS` skip,
-  `MAX_FILE_BYTES`/`MAX_TOTAL_BYTES` bound-before-buffer, path-only error messages. 06e's pack staging
-  imports it from the BUILT dist — the exact compiled function `npm create movp` runs. **06e defines NO
-  guarded copier of its own** (INTERFACES round-3 F1; two implementations of the same guard = drift).
-  06d also owns its unit tests; 06e pins only the gallery-level pack invariants (Step 1c).
+- **Consumes (06d) — the guarded-copy primitives (BOTH of them):** **`copyTreeGuarded(srcDir, destDir)`**
+  and **`copyFileGuarded(src, dest)`**, exported from `packages/create-movp/src/copier.ts` and re-exported
+  by the built `dist/index.js`. `copyTreeGuarded` is the sibling of `copyTemplate` that copies VERBATIM
+  (no token substitution) under the EXACT same untrusted-io guards: `lstat`-before-read symlink reject
+  (`template_symlink_rejected`) — **including on the ROOT `srcDir` itself, before the first `readdir`**
+  (INTERFACES round-4 F1: a symlinked template root like `templates/crm-lite -> /external` is now
+  rejected, not followed) — plus `EXCLUDED_DIRS` skip, `MAX_FILE_BYTES`/`MAX_TOTAL_BYTES`
+  bound-before-buffer, and path-only error messages. `copyFileGuarded` applies the SAME guards to a
+  single explicit file copy (`lstat`-reject symlink/non-regular, size-bound before read), and is what
+  06e uses for EVERY individual file it stages (`package.json`) — a raw `copyFileSync` would bypass the
+  guards on an explicit read path (per [[untrusted-io-and-resource-bounds]]: guards apply on EVERY read
+  path, automatic AND explicit). 06e's pack staging imports both from the BUILT dist — the exact compiled
+  functions `npm create movp` runs. **06e defines NO guarded copier of its own** (INTERFACES round-3 F1;
+  two implementations of the same guard = drift). 06d also owns their unit tests; 06e pins only the
+  gallery-level pack invariants (Step 1d).
 - **Produces:** `fixtures/verdaccio-gallery/gate.sh <template>`,
-  `fixtures/verdaccio-gallery/stage-create-movp.mjs` (variadic over the four templates), and a CI matrix
-  over `[crm-lite, marketing-site, support-desk, knowledge-base]`.
+  `fixtures/verdaccio-gallery/stage-create-movp.mjs` (variadic over the four templates),
+  `fixtures/verdaccio-gallery/snapshot-tree.mjs` (the F2 "staging changed nothing" manifest), and a CI
+  matrix over `[crm-lite, marketing-site, support-desk, knowledge-base]`.
 
 ### Steps
 
@@ -1075,13 +1090,19 @@ round-3 F1). It assembles a `create-movp` PUBLISH tree in a caller-supplied TEMP
 worktree is NEVER mutated — with ALL FOUR templates staged, so the ONE shared tarball can scaffold any
 matrix leg.
 
-> **DRY — do NOT write a new guarded copier.** The guarded-copy primitive is **06d's
-> `copyTreeGuarded(srcDir, destDir)`** (`packages/create-movp/src/copier.ts`, a sibling of
-> `copyTemplate` reusing the EXACT same guards: `lstat`-before-read symlink reject →
-> `template_symlink_rejected`, `EXCLUDED_DIRS` skip, `MAX_FILE_BYTES`/`MAX_TOTAL_BYTES`
-> bound-before-buffer, path-only error messages — copying VERBATIM, no token substitution). Import it
-> from the freshly BUILT `packages/create-movp/dist/index.js` — the exact compiled function
+> **DRY — do NOT write a new guarded copier.** The guarded-copy primitives are **06d's
+> `copyTreeGuarded(srcDir, destDir)` and `copyFileGuarded(src, dest)`**
+> (`packages/create-movp/src/copier.ts`, siblings of `copyTemplate` reusing the EXACT same guards:
+> `lstat`-before-read symlink reject → `template_symlink_rejected` (on the ROOT `srcDir` too, before the
+> first `readdir` — INTERFACES round-4 F1), `EXCLUDED_DIRS` skip, `MAX_FILE_BYTES`/`MAX_TOTAL_BYTES`
+> bound-before-buffer, path-only error messages — copying VERBATIM, no token substitution). Import them
+> from the freshly BUILT `packages/create-movp/dist/index.js` — the exact compiled functions
 > `npm create movp` runs. Never reimplement the guards here, in bash, or in a second helper.
+>
+> **EVERY copy goes through a guard — trees AND single files.** `copyFileGuarded` is not optional
+> sugar: a raw `copyFileSync(join(pkgDir, 'package.json'), …)` follows a symlink and buffers an
+> unbounded file, which is exactly the trust-boundary hole the tree guard closes (round-4 F1). No
+> `copyFileSync` / `readFileSync` / `cp` on a source path may appear in this script.
 
 This mirrors 06d's `fixtures/verdaccio-crm-lite/stage-create-movp.mjs` (which stages the single
 crm-lite template); the gallery variant is variadic over the four templates. Plain `.mjs` run with
@@ -1091,15 +1112,18 @@ crm-lite template); the gallery variant is variadic over the four templates. Pla
 #!/usr/bin/env node
 // C6e pack-harness staging (INTERFACES F1): assemble a create-movp publish tree in a TEMP dir with
 // EVERY requested template staged, so ONE tarball scaffolds any matrix leg. The `files` whitelist
-// ships package.json + dist/ + templates/, so those are all we stage. Trees go through the SHARED
-// `copyTreeGuarded` (06d's copier: lstat/symlink-reject, regular-file-only, size-bound) — a symlinked
-// template file throws `template_symlink_rejected` WITHOUT reading its target, failing the pack. The
-// source worktree is never written to.
-import { copyFileSync, mkdirSync } from 'node:fs'
+// ships package.json + dist/ + templates/, so those are all we stage. EVERY read of a source path —
+// trees AND the single package.json — goes through 06d's SHARED guards (lstat/symlink-reject BEFORE
+// any read, including on the tree ROOT; regular-file-only; size-bound before buffering). A symlinked
+// template file OR a symlinked template root throws `template_symlink_rejected` WITHOUT reading its
+// target, failing the pack. GOTCHA: never reach for a raw `copyFileSync`/`readFileSync` here — an
+// explicit single-file copy is a read path too, and an unguarded one re-opens the exfiltration hole
+// (round-4 F1). The source worktree is never written to.
+import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
-// The BUILT create-movp dist re-exports copyTreeGuarded — the exact function `npm create movp` runs.
-// This module path is fixed relative to THIS script (fixtures/verdaccio-gallery/ → repo root).
-import { copyTreeGuarded } from '../../packages/create-movp/dist/index.js'
+// The BUILT create-movp dist re-exports BOTH guarded copiers — the exact functions `npm create movp`
+// runs. This module path is fixed relative to THIS script (fixtures/verdaccio-gallery/ → repo root).
+import { copyFileGuarded, copyTreeGuarded } from '../../packages/create-movp/dist/index.js'
 
 const [repoRoot, stagingDir, ...templates] = process.argv.slice(2)
 if (!repoRoot || !stagingDir || templates.length === 0) {
@@ -1109,7 +1133,8 @@ if (!repoRoot || !stagingDir || templates.length === 0) {
 const pkgDir = join(repoRoot, 'packages', 'create-movp')
 
 mkdirSync(stagingDir, { recursive: true })
-copyFileSync(join(pkgDir, 'package.json'), join(stagingDir, 'package.json'))
+// Single explicit file copy — guarded, NOT copyFileSync (round-4 F1).
+copyFileGuarded(join(pkgDir, 'package.json'), join(stagingDir, 'package.json'))
 copyTreeGuarded(join(pkgDir, 'dist'), join(stagingDir, 'dist')) // own build output — guarded anyway
 for (const t of templates) {
   if (!/^[a-z][a-z0-9-]*$/.test(t)) {
@@ -1121,7 +1146,104 @@ for (const t of templates) {
 console.log(`staged create-movp (${templates.join(', ')}) → ${stagingDir}`)
 ```
 
-**1b. Create the pack-once producer `fixtures/verdaccio-gallery/pack.sh`** (mark executable). The CI
+**1b. The F2 snapshot utility `fixtures/verdaccio-gallery/snapshot-tree.mjs`** (INTERFACES round-4 F2).
+The invariant the pack must hold is **"staging changed nothing in the source subtrees"** — NOT "the
+worktree is pristine". Asserting `packages/create-movp/templates` is absent, or that
+`git status --porcelain` is empty, tests the WRONG thing: it falsely fails any developer who has
+unrelated WIP or a pre-existing untracked file, and it is blind to a mutation that happens to leave git
+status unchanged. So: emit a deterministic content-hash manifest of `packages/create-movp/` +
+`templates/`, capture it BEFORE staging, capture it again AFTER, and pass iff the two are
+byte-identical. Pre-existing untracked files and unrelated edits are PRESERVED and irrelevant to the
+gate — they appear identically in both snapshots.
+
+```js
+#!/usr/bin/env node
+// C6e F2 gate utility: print a deterministic content-hash manifest of the subtrees the pack stages
+// FROM (packages/create-movp/ + templates/). pack.sh and gate.sh snapshot BEFORE staging and diff
+// AFTER: the gate passes iff staging changed NOTHING. It does NOT assert a pristine worktree — a
+// developer's untracked files and unrelated edits are preserved and simply appear in both snapshots.
+//
+// Untrusted-io discipline: lstat (never stat/readFile through a symlink) so a symlinked entry is
+// RECORDED, never followed; hash file bytes in bounded chunks (no whole-file buffer); print only
+// paths + hashes, never content.
+import { createHash } from 'node:crypto'
+import { closeSync, lstatSync, openSync, readSync, readdirSync, readlinkSync } from 'node:fs'
+import { join, relative, sep } from 'node:path'
+
+const SKIP_DIRS = new Set(['node_modules', '.git', '.turbo'])
+const CHUNK = 1 << 20 // 1 MiB — bound before buffer
+
+const repoRoot = process.argv[2]
+if (!repoRoot) {
+  console.error('usage: snapshot-tree.mjs <repoRoot>')
+  process.exit(2)
+}
+
+function hashFile(abs, size) {
+  const h = createHash('sha256')
+  const fd = openSync(abs, 'r')
+  try {
+    const buf = Buffer.allocUnsafe(Math.min(CHUNK, Math.max(size, 1)))
+    let read
+    while ((read = readSync(fd, buf, 0, buf.length, null)) > 0) h.update(buf.subarray(0, read))
+  } finally {
+    closeSync(fd)
+  }
+  return h.digest('hex')
+}
+
+// Manifest row: `<relpath>\t<kind> <hash>` — path FIRST so the sort (and therefore any diff) is
+// path-ordered and readable. Never any file content.
+const rows = []
+function walk(abs) {
+  for (const name of readdirSync(abs)) {
+    const child = join(abs, name)
+    const st = lstatSync(child) // lstat: a symlink is recorded by its target STRING, never followed
+    const rel = relative(repoRoot, child).split(sep).join('/')
+    if (st.isSymbolicLink()) {
+      rows.push(`${rel}\tL ${createHash('sha256').update(readlinkSync(child)).digest('hex')}`)
+    } else if (st.isDirectory()) {
+      rows.push(`${rel}\tD -`) // dir rows make a newly-created empty dir (e.g. a stray templates/) visible
+      if (!SKIP_DIRS.has(name)) walk(child)
+    } else if (st.isFile()) {
+      rows.push(`${rel}\tF ${hashFile(child, st.size)}`)
+    } else {
+      rows.push(`${rel}\tO -`) // socket/fifo/device — recorded, never opened
+    }
+  }
+}
+
+for (const sub of [join('packages', 'create-movp'), 'templates']) {
+  const abs = join(repoRoot, sub)
+  try {
+    if (!lstatSync(abs).isDirectory()) throw new Error(`${sub} is not a directory`)
+  } catch {
+    continue // absent subtree: nothing to snapshot (both snapshots agree)
+  }
+  walk(abs)
+}
+
+rows.sort()
+process.stdout.write(rows.join('\n') + '\n')
+```
+
+**Verify it is deterministic and content-addressed** (two back-to-back runs agree; a touched byte shows
+up):
+
+```
+node fixtures/verdaccio-gallery/snapshot-tree.mjs "$PWD" > /tmp/movp-snap-a
+node fixtures/verdaccio-gallery/snapshot-tree.mjs "$PWD" > /tmp/movp-snap-b
+diff -q /tmp/movp-snap-a /tmp/movp-snap-b && echo 'snapshot deterministic'
+printf '\n' >> templates/marketing-site/README.md
+node fixtures/verdaccio-gallery/snapshot-tree.mjs "$PWD" > /tmp/movp-snap-c
+diff -q /tmp/movp-snap-a /tmp/movp-snap-c >/dev/null || echo 'snapshot detects a one-byte change'
+git checkout -- templates/marketing-site/README.md
+rm -f /tmp/movp-snap-a /tmp/movp-snap-b /tmp/movp-snap-c
+```
+
+**Expected:** `snapshot deterministic` then `snapshot detects a one-byte change`.
+
+**1c. Create the pack-once producer `fixtures/verdaccio-gallery/pack.sh`** (mark executable). The CI
 `pack-artifacts` job runs `pnpm build` and then `pack.sh ./artifacts`, uploading the tarballs the
 `template-smoke` matrix consumes via `ARTIFACTS_DIR`. Because `create-movp` ships the template source in
 its tarball (06d `package.json` `"files": ["dist","templates"]`), pack.sh MUST stage ALL FOUR templates
@@ -1134,9 +1256,10 @@ that staging dir. The publishable set is exactly the 12 names in `check-publisha
 #!/usr/bin/env bash
 # Pack every publishable workspace artifact ONCE into <outdir>. Assumes `pnpm build` (dist/) already ran
 # (the CI pack-artifacts job runs it first). create-movp ships the templates in its tarball, so stage
-# ALL FOUR into a TEMP create-movp publish tree via stage-create-movp.mjs — which routes every copy
-# through the SHARED `copyTreeGuarded` (lstat/symlink-reject, regular-file-only, size-bound), NEVER a
-# raw `cp -R` into the worktree — and pack create-movp from there.
+# ALL FOUR into a TEMP create-movp publish tree via stage-create-movp.mjs — which routes EVERY copy
+# (trees AND single files) through the SHARED `copyTreeGuarded` / `copyFileGuarded` (lstat/symlink-reject
+# before read — root included, regular-file-only, size-bound), NEVER a raw `cp -R` or `copyFileSync` into
+# the worktree — and pack create-movp from there.
 set -euo pipefail
 OUT="${1:?usage: pack.sh <outdir>}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -1144,17 +1267,27 @@ FIXTURE_DIR="$REPO_ROOT/fixtures/verdaccio-gallery"
 mkdir -p "$OUT"
 ABS_OUT="$(cd "$OUT" && pwd)"
 
-# Stage all four templates into a TEMP publishable create-movp tree (source worktree untouched). An
-# external-symlink template file FAILS here with `template_symlink_rejected`, unread.
 CM_STAGE="$(mktemp -d "${TMPDIR:-/tmp}/movp-create-movp.XXXXXX")"
-trap 'rm -rf "$CM_STAGE"' EXIT
+SNAP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/movp-pack-snap.XXXXXX")"
+trap 'rm -rf "$CM_STAGE" "$SNAP_DIR"' EXIT
+
+# INTERFACES round-4 F2: the invariant is "staging changed NOTHING in the source subtrees", not "the
+# worktree is pristine". Snapshot packages/create-movp/ + templates/ BEFORE staging, compare AFTER.
+# A developer's unrelated WIP or pre-existing untracked files are PRESERVED — they appear in BOTH
+# snapshots and must never fail this gate.
+node "$FIXTURE_DIR/snapshot-tree.mjs" "$REPO_ROOT" >"$SNAP_DIR/before.txt"
+
+# Stage all four templates into a TEMP publishable create-movp tree (source worktree untouched). An
+# external-symlink template file — or a symlinked template ROOT — FAILS here with
+# `template_symlink_rejected`, unread.
 node "$FIXTURE_DIR/stage-create-movp.mjs" "$REPO_ROOT" "$CM_STAGE" \
   crm-lite marketing-site support-desk knowledge-base
 
-# Belt-and-suspenders (INTERFACES F1 test b): the pack must not have touched the source worktree.
-test ! -e "$REPO_ROOT/packages/create-movp/templates" || { echo "pack: wrote into the source worktree"; exit 1; }
-if [ -n "$(git -C "$REPO_ROOT" status --porcelain -- packages/create-movp templates)" ]; then
-  echo "pack: staging dirtied the tracked worktree under packages/create-movp or templates/"; exit 1;
+node "$FIXTURE_DIR/snapshot-tree.mjs" "$REPO_ROOT" >"$SNAP_DIR/after.txt"
+if ! diff -u "$SNAP_DIR/before.txt" "$SNAP_DIR/after.txt" >"$SNAP_DIR/diff.txt"; then
+  echo "pack: staging MUTATED the source subtrees (packages/create-movp/ or templates/):" >&2
+  cat "$SNAP_DIR/diff.txt" >&2   # paths + hashes only — the manifest never carries file content
+  exit 1
 fi
 
 # Pack the 12 source-only publishables from their own dirs; pack create-movp from the STAGING tree so
@@ -1166,13 +1299,19 @@ done
 echo "pack: wrote $(ls "$OUT"/*.tgz | wc -l | tr -d ' ') tarballs to $OUT"
 ```
 
-**Expected:** `pack: wrote 13 tarballs to <outdir>` (12 `@movp/*` publishables + `create-movp`), with no
-worktree-mutation error.
+> **Ordering gotcha:** the BEFORE snapshot must be taken after any build step that writes into
+> `packages/create-movp/dist/` and before the first staging write, and the AFTER snapshot immediately
+> after staging — i.e. neither `pnpm build` (CI runs it upstream of `pack.sh`) nor `pnpm pack`'s
+> `prepack` scripts may run between the two, or a legitimate dist rebuild would look like a mutation.
 
-**1c. F1 acceptance — the two locked tests, exercised against the SHARED `copyTreeGuarded`.** 06d owns
-the `copyTreeGuarded` UNIT tests (its `copier.test.ts` already pins external-symlink →
-`template_symlink_rejected` without reading the target, verbatim copy, and byte bounds) — do NOT
-duplicate them here. 06e pins the two F1 invariants at the level it owns: the GALLERY four-template pack.
+**Expected:** `pack: wrote 13 tarballs to <outdir>` (12 `@movp/*` publishables + `create-movp`), with no
+source-mutation error.
+
+**1d. F1 + F2 acceptance — the locked tests, exercised against the SHARED guarded copiers.** 06d owns the
+`copyTreeGuarded` / `copyFileGuarded` UNIT tests (its `copier.test.ts` pins external-symlink →
+`template_symlink_rejected` without reading the target — for a symlinked FILE, a symlinked tree ROOT, and
+an explicit single-file copy — plus verbatim copy and byte bounds) — do NOT duplicate them here. 06e pins
+the invariants at the level it owns: the GALLERY four-template pack.
 
 **(a) An external-symlink template file makes the pack FAIL without reading it.** Plant a symlink in a
 gallery template, confirm the pack aborts with the shared copier's code, and confirm the worktree is
@@ -1190,18 +1329,42 @@ rm -rf /tmp/movp-pack-symlink-check
 
 **Expected:** `symlink template rejected (unread)` then `secret never read into any tarball`.
 
-**(b) The worktree is byte-unchanged after a SUCCESSFUL pack.** `pack.sh` asserts this internally
-(above); confirm it independently:
+**(b) F2 — staging changes NOTHING, and a DIRTY worktree still passes.** The invariant is "the pack is a
+no-op on the source subtrees", NOT "the tree is pristine". Prove both halves at once: pre-create an
+untracked file *inside* `packages/create-movp/templates/` (the very path the old gate demanded be absent)
+AND dirty a tracked template file with unrelated WIP, then run the pack. It must PASS, and both files
+must survive byte-identical:
 
 ```
+# Pre-existing untracked file inside the package + an unrelated dirty edit to a tracked template file.
+mkdir -p packages/create-movp/templates
+printf 'preserve me\n' > packages/create-movp/templates/preserve.txt
+printf '\n<!-- local WIP -->\n' >> templates/marketing-site/README.md
+BEFORE_PRESERVE="$(shasum -a 256 < packages/create-movp/templates/preserve.txt)"
+BEFORE_README="$(shasum -a 256 < templates/marketing-site/README.md)"
+
 bash fixtures/verdaccio-gallery/pack.sh /tmp/movp-pack-check \
-  && git status --porcelain -- packages/create-movp templates | grep -q . \
-  && { echo 'FAIL: pack mutated the worktree'; exit 1; } || echo 'worktree byte-unchanged after pack'
-test ! -e packages/create-movp/templates && echo 'no templates/ dir created in the package'
-rm -rf /tmp/movp-pack-check
+  && echo 'pack PASSED on a dirty worktree (staging changed nothing)' \
+  || { echo 'FAIL: pack rejected a legitimately dirty worktree'; exit 1; }
+
+test "$(shasum -a 256 < packages/create-movp/templates/preserve.txt)" = "$BEFORE_PRESERVE" \
+  && echo 'pre-existing untracked file preserved byte-identical'
+test "$(shasum -a 256 < templates/marketing-site/README.md)" = "$BEFORE_README" \
+  && echo 'unrelated WIP edit preserved byte-identical'
+
+# Restore the sandbox.
+rm -rf /tmp/movp-pack-check packages/create-movp/templates
+git checkout -- templates/marketing-site/README.md
 ```
 
-**Expected:** `worktree byte-unchanged after pack` then `no templates/ dir created in the package`.
+**Expected:** `pack PASSED on a dirty worktree (staging changed nothing)`, then
+`pre-existing untracked file preserved byte-identical`, then
+`unrelated WIP edit preserved byte-identical`.
+
+**(c) The snapshot gate has teeth.** Sensitivity is pinned by the 1b check (`snapshot detects a one-byte
+change`) — `pack.sh` diffs the exact same manifests, so any staging write into `packages/create-movp/`
+or `templates/` (a stray `cp -R`, a copier regression, a new dir) shows up as a manifest row and fails
+the pack. Do not add a second fixture for it.
 
 **2. Author the COMPLETE self-contained gallery gate `fixtures/verdaccio-gallery/gate.sh`** (mark
 executable — `chmod +x`). This is the full script — paste it verbatim; it does NOT copy or reconcile
@@ -1277,14 +1440,23 @@ else
   ( cd "$REPO_ROOT" && pnpm --filter create-movp build )
   # create-movp ships templates in its tarball; stage ALL FOUR into a TEMP publishable create-movp tree
   # so the bundle can scaffold any template — NEVER mutate the source worktree. stage-create-movp.mjs
-  # routes every copy through the SHARED `copyTreeGuarded` (06d's copier: lstat/symlink-reject before
-  # read, regular-file-only, size-bound), so an external-symlink template file FAILS the pack unread
-  # with `template_symlink_rejected`. No raw `cp -R`, no second guarded-copy implementation.
+  # routes EVERY copy — trees AND the single package.json — through the SHARED `copyTreeGuarded` /
+  # `copyFileGuarded` (06d's copier: lstat/symlink-reject before read incl. the tree ROOT,
+  # regular-file-only, size-bound), so an external-symlink template file FAILS the pack unread with
+  # `template_symlink_rejected`. No raw `cp -R`, no `copyFileSync`, no second guard implementation.
   CM_STAGE="$WORK/create-movp-stage"   # under $WORK; the cleanup trap rm -rf's it
+  # INTERFACES round-4 F2: assert "staging changed NOTHING", not "the worktree is pristine" — a local
+  # developer run may legitimately have WIP edits and untracked files, which must be PRESERVED, not
+  # failed on. Snapshot the source subtrees before staging and diff after. The builds above already ran,
+  # so dist/ is stable across the two snapshots.
+  node "$REPO_ROOT/fixtures/verdaccio-gallery/snapshot-tree.mjs" "$REPO_ROOT" >"$WORK/src-before.txt"
   node "$REPO_ROOT/fixtures/verdaccio-gallery/stage-create-movp.mjs" \
     "$REPO_ROOT" "$CM_STAGE" "${ALL_TEMPLATES[@]}"
-  # The staging must not have touched the source worktree (INTERFACES F1).
-  test ! -e "$REPO_ROOT/packages/create-movp/templates" || { echo "gate: pack wrote into the source worktree"; exit 1; }
+  node "$REPO_ROOT/fixtures/verdaccio-gallery/snapshot-tree.mjs" "$REPO_ROOT" >"$WORK/src-after.txt"
+  if ! diff -u "$WORK/src-before.txt" "$WORK/src-after.txt"; then
+    echo "gate: staging MUTATED packages/create-movp/ or templates/ (see manifest diff above)" >&2
+    exit 1
+  fi
   # Pack the source-only publishables from their dirs; pack create-movp from the STAGING tree.
   for pkg in "${PUBLISHABLE[@]}"; do
     ( cd "$REPO_ROOT/packages/$pkg" && npm pack --pack-destination "$PACK_DIR" >/dev/null )
@@ -1528,18 +1700,26 @@ pnpm exec tsx scripts/check-template-gallery.ts \
   && test -x fixtures/verdaccio-gallery/gate.sh \
   && test -x fixtures/verdaccio-gallery/pack.sh \
   && test -f fixtures/verdaccio-gallery/stage-create-movp.mjs \
+  && test -f fixtures/verdaccio-gallery/snapshot-tree.mjs \
   && grep -qF 'copyTreeGuarded' fixtures/verdaccio-gallery/stage-create-movp.mjs \
+  && grep -qF 'copyFileGuarded' fixtures/verdaccio-gallery/stage-create-movp.mjs \
+  && ! grep -Eq 'copyFileSync|readFileSync' fixtures/verdaccio-gallery/stage-create-movp.mjs \
+  && grep -qF 'snapshot-tree.mjs' fixtures/verdaccio-gallery/pack.sh \
+  && ! grep -Eq 'git status --porcelain' fixtures/verdaccio-gallery/pack.sh \
   && ! grep -REq 'rm -rf .*packages/create-movp/templates|cp -R .*packages/create-movp' fixtures/verdaccio-gallery/ \
   && node -e "const y=require('node:fs').readFileSync('.github/workflows/ci.yml','utf8'); if(!['crm-lite','marketing-site','support-desk','knowledge-base'].every(t=>y.includes(t))) throw new Error('matrix missing a template'); for(const j of ['template-gallery:','pack-artifacts:','template-smoke:']) if(!y.includes(j)) throw new Error('missing job '+j); if(!y.includes('2.109.1')) throw new Error('template-smoke setup-cli not pinned to 2.109.1'); console.log('ok')"
 ```
 
-**Expected:** gallery gate reports 3 templates verified; all three fixture scripts exist (gate/pack
-executable); the staging script routes through the SHARED `copyTreeGuarded` and NO fixture reintroduces a
-raw `cp -R`/`rm -rf` into `packages/create-movp`; `ci.yml` contains all four template names, the three new
-jobs, and the pinned `2.109.1` CLI. The F1 pack invariants (symlink-reject, worktree byte-unchanged) are
-pinned by Step 1c. In CI, `template-smoke` runs each of the four templates' scaffold → reset →
-real-surface smoke against the once-packed tarballs; `template-gallery` runs the Docker-free composition
-gate.
+**Expected:** gallery gate reports 3 templates verified; all four fixture scripts exist (gate/pack
+executable); the staging script routes EVERY copy through the SHARED `copyTreeGuarded` /
+`copyFileGuarded` with **no raw `copyFileSync`/`readFileSync` left on any source path** (round-4 F1); the
+pack gates on the `snapshot-tree.mjs` before/after manifest and **no longer on `git status --porcelain`**
+(round-4 F2 — a dirty worktree is legal); and NO fixture reintroduces a raw `cp -R`/`rm -rf` into
+`packages/create-movp`. `ci.yml` contains all four template names, the three new jobs, and the pinned
+`2.109.1` CLI. The pack invariants (symlink-reject unread; staging changed nothing; dirty worktree
+preserved and passing) are pinned by Step 1d. In CI, `template-smoke` runs each of the four templates'
+scaffold → reset → real-surface smoke against the once-packed tarballs; `template-gallery` runs the
+Docker-free composition gate.
 
 ---
 

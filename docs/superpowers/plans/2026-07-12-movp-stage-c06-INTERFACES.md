@@ -184,6 +184,23 @@ Both are APPROVED — the executor does NOT stop on them:
   is RECORDED (per INTERFACES) — retain ONLY the astro@^6 peer-compat STOP; remove the
   "stop and request approval" language so a context-poor executor does not halt unnecessarily.
 
+## Plan review round 4 — locked resolutions (2026-07-13)
+
+- **F1 guard the ROOT and every explicit file copy (06d owns primitives; 06e consumes).**
+  `copyTreeGuarded` currently `readdir`s `srcDir` BEFORE validating it — a symlinked template ROOT
+  (`templates/crm-lite -> /external`) is followed. Fix: `lstat` EVERY directory including the initial
+  root before `readdir`; reject symlink/non-dir with `template_symlink_rejected`. Additionally, both
+  staging scripts copy `packages/create-movp/package.json` with a raw `copyFileSync` — bypassing the
+  guards. Add **`copyFileGuarded(src, dest)`** (lstat-reject symlink/non-regular, size-bound before
+  read) in `src/copier.ts` and use it for EVERY explicit file copy in both staging scripts. Per
+  [[untrusted-io-and-resource-bounds]]: guards apply on EVERY read path, automatic AND explicit.
+- **F2 gates must assert "staging changed nothing", NOT "the tree is pristine" (06d + 06e).**
+  Asserting `packages/create-movp/templates` is absent and `git status --porcelain` is empty FALSELY
+  fails when a developer has unrelated WIP or pre-existing untracked files (the worktree may be dirty).
+  Fix: SNAPSHOT the relevant source subtree (content hashes of `packages/create-movp` + `templates`)
+  BEFORE staging and compare AFTER; the gate passes iff the snapshot is byte-identical. Pre-existing
+  untracked files and unrelated edits are PRESERVED, not failed on.
+
 ## Stable error codes (all parts)
 
 `schema_runtime_mismatch` · `new_generated_delta_required` · `platform_artifact_invalid` ·
