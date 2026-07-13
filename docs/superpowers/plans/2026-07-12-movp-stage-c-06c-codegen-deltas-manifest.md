@@ -15,6 +15,7 @@
 - **Never use `any`.** Use `unknown` + a runtime type guard, or a real type.
 - **Zero-writes-on-drift is a hard invariant.** In project mode, compute every expected file body and compare ALL existing files BEFORE writing ANY file. If a comparison fails, throw and write nothing.
 - **Untrusted I/O discipline** ([[untrusted-io-and-resource-bounds]]): every read path does `lstat` and rejects symlinks BEFORE `readFile`; bounds size before buffering (`MAX_GENERATED_FILE_BYTES = 10 * 1024 * 1024`, already defined in `generate.ts`); validates parsed JSON structurally before dereferencing; never logs file/JSON contents (path + reason only).
+- **F1 atomic safe-write (INTERFACES round 2) — ONE shared helper for EVERY generated artifact.** `packages/codegen/src/safe-write.ts` exports `atomicWriteFile(path, contents, opts?)`; `movp.deltas.json`, `movp.schema.json`, and every project-mode generated migration write THROUGH it — no call site does its own `writeFile`. It closes two gaps in the naive `lstat`-then-`writeFile({mode})`: (1) TOCTOU — a symlink swapped in AFTER the lstat is then followed by `writeFile`; (2) `writeFile({mode})` does NOT chmod an ALREADY-EXISTING file (a pre-existing `0o644` registry stays `0o644`). Mechanism: write bytes to a sibling `<path>.<rand>.tmp` created with EXCLUSIVE `flag: 'wx'` + `mode: 0o600`; `lstat` the destination and refuse a symlink / non-regular target; `rename` the temp over the destination (atomic on one filesystem; `rename` replaces the destination inode — it never follows or writes through a symlink there, and the renamed file carries the temp's `0o600`); on ANY error `unlink` the temp.
 - **Stable error codes** (exact strings, cross-part): `new_generated_delta_required`, `platform_row_delete_forbidden`. C6c-local consistency codes: `missing_metadata_row`, `altered_metadata_row`, `stale_metadata_row`, `invalid_deltas_registry`.
 - **Determinism:** manifest collections ordered by `name`, fields by `name`; JSON serialized as `JSON.stringify(x, null, 2) + '\n'`.
 - **After every change run the affected Vitest file and show output; commit per task.**
@@ -23,6 +24,7 @@
 
 ## File map
 
+- Create `packages/codegen/src/safe-write.ts` — the ONE shared `atomicWriteFile` helper (F1, Task 1).
 - Create `packages/codegen/src/deltas-registry.ts` — `movp.deltas.json` types + validated loader (Task 1).
 - Modify `packages/codegen/src/emit-sql.ts` — add project-scoped emitters + prune guard (Task 2).
 - Modify `packages/codegen/src/generate.ts` — add project-mode branch keyed on `deltasRegistryPath` (Task 3).
@@ -38,23 +40,26 @@
 ### Task 1: Validated `movp.deltas.json` delta registry loader
 
 **Files:**
+- Create: `packages/codegen/src/safe-write.ts` (the shared `atomicWriteFile` helper — F1)
 - Create: `packages/codegen/src/deltas-registry.ts`
 - Test: `packages/codegen/test/deltas-registry.test.ts`
 - Modify: `packages/codegen/src/index.ts` (add exports)
 
 **Interfaces:**
 - Consumes (06a/06b): none directly; pure I/O + validation.
+- Produces (F1 shared helper, reused by Tasks 3/4/5):
+  - `atomicWriteFile(path: string, contents: string, opts?: { onRefuse?: (reason: string) => never }): Promise<void>` — writes `contents` to a sibling `0o600` temp with EXCLUSIVE creation, `lstat`-refuses a symlink / non-regular destination, then `rename`s the temp over the destination (atomic; re-chmods a pre-existing `0o644` file to `0o600`; never follows a symlink). `onRefuse` maps the refusal to a caller-specific error (e.g. `invalid_deltas_registry`); it defaults to a generic `safe_write_refused` throw.
 - Produces (06d/06f + later C6c tasks rely on this):
   - `interface DeltaRegistryEntry { file: string; collections: string[]; events: string[] }`
   - `interface DeltaRegistry { deltas: DeltaRegistryEntry[] }` — the on-disk shape of `movp.deltas.json` (locked in INTERFACES §"Project codegen: deltas + manifest").
   - `loadDeltaRegistry(path: string): Promise<DeltaRegistry>` — missing file → `{ deltas: [] }`; symlink / oversized / structurally-invalid → throws `Error` whose message starts with `invalid_deltas_registry`.
-  - `saveDeltaRegistry(path: string, registry: DeltaRegistry): Promise<void>` — safe-write (F6): `lstat`-rejects a symlink / non-regular-file target BEFORE writing (no follow-through), then writes `JSON.stringify(registry, null, 2) + '\n'` with least-privilege mode `0o600`.
+  - `saveDeltaRegistry(path: string, registry: DeltaRegistry): Promise<void>` — validates the registry, then delegates the write to the shared `atomicWriteFile` (F1): temp + `rename`, symlink/non-regular target refused (mapped to `invalid_deltas_registry`), least-privilege `0o600` even over a pre-existing `0o644` file.
 
 - [ ] **Step 1: Write the failing test**
 
 ```ts
 // packages/codegen/test/deltas-registry.test.ts
-import { mkdtemp, readFile, symlink, writeFile } from 'node:fs/promises'
+import { chmod, mkdtemp, readFile, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -101,7 +106,7 @@ describe('loadDeltaRegistry', () => {
     await expect(loadDeltaRegistry(path)).rejects.toThrow(/invalid_deltas_registry/)
   })
 
-  it('safe-write refuses to overwrite a symlinked registry target without following it (F6)', async () => {
+  it('safe-write refuses to overwrite a symlinked registry target without following it (F1)', async () => {
     const d = await dir()
     const target = join(d, 'outside.json')
     const original = JSON.stringify({ deltas: [] })
@@ -116,6 +121,17 @@ describe('loadDeltaRegistry', () => {
     // The symlink's target must be byte-unchanged — the write must NOT have followed the link.
     expect(await readFile(target, 'utf8')).toBe(original)
   })
+
+  it('safe-write re-chmods a PRE-EXISTING 0o644 registry down to 0o600 (F1)', async () => {
+    const d = await dir()
+    const path = join(d, 'movp.deltas.json')
+    // A registry that already exists world/group-readable — the exact case writeFile({mode})
+    // fails to fix (mode is only honoured on CREATE, not on an overwrite of an existing file).
+    await writeFile(path, `${JSON.stringify({ deltas: [] })}\n`)
+    await chmod(path, 0o644)
+    await saveDeltaRegistry(path, { deltas: [] })
+    expect((await stat(path)).mode & 0o777).toBe(0o600)
+  })
 })
 ```
 
@@ -126,8 +142,81 @@ Expected: FAIL — `Cannot find module '../src/deltas-registry.ts'`.
 
 - [ ] **Step 3: Write minimal implementation**
 
+First the shared F1 atomic writer (`safe-write.ts`); `deltas-registry.ts` (and Tasks 3/4/5) import it — no call site writes files directly:
+
+```ts
+// packages/codegen/src/safe-write.ts
+import { randomBytes } from 'node:crypto'
+
+// F1 (INTERFACES round 2): the ONE atomic, symlink-safe write for every generated artifact
+// (movp.deltas.json, movp.schema.json, generated migrations). Fixes two gaps in the naive
+// `lstat`-then-`writeFile({ mode })`:
+//   (1) TOCTOU — a symlink swapped in AFTER the lstat is then FOLLOWED by writeFile;
+//   (2) writeFile({ mode }) does NOT chmod an ALREADY-EXISTING file — a pre-existing 0o644
+//       registry stays 0o644.
+// Both close by writing to a fresh 0o600 temp and renaming it over the destination: rename
+// replaces the destination inode (so the result is 0o600) and NEVER follows / writes through
+// a symlink sitting at the destination.
+const SAFE_FILE_MODE = 0o600
+
+interface SafeFs {
+  lstat(path: string): Promise<{ isFile(): boolean; isSymbolicLink(): boolean }>
+  writeFile(path: string, data: string, options: { flag: 'wx'; mode: number }): Promise<void>
+  rename(oldPath: string, newPath: string): Promise<void>
+  unlink(path: string): Promise<void>
+}
+
+async function nodeFs(): Promise<SafeFs> {
+  return (await import('node:fs/promises')) as unknown as SafeFs
+}
+
+function isMissing(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && 'code' in error && (error as { code: unknown }).code === 'ENOENT'
+}
+
+export interface AtomicWriteOptions {
+  // Map the "destination is a symlink / non-regular file" refusal onto a caller-specific error
+  // (e.g. saveDeltaRegistry → `invalid_deltas_registry`). Must never return (typed `never`).
+  onRefuse?: (reason: string) => never
+}
+
+export async function atomicWriteFile(path: string, contents: string, opts: AtomicWriteOptions = {}): Promise<void> {
+  const f = await nodeFs()
+  const refuse = opts.onRefuse ?? ((reason: string): never => {
+    throw new Error(`safe_write_refused: ${reason}`)
+  })
+  // Sibling temp in the SAME dir so `rename` is atomic (same filesystem). Exclusive create
+  // (`wx`) + 0o600 means the bytes never touch a world/group-readable inode.
+  const tmp = `${path}.${randomBytes(6).toString('hex')}.tmp`
+  await f.writeFile(tmp, contents, { flag: 'wx', mode: SAFE_FILE_MODE })
+  try {
+    let info: { isFile(): boolean; isSymbolicLink(): boolean } | null = null
+    try {
+      info = await f.lstat(path)
+    } catch (error: unknown) {
+      if (!isMissing(error)) throw error
+    }
+    if (info !== null) {
+      if (info.isSymbolicLink()) refuse(`${path}: refusing to overwrite a symlink`)
+      if (!info.isFile()) refuse(`${path}: not a regular file`)
+    }
+    // `rename` never follows a symlink at `path`; even in a TOCTOU race after the lstat it
+    // replaces the link itself, so the write can never land on the link's external target.
+    await f.rename(tmp, path)
+  } catch (error: unknown) {
+    // Never leave the temp behind — refusal, rename race, or disk error alike.
+    await f.unlink(tmp).catch(() => {})
+    throw error
+  }
+}
+```
+
+Then the registry loader/saver, which delegates its write to `atomicWriteFile`:
+
 ```ts
 // packages/codegen/src/deltas-registry.ts
+import { atomicWriteFile } from './safe-write.ts'
+
 export interface DeltaRegistryEntry {
   file: string
   collections: string[]
@@ -139,9 +228,8 @@ export interface DeltaRegistry {
 }
 
 const MAX_REGISTRY_BYTES = 1 * 1024 * 1024
-// F6: movp.deltas.json can carry sensitive collection/event refs — write it 0o600
-// (least-privilege; never world/group-readable). Per [[untrusted-io-and-resource-bounds]].
-const REGISTRY_FILE_MODE = 0o600
+// movp.deltas.json can carry sensitive collection/event refs; the shared atomicWriteFile (F1)
+// writes it 0o600 (least-privilege; never world/group-readable) — see safe-write.ts.
 
 function fail(reason: string): never {
   // Never include file CONTENTS in diagnostics — path + reason only.
@@ -170,10 +258,10 @@ function assertRegistry(value: unknown, path: string): asserts value is DeltaReg
 }
 
 async function nodeFs() {
+  // Read-path only: the write goes through the shared atomicWriteFile (F1).
   return (await import('node:fs/promises')) as {
     lstat(path: string): Promise<{ isFile(): boolean; isSymbolicLink(): boolean; size: number }>
     readFile(path: string, encoding: 'utf8'): Promise<string>
-    writeFile(path: string, contents: string, options?: { mode: number }): Promise<void>
   }
 }
 
@@ -203,25 +291,15 @@ export async function loadDeltaRegistry(path: string): Promise<DeltaRegistry> {
 
 export async function saveDeltaRegistry(path: string, registry: DeltaRegistry): Promise<void> {
   assertRegistry(registry, path)
-  const f = await nodeFs()
-  // F6 safe-write ([[untrusted-io-and-resource-bounds]]): lstat the target BEFORE writing
-  // and refuse to follow/overwrite a symlink or non-regular file (a planted symlink could
-  // redirect the write outside the project). Then write with a least-privilege mode.
-  let info: Awaited<ReturnType<typeof f.lstat>> | null = null
-  try {
-    info = await f.lstat(path)
-  } catch (error: unknown) {
-    if (!isMissing(error)) throw error
-  }
-  if (info !== null) {
-    if (info.isSymbolicLink()) fail(`${path}: refusing to overwrite a symlink`)
-    if (!info.isFile()) fail(`${path}: not a regular file`)
-  }
-  await f.writeFile(path, `${JSON.stringify(registry, null, 2)}\n`, { mode: REGISTRY_FILE_MODE })
+  // F1 atomic safe-write ([[untrusted-io-and-resource-bounds]]): the shared helper writes a
+  // 0o600 temp and renames it over `path`. It refuses (never follows) a symlink / non-regular
+  // target — `fail` maps that refusal to the `invalid_deltas_registry` code — and re-chmods a
+  // pre-existing 0o644 registry down to 0o600 (which writeFile({ mode }) would NOT do).
+  await atomicWriteFile(path, `${JSON.stringify(registry, null, 2)}\n`, { onRefuse: fail })
 }
 ```
 
-Add to `packages/codegen/src/index.ts`:
+Add to `packages/codegen/src/index.ts` (`atomicWriteFile` stays internal — Tasks 3/4/5 import it from `./safe-write.ts` directly; no public surface):
 
 ```ts
 export {
@@ -235,16 +313,16 @@ export {
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `pnpm --filter @movp/codegen exec vitest run test/deltas-registry.test.ts`
-Expected: PASS — 6 tests.
+Expected: PASS — 7 tests.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add packages/codegen/src/deltas-registry.ts packages/codegen/test/deltas-registry.test.ts packages/codegen/src/index.ts
-git commit -m "feat(codegen): C6c.1 validated movp.deltas.json registry loader"
+git add packages/codegen/src/safe-write.ts packages/codegen/src/deltas-registry.ts packages/codegen/test/deltas-registry.test.ts packages/codegen/src/index.ts
+git commit -m "feat(codegen): C6c.1 atomicWriteFile helper + validated movp.deltas.json registry loader"
 ```
 
-**Gate:** `pnpm --filter @movp/codegen exec vitest run test/deltas-registry.test.ts` PASS (6). Symlink + malformed load inputs throw `invalid_deltas_registry` with zero content leakage; the write path (`saveDeltaRegistry`) refuses to follow/overwrite a symlinked target (F6 safe-write) and leaves its target byte-unchanged, writing `0o600`.
+**Gate:** `pnpm --filter @movp/codegen exec vitest run test/deltas-registry.test.ts` PASS (7). Symlink + malformed load inputs throw `invalid_deltas_registry` with zero content leakage; the write path (`saveDeltaRegistry` → `atomicWriteFile`, F1) refuses to follow/overwrite a symlinked target and leaves its external target byte-unchanged, and a pre-existing `0o644` registry ends `0o600` after a save (stat asserts the mode).
 
 ---
 
@@ -556,6 +634,7 @@ Add imports at the top:
 ```ts
 import { emitProjectDeltaSql, emitProjectMigration } from './emit-sql.ts'
 import { loadDeltaRegistry, type DeltaRegistryEntry } from './deltas-registry.ts'
+import { atomicWriteFile } from './safe-write.ts'
 ```
 
 Extend `GenerateOptions`:
@@ -659,9 +738,10 @@ async function generateProject(
   }
 
   // NEVER delete generated migrations in project mode (unlike the monorepo cleanup).
+  // F1 atomic safe-write: temp + rename; refuses a symlinked / non-regular target (a planted
+  // symlink can never redirect the write outside the migrations dir) and writes 0o600.
   for (const item of toWrite) {
-    await assertSafeWriteTarget(f, item.path, 'generated migration')
-    await f.writeFile(item.path, item.expected)
+    await atomicWriteFile(item.path, item.expected)
   }
 
   return {
@@ -775,6 +855,7 @@ Expected: FAIL — `Cannot find module '../src/new-delta.ts'`.
 import type { MovpSchema } from '@movp/core-schema'
 import { emitProjectDeltaSql } from './emit-sql.ts'
 import { loadDeltaRegistry, saveDeltaRegistry } from './deltas-registry.ts'
+import { atomicWriteFile } from './safe-write.ts'
 
 const TIMESTAMP = /^\d{14}$/
 const NAME = /^[a-z][a-z0-9_]*$/
@@ -791,13 +872,6 @@ function utcTimestamp(): string {
   const d = new Date()
   const p = (n: number, w = 2): string => String(n).padStart(w, '0')
   return `${d.getUTCFullYear()}${p(d.getUTCMonth() + 1)}${p(d.getUTCDate())}${p(d.getUTCHours())}${p(d.getUTCMinutes())}${p(d.getUTCSeconds())}`
-}
-
-async function nodeFs() {
-  return (await import('node:fs/promises')) as {
-    lstat(path: string): Promise<{ isSymbolicLink(): boolean }>
-    writeFile(path: string, contents: string): Promise<void>
-  }
 }
 
 export async function newDelta(
@@ -819,18 +893,11 @@ export async function newDelta(
   const body = emitProjectDeltaSql(o.schema, { collections, events })
 
   const migrationPath = `${o.migrationsDir}/${file}`.replace(/\/+/g, '/')
-  const f = await nodeFs()
-  // lstat-before-write: refuse to follow a symlink planted at the target path.
-  try {
-    if ((await f.lstat(migrationPath)).isSymbolicLink()) throw new Error(`generated migration is a symlink: ${migrationPath}`)
-  } catch (error: unknown) {
-    const missing = typeof error === 'object' && error !== null && 'code' in error && (error as { code: unknown }).code === 'ENOENT'
-    if (!missing) throw error
-  }
 
   // Persist ownership FIRST so a crash mid-write cannot leave an unowned migration.
   await saveDeltaRegistry(o.registryPath, { deltas: [...registry.deltas, { file, collections, events }] })
-  await f.writeFile(migrationPath, body)
+  // F1 atomic safe-write: temp + rename; refuses (never follows) a symlink planted at the target.
+  await atomicWriteFile(migrationPath, body)
   return { file, collections, events }
 }
 ```
@@ -1055,10 +1122,9 @@ In `generateProject`, after the write loop and before `return`:
 ```ts
   if (options.manifestPath !== undefined) {
     const generatorVersion = await resolveGeneratorVersion(options.generatorVersion)
-    // F6 safe-write: assertSafeWriteTarget (generate.ts) lstat-rejects a symlink / non-regular
-    // target before overwrite. movp.schema.json is public, non-secret schema, so default mode.
-    await assertSafeWriteTarget(f, options.manifestPath, 'schema manifest')
-    await f.writeFile(options.manifestPath, serializeManifest(emitManifest(schema, { generatorVersion })))
+    // F1 atomic safe-write via the shared helper (temp + rename; refuses a symlinked / non-regular
+    // target). Writes 0o600 like every other generated artifact — one write path, no exceptions.
+    await atomicWriteFile(options.manifestPath, serializeManifest(emitManifest(schema, { generatorVersion })))
   }
 ```
 

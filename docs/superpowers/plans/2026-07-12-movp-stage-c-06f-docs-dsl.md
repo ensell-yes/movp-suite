@@ -6,12 +6,12 @@
 
 **Architecture:** `docs-site/` is a new **private workspace package** `@movp/docs-site` (added to `pnpm-workspace.yaml`). Its build is `astro build` behind Starlight. The generator is a **pure function** `generateDslReference(manifest: SchemaManifest): GeneratedPage[]` in `docs-site/src/dsl-reference/generate.ts`, consuming the locked `SchemaManifest` type from `@movp/codegen` (06c). Two `tsx` emit scripts commit derived artifacts into the repo — `scripts/emit-docs-manifest.ts` writes `docs-site/movp.schema.json` from the live `@movp/core-schema` `schema` via C6c's `emitManifest`; `docs-site/scripts/gen-dsl-reference.ts` reads that manifest and writes the reference pages. Both are gated by regenerate-then-`git diff --exit-code`, mirroring the existing `schema-codegen-unit` CI job (`.github/workflows/ci.yml`). The consistency gate `scripts/check-docs-manifest.ts` pins the committed manifest to the live `@movp/core-schema` `schema`: it projects the manifest into the DB-shaped rows C6c's comparator expects and runs `checkMetadataConsistency(schema, …)` as a **pure projection-equality check** (same stable ids on divergence: `missing_metadata_row` · `altered_metadata_row` · `stale_metadata_row`), then pins the whole projection with a `schemaFingerprint` equality (`manifest_fingerprint_mismatch`). This proves **manifest ⇔ schema only** — the projected rows are derived from the committed manifest, NOT read from a database, so this gate is not live-DB evidence and must not be read as one. The **live-DB** assertion (schema ⇔ `movp_fields`/`movp_collections` via `supabase db reset` + a live query) lives in **C6c's** CI job, which the docs job does not (and cannot, having no DB) duplicate; manifest ⇔ `movp_fields` holds by transitivity across the two jobs.
 
-**Tech Stack:** TypeScript (ESM, `node20`), Vitest 3 (already in the workspace), `tsx` `^4.19.0` (already a root devDep — used to run TS scripts, see `scripts/codegen.ts`), Astro `^6.0.0` (already a dependency in `templates/frontend-astro`), **`@astrojs/starlight` (NEW external dependency — requires approval; see Global Constraints)**, `@movp/core-schema` (06a schema + `layer`; 06b `schemaFingerprint` / `metadataProjection`), `@movp/codegen` (06c `emitManifest` / `serializeManifest` / `SchemaManifest` / `checkMetadataConsistency` / `MetadataConsistencyError` / `MetadataDbState`). No `pg`, no live DB (the DB-side `movp_fields` truth is already gated by C6c against the same schema; C6f pins the manifest to that schema).
+**Tech Stack:** TypeScript (ESM, `node20`), Vitest 3 (already in the workspace), `tsx` `^4.19.0` (already a root devDep — used to run TS scripts, see `scripts/codegen.ts`), Astro `^6.0.0` (already a dependency in `templates/frontend-astro`), **`@astrojs/starlight` (NEW external dependency — requires approval; see Global Constraints)**, `@movp/core-schema` (06a schema + `layer`; 06b `schemaFingerprint` / `metadataProjection`), `@movp/codegen` (06c `emitManifest` / `serializeManifest` / `SchemaManifest` / `checkMetadataConsistency` / `MetadataConsistencyError` / `MetadataConsistencyCode` / `MetadataDbState`). The docs-only fingerprint failure throws a C6f-local `DocsConsistencyError` whose `.code` is a `DocsConsistencyCode = MetadataConsistencyCode | 'manifest_fingerprint_mismatch'` union — no `as never` cast, no plain-`Error` fallback. No `pg`, no live DB (the DB-side `movp_fields` truth is already gated by C6c against the same schema; C6f pins the manifest to that schema).
 
 ## Global Constraints
 
 - **NEW DEPENDENCY — needs sign-off before Task 5.** `@astrojs/starlight` is not present anywhere in the repo (verified: `grep -rn 'starlight' --include=package.json .` is empty). Per the global "no new dependencies without approval" rule, **stop and request approval before adding it.** Proposed: `@astrojs/starlight` pinned to the version whose peer range accepts the repo's `astro@^6.0.0` (the executor MUST run `npm view @astrojs/starlight peerDependencies` and pick a version listing `astro` `^6`; if none exists yet, STOP and ask — do NOT downgrade the repo's Astro). Starlight also pulls transitive deps (e.g. `sharp`, `@astrojs/mdx`); that is expected and covered by the same approval. `astro` itself is already an approved dependency. No other new external deps: `@movp/*` workspace links and `vitest`/`tsx` are already approved.
-- **Consume 06c/06b/06a exactly; invent no cross-part API.** From 06c (`@movp/codegen`): `SchemaManifest` = `{ manifestVersion: 1; generatorVersion: string; schemaFingerprint: string; collections: ManifestCollection[] }`; `ManifestCollection` = `{ name; internal; label; workspaceScoped; layer: 'platform' | 'project'; fields: ManifestField[] }`; `ManifestField` = `{ name; type; label; cardinality: string | null; reporting_role: string | null; searchable; embeddable }`; plus `emitManifest(schema, { generatorVersion })`, `serializeManifest(manifest)`, `checkMetadataConsistency(schema, db: MetadataDbState)`, `MetadataConsistencyError`, `MetadataDbState`. From 06b (`@movp/core-schema`): `schemaFingerprint(schema)`, `metadataProjection(schema)`. From 06a: `CollectionDef.layer`. **Import these; never re-derive them.** The manifest is the generator's ONLY input — do not import `schema`/collection TS types into the generator.
+- **Consume 06c/06b/06a exactly; invent no cross-part API.** From 06c (`@movp/codegen`): `SchemaManifest` = `{ manifestVersion: 1; generatorVersion: string; schemaFingerprint: string; collections: ManifestCollection[] }`; `ManifestCollection` = `{ name; internal; label; workspaceScoped; layer: 'platform' | 'project'; fields: ManifestField[] }`; `ManifestField` = `{ name; type; label; cardinality: string | null; reporting_role: string | null; searchable; embeddable }`; plus `emitManifest(schema, { generatorVersion })`, `serializeManifest(manifest)`, `checkMetadataConsistency(schema, db: MetadataDbState)`, `MetadataConsistencyError`, `MetadataConsistencyCode`, `MetadataDbState`. From 06b (`@movp/core-schema`): `schemaFingerprint(schema)`, `metadataProjection(schema)`. From 06a: `CollectionDef.layer`. **Import these; never re-derive them.** The manifest is the generator's ONLY input — do not import `schema`/collection TS types into the generator.
 - **Drift-proof means generated, committed, and gated.** Every derived artifact (`docs-site/movp.schema.json`, `docs-site/src/content/docs/reference/*.md`) is emitted by a script and committed; CI regenerates and runs `git diff --exit-code`. Never hand-edit a generated file — the reference pages carry an explicit "generated — do not edit" banner.
 - **Determinism.** Manifest already orders collections by `name` and fields by `name` (06c). The generator re-sorts defensively (collections by `name`, fields by `name`) and joins lines with `\n`; every page ends with a trailing newline-terminated table. JSON via `serializeManifest` (`JSON.stringify(x, null, 2) + '\n'`, from 06c).
 - **Untrusted I/O discipline** ([[untrusted-io-and-resource-bounds]]): every script that reads `movp.schema.json` does `lstat` and rejects a symlink BEFORE `readFile`; bounds size (`MAX_MANIFEST_BYTES = 4 * 1024 * 1024`) before buffering; structurally validates parsed JSON before dereferencing; logs path + reason only, never file contents.
@@ -446,10 +446,10 @@ git commit -m "feat(docs): C6f.3 generate committed DSL reference pages + freshn
 - Modify: root `package.json` (add `check:docs-manifest` script)
 
 **Interfaces:**
-- Consumes (06b): `schemaFingerprint`, `metadataProjection` from `@movp/core-schema`. (06c): `checkMetadataConsistency`, `MetadataConsistencyError`, `MetadataDbState`, `SchemaManifest` from `@movp/codegen`.
+- Consumes (06b): `schemaFingerprint`, `metadataProjection` from `@movp/core-schema`. (06c): `checkMetadataConsistency`, `MetadataConsistencyError`, `MetadataConsistencyCode`, `MetadataDbState`, `SchemaManifest` from `@movp/codegen`.
 - Produces:
-  - `assertManifestMatchesSchema(schema: MovpSchema, manifest: SchemaManifest): void` — projects the manifest into the DB-shaped rows C6c's comparator consumes and runs `checkMetadataConsistency` as a pure projection-equality check (so a manifest whose collection/field set or a compared column diverges from the schema throws `missing_metadata_row` / `altered_metadata_row` / `stale_metadata_row`), then asserts `manifest.schemaFingerprint === schemaFingerprint(schema)`, throwing a `MetadataConsistencyError('manifest_fingerprint_mismatch', …)` otherwise. The projected rows are derived from the committed manifest, not read from a DB, so this proves manifest ⇔ schema — NOT manifest ⇔ live `movp_fields` (that half is C6c's `supabase db reset` gate; see the task's scope note). `label_plural` is not carried by the manifest, so it is sourced from `metadataProjection(schema)` for the comparator input; the fingerprint check (which covers the full projection, `label_plural` included) is what actually pins `label_plural` drift end-to-end.
-  - `MetadataConsistencyError` is re-used as the error type; its `code` is widened locally via the C6c export — the extra `manifest_fingerprint_mismatch` string is passed as the `code` argument (the C6c constructor accepts a `MetadataConsistencyCode`; if its type union does not include the new string, throw a plain `Error` whose message starts `manifest_fingerprint_mismatch:` instead — see Step 3 note).
+  - `assertManifestMatchesSchema(schema: MovpSchema, manifest: SchemaManifest): void` — projects the manifest into the DB-shaped rows C6c's comparator consumes and runs `checkMetadataConsistency` as a pure projection-equality check (so a manifest whose collection/field set or a compared column diverges from the schema throws `missing_metadata_row` / `altered_metadata_row` / `stale_metadata_row`), then asserts `manifest.schemaFingerprint === schemaFingerprint(schema)`, throwing a `DocsConsistencyError('manifest_fingerprint_mismatch', …)` otherwise. The projected rows are derived from the committed manifest, not read from a DB, so this proves manifest ⇔ schema — NOT manifest ⇔ live `movp_fields` (that half is C6c's `supabase db reset` gate; see the task's scope note). `label_plural` is not carried by the manifest, so it is sourced from `metadataProjection(schema)` for the comparator input; the fingerprint check (which covers the full projection, `label_plural` included) is what actually pins `label_plural` drift end-to-end.
+  - `DocsConsistencyError` / `DocsConsistencyCode` — a C6f-local typed error. `DocsConsistencyCode = MetadataConsistencyCode | 'manifest_fingerprint_mismatch'` widens C6c's code union IN THE TYPE (no `as never` cast, no unreachable plain-`Error` fallback). The fingerprint arm throws `DocsConsistencyError` directly; C6c comparator errors are re-wrapped by carrying `error.code` (a `MetadataConsistencyCode`, a subtype) through the same union — still no cast. Every failure therefore exposes a real, typed `.code`, and the gate script catches this one error type.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -458,7 +458,7 @@ git commit -m "feat(docs): C6f.3 generate committed DSL reference pages + freshn
 import { describe, expect, it } from 'vitest'
 import type { CollectionDef, MovpSchema } from '@movp/core-schema'
 import { emitManifest } from '@movp/codegen'
-import { assertManifestMatchesSchema } from '../src/dsl-reference/consistency.ts'
+import { assertManifestMatchesSchema, DocsConsistencyError, type DocsConsistencyCode } from '../src/dsl-reference/consistency.ts'
 
 const deal: CollectionDef = {
   name: 'deal',
@@ -480,10 +480,18 @@ describe('assertManifestMatchesSchema', () => {
     expect(() => assertManifestMatchesSchema(s, emitManifest(s, { generatorVersion: '0.1.0' }))).not.toThrow()
   })
 
-  it('fails manifest_fingerprint_mismatch when the fingerprint is stale', () => {
+  it('fails with .code === manifest_fingerprint_mismatch (typed, no cast) when the fingerprint is stale', () => {
     const s = schema([deal])
     const manifest = { ...emitManifest(s, { generatorVersion: '0.1.0' }), schemaFingerprint: 'sha256-stale' }
-    expect(() => assertManifestMatchesSchema(s, manifest)).toThrow(/manifest_fingerprint_mismatch/)
+    // `instanceof` narrows `error` to DocsConsistencyError, so `error.code` is read
+    // through the declared DocsConsistencyCode type — no `as` cast, no `as never`.
+    let code: DocsConsistencyCode | undefined
+    try {
+      assertManifestMatchesSchema(s, manifest)
+    } catch (error) {
+      if (error instanceof DocsConsistencyError) code = error.code
+    }
+    expect(code).toBe('manifest_fingerprint_mismatch')
   })
 
   it('fails with a C6c stable id when the manifest omits a collection', () => {
@@ -512,7 +520,28 @@ Expected: FAIL — `Cannot find module '../src/dsl-reference/consistency.ts'`.
 // docs-site/src/dsl-reference/consistency.ts
 import type { MovpSchema } from '@movp/core-schema'
 import { metadataProjection, schemaFingerprint } from '@movp/core-schema'
-import { checkMetadataConsistency, MetadataConsistencyError, type MetadataDbState, type SchemaManifest } from '@movp/codegen'
+import {
+  checkMetadataConsistency,
+  MetadataConsistencyError,
+  type MetadataConsistencyCode,
+  type MetadataDbState,
+  type SchemaManifest,
+} from '@movp/codegen'
+
+// C6f-local code union: C6c's three comparator codes PLUS the docs-only fingerprint
+// code. Widening lives in the type — NOT an `as never` cast — so `.code` is exact and
+// the fingerprint arm is a real, reachable throw (no unreachable plain-Error fallback).
+export type DocsConsistencyCode = MetadataConsistencyCode | 'manifest_fingerprint_mismatch'
+
+export class DocsConsistencyError extends Error {
+  constructor(
+    readonly code: DocsConsistencyCode,
+    readonly detail: string,
+  ) {
+    super(`${code}: ${detail}`)
+    this.name = 'DocsConsistencyError'
+  }
+}
 
 // Rebuild the DB-shaped projection rows from the manifest so we can reuse C6c's
 // pure comparator. label_plural is NOT in the manifest — source it from the schema
@@ -546,19 +575,29 @@ function manifestAsDbState(schema: MovpSchema, manifest: SchemaManifest): Metada
 
 export function assertManifestMatchesSchema(schema: MovpSchema, manifest: SchemaManifest): void {
   // Reuse C6c's comparator: throws missing_/altered_/stale_metadata_row on divergence.
-  checkMetadataConsistency(schema, manifestAsDbState(schema, manifest))
+  // Re-wrap its MetadataConsistencyError into DocsConsistencyError so EVERY docs
+  // consistency failure surfaces as one error type whose `.code` is a DocsConsistencyCode.
+  // `error.code` is a MetadataConsistencyCode — a subtype of DocsConsistencyCode — so it
+  // flows through the union with NO cast.
+  try {
+    checkMetadataConsistency(schema, manifestAsDbState(schema, manifest))
+  } catch (error: unknown) {
+    if (error instanceof MetadataConsistencyError) {
+      throw new DocsConsistencyError(error.code, error.detail)
+    }
+    throw error
+  }
   if (manifest.schemaFingerprint !== schemaFingerprint(schema)) {
-    throw new MetadataConsistencyError(
-      // If the C6c MetadataConsistencyCode union does not accept this string, replace
-      // the throw with: throw new Error('manifest_fingerprint_mismatch: docs-site/movp.schema.json is stale — run `pnpm docs:manifest`')
-      'manifest_fingerprint_mismatch' as never,
+    // Reachable, real throw — `manifest_fingerprint_mismatch` is in DocsConsistencyCode.
+    throw new DocsConsistencyError(
+      'manifest_fingerprint_mismatch',
       'docs-site/movp.schema.json is stale — run `pnpm docs:manifest`',
     )
   }
 }
 ```
 
-> **Executor note (type gotcha):** `MetadataConsistencyError`'s first argument is typed `MetadataConsistencyCode` in C6c. `manifest_fingerprint_mismatch` is a C6f-local code, so the `as never` cast keeps the class reuse without loosening the C6c type. If `tsc` rejects the cast, fall back to `throw new Error('manifest_fingerprint_mismatch: …')` — the gate script (Step 3 below) matches on the message prefix either way. Do NOT use `any`.
+> **Executor note (typed code union, no cast):** the fingerprint code `manifest_fingerprint_mismatch` is C6f-local, so we do NOT throw C6c's `MetadataConsistencyError` with an out-of-union code. Instead a C6f-local `DocsConsistencyError` carries a `DocsConsistencyCode = MetadataConsistencyCode | 'manifest_fingerprint_mismatch'`; the fingerprint arm throws it directly (a reachable branch — no `as never`, no unreachable plain-`Error` fallback), and C6c's comparator errors are re-wrapped by carrying `error.code` through the same union (subtype → union, still no cast). Do NOT use `any` or `as never`.
 
 Create the gate script:
 
@@ -571,8 +610,8 @@ Create the gate script:
 import { lstat, readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { schema } from '@movp/core-schema'
-import { MetadataConsistencyError, type SchemaManifest } from '@movp/codegen'
-import { assertManifestMatchesSchema } from '../docs-site/src/dsl-reference/consistency.ts'
+import type { SchemaManifest } from '@movp/codegen'
+import { assertManifestMatchesSchema, DocsConsistencyError } from '../docs-site/src/dsl-reference/consistency.ts'
 
 const MAX_MANIFEST_BYTES = 4 * 1024 * 1024
 const MANIFEST_PATH = fileURLToPath(new URL('../docs-site/movp.schema.json', import.meta.url))
@@ -595,12 +634,10 @@ async function main(): Promise<void> {
     assertManifestMatchesSchema(schema, parsed)
     console.log('docs manifest consistency: OK')
   } catch (error: unknown) {
-    if (error instanceof MetadataConsistencyError) {
+    // One error type carries every stable code (C6c comparator + fingerprint) via
+    // its typed `.code`; no message-prefix sniffing, no separate fallback branch.
+    if (error instanceof DocsConsistencyError) {
       console.error(`docs manifest consistency FAILED [${error.code}]: ${error.detail}`)
-      process.exit(1)
-    }
-    if (error instanceof Error && error.message.startsWith('manifest_fingerprint_mismatch')) {
-      console.error(`docs manifest consistency FAILED [manifest_fingerprint_mismatch]: ${error.message}`)
       process.exit(1)
     }
     throw error
@@ -918,8 +955,8 @@ git commit -m "feat(docs): C6f.5 Starlight site + authored content + docs CI gat
 
 **Assumptions (flag to the caller):**
 1. **New dependency:** `@astrojs/starlight` requires approval before Task 5; its version must peer-accept `astro@^6.0.0` — if no such Starlight release exists yet, the executor STOPS (does not downgrade Astro). `astro`, `tsx`, `vitest` are already approved.
-2. **06c has landed** and `@movp/codegen` exports `SchemaManifest`/`ManifestCollection`/`ManifestField`, `emitManifest`, `serializeManifest`, `checkMetadataConsistency`, `MetadataConsistencyError`, `MetadataDbState`; **06b** exports `schemaFingerprint`, `metadataProjection` from `@movp/core-schema`. C6f depends on 06c per INTERFACES.
-3. **`MetadataConsistencyError`'s `code` type is `MetadataConsistencyCode`** (C6c). `manifest_fingerprint_mismatch` is a C6f-local code passed via `as never`; if `tsc` rejects it, the documented fallback throws a plain `Error` with the same message prefix, which the gate script matches — no `any`.
+2. **06c has landed** and `@movp/codegen` exports `SchemaManifest`/`ManifestCollection`/`ManifestField`, `emitManifest`, `serializeManifest`, `checkMetadataConsistency`, `MetadataConsistencyError`, `MetadataConsistencyCode`, `MetadataDbState`; **06b** exports `schemaFingerprint`, `metadataProjection` from `@movp/core-schema`. C6f depends on 06c per INTERFACES.
+3. **`MetadataConsistencyError`'s `code` type is `MetadataConsistencyCode`** (C6c). `manifest_fingerprint_mismatch` is a C6f-local code, so it is NOT forced onto C6c's error via `as never`. C6f defines a typed `DocsConsistencyError` whose `.code` is `DocsConsistencyCode = MetadataConsistencyCode | 'manifest_fingerprint_mismatch'`; the fingerprint arm throws it directly (reachable — no plain-`Error` fallback) and C6c comparator errors are re-wrapped by carrying `error.code` through the same union. No `any`, no `as never`.
 4. **The monorepo `schema` carries `layer` on every collection** (all `'platform'` for the non-`extends` monorepo, per 06a). The committed `movp.schema.json` will therefore list the full platform DSL; the reference site documents the whole platform.
 5. **`label_plural` is intentionally absent from the manifest** (locked C6c shape). Task 4 sources it from `metadataProjection(schema)` for the comparator and relies on the fingerprint equality to pin `label_plural` drift end-to-end — stated so a reviewer does not read it as a gap.
 6. **DB-side `movp_fields`/`movp_collections` truth is the source signal owned by C6c's own `supabase db reset` consistency gate** (INTERFACES F7: `db reset` → live `movp_fields`/`movp_collections` query → `checkMetadataConsistency`). C6f **consumes** that established live signal; it does NOT reconstruct a manifest-derived `MetadataDbState` and treat it as live-DB evidence. C6f's own gate asserts only manifest ⇔ schema (fingerprint + projection comparator) — a pure, DB-less check — and manifest ⇔ `movp_fields` follows by transitivity across the two jobs, without adding `pg` or a live DB to the docs job. The docs CI job has no database, so the manifest ⇔ live-DB claim is never made by this job alone.
