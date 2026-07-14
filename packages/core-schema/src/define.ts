@@ -57,7 +57,15 @@ export function defineSchema(opts: {
     layer: (opts.extends ? 'project' : 'platform') as 'platform' | 'project',
   }))
   const collections = [...inherited, ...local]
-  const events = [...(opts.extends?.events ?? []), ...(opts.events ?? [])]
+  const inheritedEvents = (opts.extends?.events ?? []).map((event) => ({
+    ...event,
+    layer: 'platform' as const,
+  }))
+  const localEvents = (opts.events ?? []).map((event) => ({
+    ...event,
+    layer: (opts.extends ? 'project' : 'platform') as 'platform' | 'project',
+  }))
+  const events = [...inheritedEvents, ...localEvents]
 
   const names = new Set<string>()
   for (const c of collections) {
@@ -84,5 +92,7 @@ export function defineSchema(opts: {
     events,
     platformCollections: collections.filter((c) => c.layer === 'platform'),
     projectCollections: collections.filter((c) => c.layer === 'project'),
+    platformEvents: events.filter((event) => event.layer === 'platform'),
+    projectEvents: events.filter((event) => event.layer === 'project'),
   }
 }

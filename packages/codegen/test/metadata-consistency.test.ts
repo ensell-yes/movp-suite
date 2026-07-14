@@ -1,14 +1,12 @@
 import { metadataProjection, type CollectionDef, type MovpSchema } from '@movp/core-schema'
 import { describe, expect, it } from 'vitest'
 import { checkMetadataConsistency, type MetadataDbState } from '../src/metadata-consistency.ts'
+import { projectSchema as schema } from './project-schema-fixture.ts'
 
 const deal: CollectionDef = {
   name: 'deal', label: 'Deal', labelPlural: 'Deals', workspaceScoped: true, layer: 'project',
   fields: { title: { type: 'text', label: 'Title', searchable: true } },
 }
-const schema = (collections: CollectionDef[]): MovpSchema => ({
-  collections, events: [], projectCollections: collections, platformCollections: [],
-})
 function dbFrom(input: MovpSchema): MetadataDbState {
   const projection = metadataProjection(input)
   return {

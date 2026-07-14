@@ -1,21 +1,15 @@
 import { mkdir, mkdtemp, readFile, readdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { metadataProjection, type CollectionDef, type MovpSchema } from '@movp/core-schema'
+import { metadataProjection, type MovpSchema } from '@movp/core-schema'
 import { describe, expect, it } from 'vitest'
 import { saveDeltaRegistry } from '../src/deltas-registry.ts'
 import { generate } from '../src/generate.ts'
 import { checkMetadataConsistency, type MetadataDbState } from '../src/metadata-consistency.ts'
 import { newDelta } from '../src/new-delta.ts'
+import { projectCollection as col, projectSchema as schema } from './project-schema-fixture.ts'
 
 const BASELINE = '20260712120000_movp_generated.sql'
-const col = (name: string): CollectionDef => ({
-  name, label: name, labelPlural: `${name}s`, workspaceScoped: true, layer: 'project',
-  fields: { title: { type: 'text', label: 'Title' } },
-})
-const schema = (collections: CollectionDef[]): MovpSchema => ({
-  collections, events: [], projectCollections: collections, platformCollections: [],
-})
 function dbFrom(input: MovpSchema): MetadataDbState {
   const projection = metadataProjection(input)
   return {
@@ -57,8 +51,12 @@ describe('C6c project-codegen acceptance', () => {
     expect(after.filter((file) => !before.includes(file))).toEqual([
       '20260712130000_movp_generated_company.sql',
     ])
-    const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as { collections: Array<{ name: string }> }
-    expect(manifest.collections.map((collection) => collection.name)).toEqual(['company', 'deal'])
+    const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as {
+      collections: Array<{ name: string; layer: string }>
+    }
+    expect(manifest.collections
+      .filter((collection) => collection.layer === 'project')
+      .map((collection) => collection.name)).toEqual(['company', 'deal'])
     checkMetadataConsistency(secondSchema, dbFrom(secondSchema))
   })
 })

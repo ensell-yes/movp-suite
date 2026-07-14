@@ -56,6 +56,8 @@ export interface EventDef {
   version: number
   label?: string
   description?: string
+  /** Ownership is stamped by defineSchema; absent on standalone event definitions. */
+  layer?: 'platform' | 'project'
 }
 
 export interface MovpSchema {
@@ -65,4 +67,8 @@ export interface MovpSchema {
   platformCollections: CollectionDef[]
   /** Derived: collections with layer === 'project' (empty for a non-extends schema). */
   projectCollections: CollectionDef[]
+  /** Derived: events inherited from or declared by the platform schema. */
+  platformEvents: EventDef[]
+  /** Derived: events declared by a project extension. */
+  projectEvents: EventDef[]
 }

@@ -6,6 +6,7 @@ import { schemaFingerprint, type CollectionDef, type MovpSchema } from '@movp/co
 import { afterEach, describe, expect, it } from 'vitest'
 import { emitManifest, serializeManifest } from '../src/emit-manifest.ts'
 import { resolveGeneratorVersion } from '../src/generate.ts'
+import { projectSchema as schema } from './project-schema-fixture.ts'
 
 const deal: CollectionDef = {
   name: 'deal', label: 'Deal', labelPlural: 'Deals', workspaceScoped: true,
@@ -14,9 +15,6 @@ const deal: CollectionDef = {
     amount: { type: 'number', label: 'Amount', reporting: { role: 'measure' } },
   },
 }
-const schema = (collections: CollectionDef[]): MovpSchema => ({
-  collections, events: [], projectCollections: collections, platformCollections: [],
-})
 const fixtureDirs: string[] = []
 async function fixtureDir(): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), 'movp-generator-version-'))
@@ -35,8 +33,9 @@ describe('manifest', () => {
     const manifest = emitManifest(input, { generatorVersion: '0.1.0' })
     expect(manifest.manifestVersion).toBe(1)
     expect(manifest.schemaFingerprint).toBe(schemaFingerprint(input))
-    expect(manifest.collections[0]?.fields.map((field) => field.name)).toEqual(['amount', 'title'])
-    expect(manifest.collections[0]?.layer).toBe('project')
+    const projectedDeal = manifest.collections.find((collection) => collection.name === 'deal')
+    expect(projectedDeal?.fields.map((field) => field.name)).toEqual(['amount', 'title'])
+    expect(projectedDeal?.layer).toBe('project')
   })
 
   it('serializes deterministically with a trailing newline', () => {

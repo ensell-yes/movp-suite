@@ -23,6 +23,8 @@ describe('DSL/codegen contract extensions', () => {
     events: [],
     platformCollections: [deliverable],
     projectCollections: [],
+    platformEvents: [],
+    projectEvents: [],
   }
   const ts = emitTypes(isolatedSchema)
 

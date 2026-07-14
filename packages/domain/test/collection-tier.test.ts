@@ -1,4 +1,4 @@
-import type { MovpSchema } from '@movp/core-schema'
+import { defineSchema, type MovpSchema } from '@movp/core-schema'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { describe, expect, it } from 'vitest'
 import { createDomain } from '../src/domain.ts'
@@ -7,12 +7,7 @@ import type { DomainCtx } from '../src/types.ts'
 const ctx: DomainCtx = { db: {} as SupabaseClient, userId: 'u' }
 
 function schemaWith(...collections: MovpSchema['collections']): MovpSchema {
-  return {
-    collections,
-    events: [],
-    platformCollections: collections.filter((collection) => collection.layer !== 'project'),
-    projectCollections: collections.filter((collection) => collection.layer === 'project'),
-  }
+  return defineSchema({ collections })
 }
 
 const col = (

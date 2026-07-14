@@ -1,21 +1,13 @@
-import { mkdir, mkdtemp, readFile, readdir } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { CollectionDef, MovpSchema } from '@movp/core-schema'
 import { describe, expect, it } from 'vitest'
 import { loadDeltaRegistry, saveDeltaRegistry } from '../src/deltas-registry.ts'
 import { generate } from '../src/generate.ts'
 import { newDelta } from '../src/new-delta.ts'
+import { projectCollection as col, projectEvent, projectSchema } from './project-schema-fixture.ts'
 
 const BASELINE = '20260712120000_movp_generated.sql'
-const col = (name: string): CollectionDef => ({
-  name, label: name, labelPlural: `${name}s`, workspaceScoped: true, layer: 'project',
-  fields: { title: { type: 'text', label: 'Title' } },
-})
-const projectSchema = (collections: CollectionDef[]): MovpSchema => ({
-  collections, events: [], projectCollections: collections, platformCollections: [],
-})
-
 async function scaffold() {
   const root = await mkdtemp(join(tmpdir(), 'movp-newdelta-'))
   const migrationsDir = join(root, 'supabase', 'migrations')
@@ -63,5 +55,70 @@ describe('newDelta', () => {
       schema, name: 'noop', registryPath: context.registryPath,
       migrationsDir: context.migrationsDir, timestamp: '20260712140000',
     })).rejects.toThrow(/nothing_to_allocate/)
+  })
+
+  it('allocates an unowned project event without re-emitting platform events', async () => {
+    const context = await scaffold()
+    await generate({
+      schema: projectSchema([col('deal')], [projectEvent('deal.created')]),
+      migrationsDir: context.migrationsDir,
+      migrationName: BASELINE,
+      deltasRegistryPath: context.registryPath,
+    })
+    const schema = projectSchema(
+      [col('deal')],
+      [projectEvent('deal.created'), projectEvent('deal.won')],
+    )
+    const created = await newDelta({
+      schema,
+      name: 'deal_won',
+      registryPath: context.registryPath,
+      migrationsDir: context.migrationsDir,
+      timestamp: '20260712150000',
+    })
+    expect(created).toEqual({
+      file: '20260712150000_movp_generated_deal_won.sql',
+      collections: [],
+      events: ['deal.won'],
+    })
+    const sql = await readFile(join(context.migrationsDir, created.file), 'utf8')
+    expect(sql).toContain("'deal.won'")
+    expect(sql).not.toContain("'deal.created'")
+    expect(sql).not.toContain("'note.created'")
+    await generate({
+      schema,
+      migrationsDir: context.migrationsDir,
+      migrationName: BASELINE,
+      deltasRegistryPath: context.registryPath,
+    })
+  })
+
+  it('rejects a symlinked migrations root before reading its target', async () => {
+    const context = await scaffold()
+    const outside = await mkdtemp(join(tmpdir(), 'movp-newdelta-outside-'))
+    const linked = join(await mkdtemp(join(tmpdir(), 'movp-newdelta-link-')), 'migrations')
+    await symlink(outside, linked)
+    await expect(newDelta({
+      schema: projectSchema([col('deal')]),
+      name: 'deal',
+      registryPath: context.registryPath,
+      migrationsDir: linked,
+      timestamp: '20260712160000',
+    })).rejects.toThrow(/migrations_dir_symlink_rejected/)
+  })
+
+  it('preflights the output path before updating the registry', async () => {
+    const context = await scaffold()
+    const file = '20260712170000_movp_generated_company.sql'
+    await writeFile(join(context.migrationsDir, file), '-- foreign file\n')
+    await expect(newDelta({
+      schema: projectSchema([col('company')]),
+      name: 'company',
+      registryPath: context.registryPath,
+      migrationsDir: context.migrationsDir,
+      timestamp: '20260712170000',
+    })).rejects.toThrow(/delta_file_exists/)
+    expect(await loadDeltaRegistry(context.registryPath)).toEqual({ deltas: [] })
+    expect(await readFile(join(context.migrationsDir, file), 'utf8')).toBe('-- foreign file\n')
   })
 })

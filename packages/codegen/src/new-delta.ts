@@ -7,6 +7,8 @@ const TIMESTAMP = /^\d{14}$/
 const NAME = /^[a-z][a-z0-9_]*$/
 const MAX_MIGRATION_BYTES = 10 * 1024 * 1024
 const COLLECTION_DDL = /create table if not exists public\.([a-z][a-z0-9_]*)\s*\(/g
+const PROJECT_COLLECTION_MARKER = /^-- movp-project-collection: ([a-z][a-z0-9_]*)$/gm
+const PROJECT_EVENT_MARKER = /^-- movp-project-event: ([a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+)$/gm
 
 export interface NewDeltaOptions {
   schema: MovpSchema
@@ -22,9 +24,16 @@ function utcTimestamp(): string {
   return `${date.getUTCFullYear()}${pad(date.getUTCMonth() + 1)}${pad(date.getUTCDate())}${pad(date.getUTCHours())}${pad(date.getUTCMinutes())}${pad(date.getUTCSeconds())}`
 }
 
-async function existingMigrationCollections(migrationsDir: string): Promise<Set<string>> {
+async function existingMigrationOwnership(migrationsDir: string): Promise<{
+  collections: Set<string>
+  events: Set<string>
+}> {
   const fs = await import('node:fs/promises')
   const collections = new Set<string>()
+  const events = new Set<string>()
+  const root = await fs.lstat(migrationsDir)
+  if (root.isSymbolicLink()) throw new Error(`new_delta_migrations_dir_symlink_rejected: ${migrationsDir}`)
+  if (!root.isDirectory()) throw new Error(`new_delta_migrations_dir_not_directory: ${migrationsDir}`)
   for (const file of await fs.readdir(migrationsDir)) {
     if (!/^\d{14}_[a-z0-9_]+\.sql$/.test(file)) continue
     const path = `${migrationsDir}/${file}`.replace(/\/+/g, '/')
@@ -36,8 +45,25 @@ async function existingMigrationCollections(migrationsDir: string): Promise<Set<
     for (const match of sql.matchAll(COLLECTION_DDL)) {
       if (match[1]) collections.add(match[1])
     }
+    for (const match of sql.matchAll(PROJECT_COLLECTION_MARKER)) {
+      if (match[1]) collections.add(match[1])
+    }
+    for (const match of sql.matchAll(PROJECT_EVENT_MARKER)) {
+      if (match[1]) events.add(match[1])
+    }
   }
-  return collections
+  return { collections, events }
+}
+
+async function assertNewMigrationTarget(path: string): Promise<void> {
+  const fs = await import('node:fs/promises')
+  try {
+    await fs.lstat(path)
+  } catch (error: unknown) {
+    if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT') return
+    throw error
+  }
+  throw new Error(`delta_file_exists: ${path}`)
 }
 
 export async function newDelta(
@@ -47,24 +73,32 @@ export async function newDelta(
   const timestamp = options.timestamp ?? utcTimestamp()
   if (!TIMESTAMP.test(timestamp)) throw new Error(`invalid delta timestamp: ${timestamp}`)
   const registry = await loadDeltaRegistry(options.registryPath)
-  const owned = new Set(registry.deltas.flatMap((delta) => delta.collections))
-  for (const collection of await existingMigrationCollections(options.migrationsDir)) owned.add(collection)
+  const existing = await existingMigrationOwnership(options.migrationsDir)
+  const ownedCollections = new Set(registry.deltas.flatMap((delta) => delta.collections))
+  const ownedEvents = new Set(registry.deltas.flatMap((delta) => delta.events))
+  for (const collection of existing.collections) ownedCollections.add(collection)
+  for (const event of existing.events) ownedEvents.add(event)
   const collections = options.schema.projectCollections
     .map((collection) => collection.name)
-    .filter((name) => !owned.has(name))
+    .filter((name) => !ownedCollections.has(name))
     .sort()
-  if (collections.length === 0) {
-    throw new Error(`nothing_to_allocate: no unowned project collection for delta "${options.name}"`)
+  const events = options.schema.projectEvents
+    .map((event) => event.key)
+    .filter((key) => !ownedEvents.has(key))
+    .sort()
+  if (collections.length === 0 && events.length === 0) {
+    throw new Error(`nothing_to_allocate: no unowned project collection or event for delta "${options.name}"`)
   }
   const file = `${timestamp}_movp_generated_${options.name}.sql`
   if (registry.deltas.some((delta) => delta.file === file)) {
     throw new Error(`delta file already registered: ${file}`)
   }
-  const events: string[] = []
   const body = emitProjectDeltaSql(options.schema, { collections, events })
+  const migrationPath = `${options.migrationsDir}/${file}`.replace(/\/+/g, '/')
+  await assertNewMigrationTarget(migrationPath)
   await saveDeltaRegistry(options.registryPath, {
     deltas: [...registry.deltas, { file, collections, events }],
   })
-  await atomicWriteFile(`${options.migrationsDir}/${file}`.replace(/\/+/g, '/'), body)
+  await atomicWriteFile(migrationPath, body)
   return { file, collections, events }
 }

@@ -1,6 +1,6 @@
 import { graphql, printSchema } from 'graphql/index.js'
 import { describe, expect, it, vi } from 'vitest'
-import type { CollectionDef, FieldDef, MovpSchema } from '@movp/core-schema'
+import { defineSchema, type CollectionDef, type FieldDef } from '@movp/core-schema'
 import { schema as movpSchema } from '@movp/core-schema'
 import { buildSchema } from '../src/schema.ts'
 
@@ -47,12 +47,7 @@ const recursiveNode: CollectionDef = {
   },
 }
 
-const recursive: MovpSchema = {
-  collections: [recursiveNode],
-  events: [],
-  platformCollections: [recursiveNode],
-  projectCollections: [],
-}
+const recursive = defineSchema({ collections: [recursiveNode] })
 
 describe('buildSchema', () => {
   it('generates a type, queries, mutation, and search', () => {

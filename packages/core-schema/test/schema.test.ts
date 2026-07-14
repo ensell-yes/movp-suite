@@ -3,7 +3,7 @@ import { f } from '../src/builders.ts'
 import { comment } from '../src/collections/comment.ts'
 import { note } from '../src/collections/note.ts'
 import { tag } from '../src/collections/tag.ts'
-import { defineCollection, defineSchema } from '../src/define.ts'
+import { defineCollection, defineEvent, defineSchema } from '../src/define.ts'
 import { schema } from '../src/schema.ts'
 
 describe('example collections', () => {
@@ -111,11 +111,19 @@ describe('defineSchema layer composition', () => {
       workspaceScoped: true,
       fields: { full_name: f.text({ label: 'Full name', required: true }) },
     })
-    const extended = defineSchema({ extends: schema, collections: [contact] })
+    const contactCreated = defineEvent({
+      key: 'contact.created',
+      domain: 'lifecycle',
+      payloadSchema: {},
+      version: 1,
+    })
+    const extended = defineSchema({ extends: schema, collections: [contact], events: [contactCreated] })
     expect(extended.collections.find((c) => c.name === 'contact')?.layer).toBe('project')
     expect(extended.collections.find((c) => c.name === 'note')?.layer).toBe('platform')
     expect(extended.projectCollections.map((c) => c.name)).toEqual(['contact'])
     expect(extended.platformCollections.every((c) => c.layer === 'platform')).toBe(true)
+    expect(extended.projectEvents.map((event) => event.key)).toEqual(['contact.created'])
+    expect(extended.platformEvents.map((event) => event.key)).toEqual(schema.events.map((event) => event.key))
   })
 
   it('rejects an extension that redeclares a platform collection name', () => {

@@ -1,27 +1,13 @@
 import { mkdir, mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { CollectionDef, MovpSchema } from '@movp/core-schema'
+import type { MovpSchema } from '@movp/core-schema'
 import { describe, expect, it } from 'vitest'
 import { saveDeltaRegistry } from '../src/deltas-registry.ts'
 import { generate } from '../src/generate.ts'
+import { projectCollection as col, projectEvent, projectSchema } from './project-schema-fixture.ts'
 
 const BASELINE = '20260712120000_movp_generated.sql'
-
-function col(name: string): CollectionDef {
-  return {
-    name,
-    label: name,
-    labelPlural: `${name}s`,
-    workspaceScoped: true,
-    layer: 'project',
-    fields: { title: { type: 'text', label: 'Title' } },
-  }
-}
-
-function projectSchema(collections: CollectionDef[]): MovpSchema {
-  return { collections, events: [], projectCollections: collections, platformCollections: [] }
-}
 
 async function scaffold() {
   const root = await mkdtemp(join(tmpdir(), 'movp-proj-'))
@@ -44,9 +30,11 @@ function opts(schema: MovpSchema, context: Awaited<ReturnType<typeof scaffold>>)
 describe('generate project mode', () => {
   it('bootstraps a byte-stable project baseline', async () => {
     const context = await scaffold()
-    const schema = projectSchema([col('deal')])
+    const schema = projectSchema([col('deal')], [projectEvent('deal.created')])
     await generate(opts(schema, context))
     const first = await readFile(join(context.migrationsDir, BASELINE), 'utf8')
+    expect(first).toContain("'deal.created'")
+    expect(first).not.toContain("'note.created'")
     await generate(opts(schema, context))
     expect(await readFile(join(context.migrationsDir, BASELINE), 'utf8')).toBe(first)
   })
@@ -65,6 +53,17 @@ describe('generate project mode', () => {
     const before = (await readdir(context.migrationsDir)).sort()
     await expect(generate(opts(projectSchema([col('deal'), col('company')]), context)))
       .rejects.toThrow(/new_generated_delta_required/)
+    expect((await readdir(context.migrationsDir)).sort()).toEqual(before)
+  })
+
+  it('rejects an unowned project event with zero migration writes', async () => {
+    const context = await scaffold()
+    await generate(opts(projectSchema([col('deal')], [projectEvent('deal.created')]), context))
+    const before = (await readdir(context.migrationsDir)).sort()
+    await expect(generate(opts(projectSchema(
+      [col('deal')],
+      [projectEvent('deal.created'), projectEvent('deal.won')],
+    ), context))).rejects.toThrow(/new_generated_delta_required/)
     expect((await readdir(context.migrationsDir)).sort()).toEqual(before)
   })
 

@@ -453,6 +453,13 @@ function assertProjectLayer(collection: CollectionDef): void {
   }
 }
 
+function projectOwnershipMarkers(collections: CollectionDef[], events: EventDef[]): string {
+  return [
+    ...collections.map((collection) => `-- movp-project-collection: ${collection.name}`),
+    ...events.map((event) => `-- movp-project-event: ${event.key}`),
+  ].join('\n')
+}
+
 export function emitProjectMigration(
   schema: MovpSchema,
   opts: { excludeCollections?: readonly string[]; excludeEvents?: readonly string[] } = {},
@@ -463,8 +470,8 @@ export function emitProjectMigration(
     (collection) => !excludedCollections.has(collection.name),
   )
   for (const collection of collections) assertProjectLayer(collection)
-  const events = schema.events.filter((event) => !excludedEvents.has(event.key))
-  return `${HEADER}\n${collections.map(emitCollectionSql).join('\n')}\n${eventCatalogSeedSql(events)}`
+  const events = schema.projectEvents.filter((event) => !excludedEvents.has(event.key))
+  return `${HEADER}\n${projectOwnershipMarkers(collections, events)}\n${collections.map(emitCollectionSql).join('\n')}\n${eventCatalogSeedSql(events)}`
 }
 
 export function emitProjectDeltaSql(
@@ -478,11 +485,16 @@ export function emitProjectDeltaSql(
     return emitCollectionSql(collection)
   })
   const eventKeys = new Set(owned.events ?? [])
-  const events = schema.events.filter((event) => eventKeys.has(event.key))
+  const events = schema.projectEvents.filter((event) => eventKeys.has(event.key))
   for (const key of owned.events ?? []) {
     if (!events.some((event) => event.key === key)) throw new Error(`delta event not registered: ${key}`)
   }
-  return `${HEADER}\n${collections.join('\n')}\n${eventCatalogSeedSql(events)}`
+  const collectionDefs = (owned.collections ?? []).map((name) => {
+    const collection = schema.projectCollections.find((entry) => entry.name === name)
+    if (!collection) throw new Error(`delta collection not registered: ${name}`)
+    return collection
+  })
+  return `${HEADER}\n${projectOwnershipMarkers(collectionDefs, events)}\n${collections.join('\n')}\n${eventCatalogSeedSql(events)}`
 }
 
 export function emitProjectMetadataPrune(schema: MovpSchema): string {

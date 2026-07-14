@@ -22,6 +22,8 @@ function makeSchema(): MovpSchema {
     events: [],
     platformCollections: collections.filter((c) => c.layer === 'platform'),
     projectCollections: collections.filter((c) => c.layer === 'project'),
+    platformEvents: [],
+    projectEvents: [],
   }
 }
 

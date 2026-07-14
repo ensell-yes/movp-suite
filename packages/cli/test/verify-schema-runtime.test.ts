@@ -1,7 +1,6 @@
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import type { MovpSchema } from '@movp/core-schema'
-import { schemaFingerprint } from '@movp/core-schema'
+import { defineSchema, schemaFingerprint, type MovpSchema } from '@movp/core-schema'
 import { describe, expect, it } from 'vitest'
 import { runVerifySchemaRuntime } from '../src/verify-schema-runtime.ts'
 
@@ -13,12 +12,7 @@ const collection: MovpSchema['collections'][number] = {
   layer: 'platform',
   fields: {},
 }
-const nodeSchema: MovpSchema = {
-  collections: [collection],
-  events: [],
-  platformCollections: [collection],
-  projectCollections: [],
-}
+const nodeSchema = defineSchema({ collections: [collection] })
 const nodeFingerprint = schemaFingerprint(nodeSchema)
 
 const baseOpts = {
