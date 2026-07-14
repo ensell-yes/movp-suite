@@ -25,6 +25,11 @@
   pre-deploy emergency and must not be set in CI.
 - Future schema/codegen changes must either emit additive hand migrations or introduce a new generated-delta
   migration strategy. The original generated migration is frozen as historical deployment input.
+- `@movp/platform` publishes the whole ordered migration stream with per-file digests and exact platform-layer
+  collection/field counts derived from `metadataProjection(schema)`. Verify the artifact before materializing it;
+  `fixtures/platform-consumer/gate.sh` must match those counts exactly before and after project extensions.
+- Codegen writes baselines, generated deltas, types, registries, and manifests through the owner-only atomic-write
+  helpers. Do not reintroduce direct writes for generated outputs or weaken frozen-file drift refusal.
 
 ## Reporting Discipline
 

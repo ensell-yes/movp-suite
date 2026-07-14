@@ -1,12 +1,15 @@
 import { lstatSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+// This build-only source import keeps the published migration artifact independent of workspace protocols.
+import { metadataProjection, schema } from '../../core-schema/src/index.ts'
 import { buildPlatformArtifact } from './build-lib.ts'
 import { MAX_MANIFEST_BYTES } from './verify.ts'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const packageDir = join(here, '..')
 const repoRoot = join(packageDir, '..', '..')
+const projection = metadataProjection(schema)
 
 function platformVersion(): string {
   const pkgPath = join(packageDir, 'package.json')
@@ -34,6 +37,10 @@ const manifest = buildPlatformArtifact({
   sourceMigrations: join(repoRoot, 'supabase', 'migrations'),
   outDir: join(packageDir, 'dist'),
   platformVersion: platformVersion(),
+  metadata: {
+    collections: projection.collections.filter((row) => row.layer === 'platform').length,
+    fields: projection.fields.filter((row) => row.layer === 'platform').length,
+  },
 })
 console.log(
   `@movp/platform: bundled ${manifest.files.length} migrations (platformVersion ${manifest.platformVersion})`,

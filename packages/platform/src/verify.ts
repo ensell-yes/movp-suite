@@ -7,8 +7,14 @@ export interface PlatformManifestEntry {
   sha256: string
 }
 
+export interface PlatformMetadataCounts {
+  collections: number
+  fields: number
+}
+
 export interface PlatformManifest {
   platformVersion: string
+  metadata: PlatformMetadataCounts
   files: PlatformManifestEntry[]
 }
 
@@ -52,9 +58,21 @@ function readManifest(dir: string): PlatformManifest {
     throw new PlatformArtifactError('manifest.json is not an object')
   }
   const version = (parsed as { platformVersion?: unknown }).platformVersion
+  const metadata = (parsed as { metadata?: unknown }).metadata
   const rawFiles = (parsed as { files?: unknown }).files
   if (typeof version !== 'string' || !Array.isArray(rawFiles)) {
     throw new PlatformArtifactError('manifest.json is missing platformVersion or files')
+  }
+  if (typeof metadata !== 'object' || metadata === null || Array.isArray(metadata)) {
+    throw new PlatformArtifactError('manifest.json metadata is missing or malformed')
+  }
+  const collections = (metadata as { collections?: unknown }).collections
+  const fields = (metadata as { fields?: unknown }).fields
+  if (!Number.isSafeInteger(collections) || Number(collections) <= 0) {
+    throw new PlatformArtifactError('manifest.json metadata collections must be a positive integer')
+  }
+  if (!Number.isSafeInteger(fields) || Number(fields) <= 0) {
+    throw new PlatformArtifactError('manifest.json metadata fields must be a positive integer')
   }
   const files = rawFiles.map((entry, i): PlatformManifestEntry => {
     if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) {
@@ -67,10 +85,14 @@ function readManifest(dir: string): PlatformManifest {
     }
     return { name, sha256 }
   })
-  return { platformVersion: version, files }
+  return {
+    platformVersion: version,
+    metadata: { collections: Number(collections), fields: Number(fields) },
+    files,
+  }
 }
 
-export function verifyPlatformArtifact(dir: string): void {
+export function verifyPlatformArtifact(dir: string): PlatformManifest {
   assertRealDirectory(dir, 'artifact directory')
   const manifest = readManifest(dir)
   const migrationsDir = join(dir, 'migrations')
@@ -109,4 +131,5 @@ export function verifyPlatformArtifact(dir: string): void {
       throw new PlatformArtifactError(`digest mismatch for ${name}`)
     }
   }
+  return manifest
 }

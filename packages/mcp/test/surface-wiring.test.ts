@@ -15,6 +15,31 @@ function pascal(name: string): string {
     .join('')
 }
 
+function camel(name: string): string {
+  const value = pascal(name)
+  return value.charAt(0).toLowerCase() + value.slice(1)
+}
+
+function graphqlCollectionCandidates(name: string): Set<string> {
+  return new Set([
+    name,
+    `${name}s`,
+    camel(name),
+    `${camel(name)}s`,
+    `create${pascal(name)}`,
+    `update${pascal(name)}`,
+  ])
+}
+
+function internalMcpTools(names: ReadonlySet<string>, collection: string): string[] {
+  return [...names].filter((name) => name.startsWith(`${collection}.`)).sort()
+}
+
+function internalGraphqlFields(names: ReadonlySet<string>, collection: string): string[] {
+  const candidates = graphqlCollectionCandidates(collection)
+  return [...names].filter((name) => candidates.has(name)).sort()
+}
+
 const db = {} as SupabaseClient
 const surfaceSchema = defineSchema({
   extends: schema,
@@ -39,7 +64,37 @@ const surfaceSchema = defineSchema({
 const publicCollections = surfaceSchema.collections.filter((collection) => collection.internal !== true)
 const internalCollections = surfaceSchema.collections.filter((collection) => collection.internal === true)
 const realInternalCollections = schema.collections.filter((collection) => collection.internal === true)
-const customInternalCliGroups = new Set(['comment', 'task'])
+const allowedInternalMcpTools: Readonly<Record<string, readonly string[]>> = {
+  comment: ['comment.add'],
+  reaction: ['reaction.toggle'],
+  task: [
+    'task.add_dependency',
+    'task.add_observer',
+    'task.assign',
+    'task.attach',
+    'task.board',
+    'task.create',
+    'task.get',
+    'task.get_detail',
+    'task.list',
+    'task.remove_dependency',
+    'task.remove_observer',
+    'task.transition',
+    'task.unassign',
+    'task.update_description',
+  ],
+}
+const allowedInternalGraphqlFields: Readonly<Record<string, readonly string[]>> = {
+  comment: ['comments'],
+  content_approval: ['contentApprovals'],
+  content_collection: ['createContentCollection'],
+  content_item: ['contentItem'],
+  content_revision: ['contentRevisions'],
+  content_type: ['contentTypes', 'createContentType'],
+  share_link: ['createShareLink'],
+  task: ['createTask', 'task', 'tasks'],
+}
+const allowedInternalCliCommands = new Set(['comment', 'task'])
 
 describe('real-schema generic surface wiring', () => {
   it('resolves every public collection through the real domain registry', () => {
@@ -65,17 +120,20 @@ describe('real-schema generic surface wiring', () => {
       expect(names.has(`${collection.name}.list`), collection.name).toBe(true)
     }
     for (const collection of realInternalCollections) {
-      expect(names.has(`${collection.name}.link`), collection.name).toBe(false)
+      expect(internalMcpTools(names, collection.name), collection.name)
+        .toEqual(allowedInternalMcpTools[collection.name] ?? [])
     }
-    expect(names.has('surface_secret.link')).toBe(false)
+    expect(internalMcpTools(names, 'surface_secret')).toEqual([])
   })
 
   it('exposes every public collection through GraphQL and CLI', () => {
     const graphql = buildSchema(surfaceSchema)
     const queries = graphql.getQueryType()?.getFields() ?? {}
     const mutations = graphql.getMutationType()?.getFields() ?? {}
+    const graphqlFields = new Set([...Object.keys(queries), ...Object.keys(mutations)])
     const cliProgram = buildProgram(surfaceSchema)
-    const cliCommands = new Set(cliProgram.commands.map((command) => command.name()))
+    const cliCommandNames = cliProgram.commands.map((command) => command.name())
+    const cliCommands = new Set(cliCommandNames)
 
     for (const collection of publicCollections) {
       expect(queries[collection.name], collection.name).toBeDefined()
@@ -84,14 +142,20 @@ describe('real-schema generic surface wiring', () => {
       expect(cliCommands.has(collection.name), collection.name).toBe(true)
     }
     for (const collection of realInternalCollections) {
-      expect(mutations[`update${pascal(collection.name)}`], collection.name).toBeUndefined()
-      const expectedCustomCommands = customInternalCliGroups.has(collection.name) ? 1 : 0
+      expect(internalGraphqlFields(graphqlFields, collection.name), collection.name)
+        .toEqual(allowedInternalGraphqlFields[collection.name] ?? [])
+      const expectedCustomCommands = allowedInternalCliCommands.has(collection.name) ? 1 : 0
       expect(
-        cliProgram.commands.filter((command) => command.name() === collection.name),
+        cliCommandNames.filter((name) => name === collection.name),
         collection.name,
       ).toHaveLength(expectedCustomCommands)
     }
-    expect(queries.surface_secret).toBeUndefined()
+    expect(internalGraphqlFields(graphqlFields, 'surface_secret')).toEqual([])
     expect(cliCommands.has('surface_secret')).toBe(false)
+  })
+
+  it('detects bespoke internal registrations outside the generic loops', () => {
+    expect(internalMcpTools(new Set(['asset.get']), 'asset')).toEqual(['asset.get'])
+    expect(internalGraphqlFields(new Set(['asset']), 'asset')).toEqual(['asset'])
   })
 })

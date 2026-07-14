@@ -6,6 +6,8 @@ REPO_ROOT="$(cd "$FIXTURE_DIR/../.." && pwd)"
 PLATFORM_DIST="$REPO_ROOT/packages/platform/dist"
 MIGRATIONS="$FIXTURE_DIR/supabase/migrations"
 DB_URL="postgresql://postgres:postgres@127.0.0.1:64422/postgres"
+PLATFORM_COLLECTIONS=''
+PLATFORM_FIELDS=''
 
 cleanup() {
   supabase stop --project-id movp-c6a-consumer --no-backup >/dev/null 2>&1 ||
@@ -14,8 +16,8 @@ cleanup() {
 trap cleanup EXIT
 
 platform_digest() {
-  local min_collections="${1:-40}"
-  local min_fields="${2:-200}"
+  local expected_collections="${1:-$PLATFORM_COLLECTIONS}"
+  local expected_fields="${2:-$PLATFORM_FIELDS}"
   local projection
   local collection_count
   local field_count
@@ -34,22 +36,32 @@ platform_digest() {
     select c.n||'|'||f.n||'|'||md5(c.t||'::'||f.t) from c cross join f;")"
   IFS='|' read -r collection_count field_count digest <<<"$projection"
 
-  if [ "$collection_count" -lt "$min_collections" ] || [ "$field_count" -lt "$min_fields" ]; then
-    echo "gate: platform metadata projection below floor: collections=$collection_count fields=$field_count" >&2
+  if [[ ! "$collection_count" =~ ^[0-9]+$ ]] || [[ ! "$field_count" =~ ^[0-9]+$ ]]; then
+    echo "gate: platform metadata counts are missing or malformed" >&2
     return 1
   fi
   if [[ ! "$digest" =~ ^[0-9a-f]{32}$ ]]; then
     echo "gate: platform metadata digest is missing or malformed" >&2
     return 1
   fi
+  if [ "$collection_count" -ne "$expected_collections" ] || [ "$field_count" -ne "$expected_fields" ]; then
+    echo "gate: platform metadata count mismatch: expected collections=$expected_collections fields=$expected_fields; got collections=$collection_count fields=$field_count" >&2
+    return 1
+  fi
   printf '%s\n' "$digest"
 }
 
 pnpm --filter @movp/platform build
-node --input-type=module -e "import { verifyPlatformArtifact } from '$PLATFORM_DIST/index.js'; verifyPlatformArtifact('$PLATFORM_DIST'); console.log('artifact ok')" || {
+EXPECTED_COUNTS="$(node --input-type=module -e "import { verifyPlatformArtifact } from '$PLATFORM_DIST/index.js'; const manifest = verifyPlatformArtifact('$PLATFORM_DIST'); process.stdout.write(manifest.metadata.collections + '|' + manifest.metadata.fields)")" || {
   echo "gate: verifyPlatformArtifact failed" >&2
   exit 1
 }
+IFS='|' read -r PLATFORM_COLLECTIONS PLATFORM_FIELDS <<<"$EXPECTED_COUNTS"
+if [[ ! "$PLATFORM_COLLECTIONS" =~ ^[1-9][0-9]*$ ]] || [[ ! "$PLATFORM_FIELDS" =~ ^[1-9][0-9]*$ ]]; then
+  echo "gate: verified artifact returned malformed metadata counts" >&2
+  exit 1
+fi
+echo "artifact ok: platform metadata collections=$PLATFORM_COLLECTIONS fields=$PLATFORM_FIELDS"
 
 rm -rf -- "$MIGRATIONS"
 mkdir -p "$MIGRATIONS"
@@ -65,8 +77,8 @@ fi
 DIGEST_BASE="$(platform_digest)"
 echo "platform digest (no extension): $DIGEST_BASE"
 
-if platform_digest 999999 999999 >/dev/null 2>&1; then
-  echo "gate: platform metadata floor sabotage unexpectedly passed" >&2
+if platform_digest "$((PLATFORM_COLLECTIONS + 1))" "$PLATFORM_FIELDS" >/dev/null 2>&1; then
+  echo "gate: platform metadata count sabotage unexpectedly passed" >&2
   exit 1
 fi
 

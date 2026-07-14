@@ -33,6 +33,7 @@ export function buildPlatformArtifact(opts: {
   sourceMigrations: string
   outDir: string
   platformVersion: string
+  metadata: PlatformManifest['metadata']
 }): PlatformManifest {
   assertRealDirectory(opts.sourceMigrations, 'source migrations directory')
   const outMigrations = join(opts.outDir, 'migrations')
@@ -46,6 +47,7 @@ export function buildPlatformArtifact(opts: {
 
   const manifest: PlatformManifest = {
     platformVersion: opts.platformVersion,
+    metadata: opts.metadata,
     files: files.map((name) => {
       const srcPath = join(opts.sourceMigrations, name)
       assertSafeSourceMigration(srcPath, name)

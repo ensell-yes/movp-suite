@@ -3,4 +3,5 @@ export {
   verifyPlatformArtifact,
   type PlatformManifest,
   type PlatformManifestEntry,
+  type PlatformMetadataCounts,
 } from './verify.ts'

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -23,7 +23,7 @@ function writeArtifact(dir: string, order?: string[]): void {
   }))
   writeFileSync(
     join(dir, 'manifest.json'),
-    JSON.stringify({ platformVersion: '0.0.0', files: manifestFiles }, null, 2),
+    JSON.stringify({ platformVersion: '0.0.0', metadata: { collections: 46, fields: 244 }, files: manifestFiles }, null, 2),
   )
 }
 
@@ -38,7 +38,19 @@ describe('verifyPlatformArtifact', () => {
 
   it('accepts a well-formed artifact', () => {
     writeArtifact(dir)
-    expect(() => verifyPlatformArtifact(dir)).not.toThrow()
+    expect(verifyPlatformArtifact(dir).metadata).toEqual({ collections: 46, fields: 244 })
+  })
+
+  it.each([
+    [{ collections: 0, fields: 244 }, 'collections'],
+    [{ collections: 46, fields: '244' }, 'fields'],
+  ])('rejects malformed metadata counts: %j', (metadata, field) => {
+    writeArtifact(dir)
+    const manifestPath = join(dir, 'manifest.json')
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as Record<string, unknown>
+    manifest.metadata = metadata
+    writeFileSync(manifestPath, JSON.stringify(manifest))
+    expect(() => verifyPlatformArtifact(dir)).toThrow(new RegExp(`metadata ${field}`))
   })
 
   it('rejects a missing migration', () => {

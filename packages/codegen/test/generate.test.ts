@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readdir, readFile, symlink, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readdir, readFile, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { schema } from '@movp/core-schema'
@@ -26,6 +26,16 @@ describe('generate() generated-delta strategy (C4a.1)', () => {
     const first = await readFile(join(migrationsDir, BASELINE), 'utf8')
     await generate({ schema, root })
     expect(await readFile(join(migrationsDir, BASELINE), 'utf8')).toBe(first)
+  })
+
+  it('atomically writes every generated output with owner-only permissions', async () => {
+    const { root, migrationsDir } = await freshRoot()
+    const delta = { file: '20990101000001_movp_generated_reporting.sql', emit: () => '-- delta body' }
+    const result = await generate({ schema, root, deltas: [delta] })
+
+    for (const path of [result.migrationPath, result.deltaPaths[0], result.typesPath]) {
+      expect((await stat(path)).mode & 0o777, path).toBe(0o600)
+    }
   })
 
   it('throws on baseline drift instead of rewriting the frozen file', async () => {
@@ -107,6 +117,18 @@ describe('generate() generated-delta strategy (C4a.1)', () => {
     await symlink(target, join(migrationsDir, file))
     await expect(generate({ schema, root, deltas: [{ file, emit: () => '-- overwritten' }] })).rejects.toThrow(/symlink/)
     expect(await readFile(target, 'utf8')).toBe('-- outside')
+  })
+
+  it('rejects a generated-types symlink without overwriting its target', async () => {
+    const { root } = await freshRoot()
+    const generatedDir = join(root, 'packages', 'domain', 'src', 'generated')
+    const target = join(root, 'outside.ts')
+    await mkdir(generatedDir, { recursive: true })
+    await writeFile(target, 'export const secret = "SUPERSECRET"\n')
+    await symlink(target, join(generatedDir, 'types.ts'))
+
+    await expect(generate({ schema, root, deltas: [] })).rejects.toThrow(/symlink/)
+    expect(await readFile(target, 'utf8')).toBe('export const secret = "SUPERSECRET"\n')
   })
 
   it('emits from the injected schema, not a static import (C6b.2)', async () => {

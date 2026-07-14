@@ -77,7 +77,6 @@ async function fs() {
     readdir(path: string): Promise<string[]>
     readFile(path: string, encoding: 'utf8'): Promise<string>
     rm(path: string): Promise<void>
-    writeFile(path: string, contents: string): Promise<void>
   }
 }
 
@@ -198,18 +197,18 @@ export async function generate(
         'Post-freeze schema/emitter changes must ship as a GENERATED_DELTAS entry with a new timestamped migration.',
     )
   }
-  if (existing === null) await f.writeFile(migrationPath, baselineSql)
+  if (existing === null) await atomicWriteFile(migrationPath, baselineSql)
 
   const deltaPaths: string[] = []
   for (const delta of deltas) {
     const deltaPath = joinPath(migrationsDir, delta.file)
     await assertSafeWriteTarget(f, deltaPath, 'generated delta')
-    await f.writeFile(deltaPath, delta.emit(schema))
+    await atomicWriteFile(deltaPath, delta.emit(schema))
     deltaPaths.push(deltaPath)
   }
 
   await assertSafeWriteTarget(f, typesPath, 'generated types output')
-  await f.writeFile(typesPath, emitTypes(schema))
+  await atomicWriteFile(typesPath, emitTypes(schema))
 
   return { migrationPath, typesPath, deltaPaths }
 }
