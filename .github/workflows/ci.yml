@@ -146,6 +146,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+      - run: node --test scripts/test/check-boundary.test.mjs
       - run: bash scripts/check-boundary.sh
 
   definer-audit:
