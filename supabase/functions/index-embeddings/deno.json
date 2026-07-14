@@ -1,6 +1,7 @@
 {
   "imports": {
     "@movp/flows": "../../../packages/flows/src/index.ts",
+    "@movp/core-schema": "../../../packages/core-schema/src/index.ts",
     "@movp/search": "../../../packages/search/src/index.ts",
     "@movp/search/gte-small": "../../../packages/search/src/gte-small.ts",
     "@movp/domain": "../../../packages/domain/src/index.ts",

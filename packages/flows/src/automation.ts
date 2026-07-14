@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
+import type { MovpSchema } from '@movp/core-schema'
 import { evaluateCondition } from './condition.ts'
 import { claimDueJobs, completeJob } from './jobs.ts'
 import { dispatchWorkflowAction } from './actions.ts'
@@ -176,9 +177,11 @@ async function processRule(
 export async function runAutomationWorker(
   db: SupabaseClient,
   limit = 10,
-  opts: { dispatch?: WorkflowActionDispatcher } = {},
+  opts: { schema: MovpSchema; dispatch?: WorkflowActionDispatcher },
 ): Promise<{ processed: number; failed: number }> {
-  const dispatch = opts.dispatch ?? dispatchWorkflowAction
+  const dispatch = opts.dispatch ?? ((client, input) => dispatchWorkflowAction(client, input, {
+    schema: opts.schema,
+  }))
   let processed = 0
   let failed = 0
 

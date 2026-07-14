@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
+import { lstatSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -14,14 +14,41 @@ const publishable = [
   'mcp',
   'notifications',
   'obs',
+  'platform',
   'search',
 ]
+
+const MAX_PACKAGE_MANIFEST_BYTES = 256 * 1024
+
+function parseManifest(raw, label) {
+  let parsed
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    throw new Error(`package artifact check failed: ${label} is not valid JSON`)
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw new Error(`package artifact check failed: ${label} is not an object`)
+  }
+  return parsed
+}
+
+function readManifest(path) {
+  const info = lstatSync(path, { throwIfNoEntry: false })
+  if (!info) throw new Error(`package artifact check failed: manifest missing: ${path}`)
+  if (info.isSymbolicLink()) throw new Error(`package artifact check failed: manifest is a symlink: ${path}`)
+  if (!info.isFile()) throw new Error(`package artifact check failed: manifest is not a regular file: ${path}`)
+  if (info.size > MAX_PACKAGE_MANIFEST_BYTES) {
+    throw new Error(`package artifact check failed: manifest exceeds size bound: ${path}`)
+  }
+  return parseManifest(readFileSync(path, 'utf8'), path)
+}
 
 execFileSync('pnpm', ['pack', '--help'], { stdio: 'pipe' })
 
 for (const dirName of publishable) {
   const dir = join('packages', dirName)
-  const pkg = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'))
+  const pkg = readManifest(join(dir, 'package.json'))
   const collect = (value) => {
     const values = []
     if (!value) return values
@@ -58,7 +85,10 @@ for (const dirName of publishable) {
       console.error(`package artifact check failed: ${pkg.name} has no dist artifacts`)
       process.exit(1)
     }
-    const packedManifest = JSON.parse(execFileSync('tar', ['-xOzf', join(out, tgz), 'package/package.json'], { encoding: 'utf8' }))
+    const packedManifest = parseManifest(
+      execFileSync('tar', ['-xOzf', join(out, tgz), 'package/package.json'], { encoding: 'utf8' }),
+      `${pkg.name ?? dirName} packed package.json`,
+    )
     const packedSourceEntrypoints = sourceEntrypoints(packedManifest)
     if (packedSourceEntrypoints.length > 0) {
       console.error(`package artifact check failed: ${pkg.name} packed manifest points at source`)
@@ -67,6 +97,30 @@ for (const dirName of publishable) {
     if (!collect(packedManifest.exports).some((value) => value.includes('/dist/'))) {
       console.error(`package artifact check failed: ${pkg.name} packed exports do not point at dist`)
       process.exit(1)
+    }
+    if (dirName === 'platform') {
+      if (!listing.includes('package/dist/manifest.json')) {
+        throw new Error('package artifact check failed: @movp/platform manifest is absent')
+      }
+      const platformManifest = parseManifest(
+        execFileSync('tar', ['-xOzf', join(out, tgz), 'package/dist/manifest.json'], { encoding: 'utf8' }),
+        '@movp/platform packed manifest.json',
+      )
+      if (!Array.isArray(platformManifest.files) || platformManifest.files.length === 0) {
+        throw new Error('package artifact check failed: @movp/platform manifest has no migrations')
+      }
+      const packedFiles = new Set(listing.trim().split('\n'))
+      for (const entry of platformManifest.files) {
+        if (typeof entry !== 'object' || entry === null || Array.isArray(entry) || typeof entry.name !== 'string') {
+          throw new Error('package artifact check failed: @movp/platform manifest migration is malformed')
+        }
+        if (!packedFiles.has(`package/dist/migrations/${entry.name}`)) {
+          throw new Error(`package artifact check failed: @movp/platform migration is absent: ${entry.name}`)
+        }
+      }
+      if (!collect(packedManifest.exports).includes('./dist/migrations/*')) {
+        throw new Error('package artifact check failed: @movp/platform migration subpath export is absent')
+      }
     }
   } finally {
     rmSync(out, { recursive: true, force: true })

@@ -1,4 +1,5 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
+import { schema } from '@movp/core-schema'
 import { describe, expect, it } from 'vitest'
 import { createDomain } from '../src/index.ts'
 
@@ -76,7 +77,7 @@ describe('content integration', () => {
     const ws2 = await makeWorkspace('Other WS')
     const owner = await makeUser()
     await addMember(ws1, owner.id)
-    const ownerDomain = createDomain({ db: userClient(owner.token), userId: owner.id })
+    const ownerDomain = createDomain({ db: userClient(owner.token), userId: owner.id }, { schema })
     const adminDb = serviceClient()
 
     const ct = await ownerDomain.content.createType({
@@ -138,6 +139,12 @@ describe('content integration', () => {
     const listed = await ownerDomain.content.listRevisions({ itemId: item.id })
     expect(listed.items.length).toBe(2)
 
+    const getDetail = ownerDomain.content.getDetail
+    const detail = await getDetail(item.id)
+    expect(detail?.type?.key).toBe('article')
+    expect(detail?.currentRevision?.id).toBe(rows[1].id)
+    expect(detail?.currentRevision?.data).toEqual({ title: 'Hello 2', body: '<p>Hi</p>', rank: 2 })
+
     await expect(ownerDomain.content.create({
       workspaceId: ws1,
       contentTypeId: ct.id,
@@ -159,5 +166,6 @@ describe('content integration', () => {
     }).select('id').single()
     const foreignId = (foreign.data as { id: string }).id
     expect(await ownerDomain.content.get(foreignId)).toBeNull()
+    expect(await ownerDomain.content.getDetail(foreignId)).toBeNull()
   })
 })

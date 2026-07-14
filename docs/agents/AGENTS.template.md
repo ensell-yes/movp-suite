@@ -14,6 +14,10 @@ This project exposes a MOVP instance over MCP (streamable HTTP) and the `movp` C
 ## Rules for agents
 - Pass `workspaceId` on every workspace-scoped tool call (the PAT's default workspace is only a hint).
 - Enumerate tools with `tools/list`; tools are named `<collection>.<verb>` / `<domain>.<verb>`.
+- Before building on Task or CMS, read `docs/agents/task-cms-data-contract.md`,
+  `docs/agents/task-cms-interface-contract.md`, and `docs/agents/task-cms-scaffolding.md`.
+- Use invariant-bearing Task/CMS operations; do not assemble revisions, approvals, or publishes with direct
+  table writes.
 - On `invalid_token` / `expired_token` (HTTP 401), re-authenticate — do not blind-retry. Full code
   list: `docs/agents/error-codes.md`.
 - Revocation blocks new PAT exchanges immediately; already-minted sessions can remain valid for up to

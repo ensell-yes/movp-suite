@@ -12,6 +12,7 @@
     "build": "tsup src/index.ts --format esm --dts --sourcemap --clean --target node20 --out-dir dist"
   },
   "devDependencies": {
+    "@types/node": "^26.0.1",
     "vitest": "^3.2.6"
   },
   "types": "./src/index.ts",

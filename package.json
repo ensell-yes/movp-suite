@@ -5,7 +5,7 @@
   "packageManager": "pnpm@9.12.0",
   "scripts": {
     "codegen": "tsx scripts/codegen.ts",
-    "check:docs": "node scripts/check-docs-presence.mjs && node scripts/check-agent-configs.mjs",
+    "check:docs": "pnpm check:task-cms-contracts && node scripts/check-docs-presence.mjs && node scripts/check-agent-configs.mjs",
     "check:packages": "node scripts/check-package-artifacts.mjs",
     "check:release-preflight": "node scripts/check-release-preflight.mjs",
     "check:demo-seed": "node scripts/check-demo-seed.mjs",
@@ -13,6 +13,7 @@
     "check:onboarding-debt": "node scripts/check-onboarding-debt.mjs",
     "check:supabase-ports": "node scripts/check-supabase-port-strategy.mjs",
     "check:agent-configs": "node scripts/check-agent-configs.mjs",
+    "check:task-cms-contracts": "node --test scripts/check-task-cms-contracts.test.mjs && node scripts/check-task-cms-contracts.mjs",
     "seed:demo": "tsx scripts/seed-demo.ts",
     "bootstrap": "node scripts/bootstrap.mjs",
     "test": "turbo run test",
@@ -21,6 +22,7 @@
     "test:graphql-shape": "pnpm --filter @movp/graphql exec vitest run schema",
     "test:jobs": "pnpm --filter @movp/flows exec vitest run jobs",
     "test:redaction": "pnpm --filter @movp/obs exec vitest run emit",
+    "gate:metadata-consistency": "bash scripts/gate-metadata-consistency.sh",
     "typecheck": "turbo run typecheck",
     "build": "pnpm --filter \"./packages/*\" -r run build"
   },

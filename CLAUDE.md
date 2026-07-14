@@ -25,6 +25,11 @@
   pre-deploy emergency and must not be set in CI.
 - Future schema/codegen changes must either emit additive hand migrations or introduce a new generated-delta
   migration strategy. The original generated migration is frozen as historical deployment input.
+- `@movp/platform` publishes the whole ordered migration stream with per-file digests and exact platform-layer
+  collection/field counts derived from `metadataProjection(schema)`. Verify the artifact before materializing it;
+  `fixtures/platform-consumer/gate.sh` must match those counts exactly before and after project extensions.
+- Codegen writes baselines, generated deltas, types, registries, and manifests through the owner-only atomic-write
+  helpers. Do not reintroduce direct writes for generated outputs or weaken frozen-file drift refusal.
 
 ## Reporting Discipline
 
@@ -63,6 +68,42 @@
   a pinned, repeatable smoke that keeps credentials out of argv and logs.
 - Agent-facing auth codes are `missing_token`, `invalid_token`, `expired_token`, and
   `invalid_claims`. A revoked PAT maps to `invalid_token` at every public boundary.
+
+## Schema Productization
+
+- `defineSchema({ extends })` is the ownership boundary: a root schema is `platform`, locally
+  declared extensions are `project`, and nested composition preserves the inherited layer.
+  Downstream codegen emits only `projectCollections` and `projectEvents`; platform objects come
+  exclusively from `@movp/platform`.
+- V1 project migration generation is additive for collections/events. Collection/event removal
+  fails with `project_schema_removal_unsupported`; field mutation/removal fails immutable-file
+  comparison. Automatic metadata pruning is deferred until historical definitions are persisted.
+- `schemaFingerprint` remains the DB-metadata hash used by manifests. Runtime parity uses
+  `runtimeFingerprint`, which additionally covers `internal`, full field semantics, and events.
+- Runtime packages receive a `MovpSchema`; they do not import the platform schema internally.
+  Monorepo and Edge Function entrypoints import `@movp/core-schema` and inject it into CLI, domain,
+  GraphQL, MCP, and flows. Preserve `packages/flows/test/schema-injection.test.ts` and the real-schema
+  surface gate when adding a new collection or runtime consumer.
+- The schema-derived domain registry, flow injection, and complete surface inventory are pure unit gates.
+  Keep them in the independent `c6-surface-wiring` CI job; use `packages/domain/vitest.unit.config.ts`
+  rather than coupling these gates to a running Supabase stack or a preceding artifact job.
+- Every Edge Function that imports `@movp/domain`, `@movp/flows`, or a schema-aware runtime must map
+  `@movp/core-schema` in its own `deno.json`. Keep all five entrypoints in the `deno check` graph gate;
+  Node typecheck cannot detect a missing Deno import-map entry.
+- `@movp/platform` validates the artifact root and migrations directory with `lstat` before any
+  enumeration. Never move a `readdir` ahead of those guards or follow a symlinked migration root.
+
+## Task/CMS Agent Contracts
+
+- Consumer contracts live in `docs/agents/task-cms-{data-contract,interface-contract,scaffolding}.md` and
+  are indexed by `llms.txt`. Keep them aligned with the schema, domain types, MCP registry, and CLI commands;
+  `pnpm check:task-cms-contracts` is the drift gate.
+- Task/CMS MCP tools return the same result as JSON text and as `{ result }` structured content. Existing tool
+  names and JSON-string CMS inputs remain compatible; structured `fieldSchema` and `data` are preferred.
+- Agent detail reads are `task.get_detail` and `content.get_detail`; published delivery reads use
+  `content.get_published`. All list surfaces preserve opaque `{ items, nextCursor }` pagination.
+- Agent content updates pass the revision they read as `expectedRevisionId` (CLI `--expected-revision`). Agent
+  task creates reuse `idempotencyKey` after an indeterminate failure.
 
 ## Eight-Dimension Review Harness
 

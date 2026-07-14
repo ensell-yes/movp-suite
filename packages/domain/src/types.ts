@@ -1,9 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type {
   AssetRow,
-  AutomationRuleCreate,
   AutomationRuleRow,
-  AutomationRuleUpdate,
   CommentRow,
   ContentApprovalRow,
   ContentCollectionRow,
@@ -12,50 +10,9 @@ import type {
   ContentScheduleRow,
   ContentSeoRow,
   ContentTypeRow,
-  CampaignCalendarEventCreate,
-  CampaignCalendarEventRow,
-  CampaignCalendarEventUpdate,
-  CampaignChannelCreate,
-  CampaignChannelRow,
-  CampaignChannelUpdate,
   CampaignCreate,
-  CampaignDeliverableCreate,
-  CampaignDeliverableRow,
-  CampaignDeliverableUpdate,
-  CampaignMetricCreate,
-  CampaignMetricRow,
-  CampaignMetricUpdate,
   CampaignRow,
-  CampaignSegmentCreate,
-  CampaignSegmentRow,
-  CampaignSegmentUpdate,
-  EventTypeCreate,
   EventTypeRow,
-  EventTypeUpdate,
-  ExternalRecordCreate,
-  ExternalRecordRow,
-  ExternalRecordUpdate,
-  PlatformEventCreate,
-  PlatformEventRow,
-  PlatformEventUpdate,
-  SegmentCreate,
-  SegmentMembershipCreate,
-  SegmentMembershipRow,
-  SegmentMembershipUpdate,
-  SegmentRecomputeRunCreate,
-  SegmentRecomputeRunRow,
-  SegmentRecomputeRunUpdate,
-  SegmentRow,
-  SegmentRuleCreate,
-  SegmentRuleRow,
-  SegmentRuleUpdate,
-  SegmentSnapshotCreate,
-  SegmentSnapshotMemberCreate,
-  SegmentSnapshotMemberRow,
-  SegmentSnapshotMemberUpdate,
-  SegmentSnapshotRow,
-  SegmentSnapshotUpdate,
-  SegmentUpdate,
   CampaignUpdate,
   MarketingPlanCreate,
   MarketingPlanRow,
@@ -69,16 +26,13 @@ import type {
   TaskPriorityOptionCreate,
   TaskPriorityOptionRow,
   TaskPriorityOptionUpdate,
+  TaskAssignmentRow,
+  TaskAttachmentRow,
+  TaskDependencyRow,
+  TaskObserverRow,
   TaskRow,
-  TaskStatusOptionCreate,
   TaskStatusOptionRow,
-  TaskStatusOptionUpdate,
-  WebhookSubscriptionCreate,
   WebhookSubscriptionRow,
-  WebhookSubscriptionUpdate,
-  WorkflowRunCreate,
-  WorkflowRunRow,
-  WorkflowRunUpdate,
 } from './generated/types.ts'
 
 export interface DomainCtx {
@@ -184,9 +138,19 @@ export interface TaskBoardColumn {
   tasks: TaskRow[]
 }
 
+export interface TaskDetail {
+  task: TaskRow
+  description: string | null
+  assignments: TaskAssignmentRow[]
+  observers: TaskObserverRow[]
+  dependencies: TaskDependencyRow[]
+  attachments: TaskAttachmentRow[]
+}
+
 export interface TaskService {
   create(i: { workspaceId: string; title: string; description?: string; statusId?: string; priorityId?: string; parentId?: string; startDate?: string; dueDate?: string; idempotencyKey?: string; actorId?: string }): Promise<TaskRow>
   get(id: string): Promise<TaskRow | null>
+  getDetail(id: string): Promise<TaskDetail | null>
   list(a: { workspaceId: string; statusId?: string; assigneeId?: string; parentId?: string | null; first?: number; after?: string | null }): Promise<Page<TaskRow>>
   board(a: { workspaceId: string }): Promise<TaskBoardColumn[]>
   updateDescription(id: string, body: string): Promise<TaskRow>
@@ -200,12 +164,19 @@ export interface TaskService {
   attach(i: { taskId: string; r2Key: string; filename: string; contentType?: string; bytes?: number }): Promise<void>
 }
 
+export interface ContentDetail {
+  item: ContentItemRow
+  type: ContentTypeRow | null
+  currentRevision: ContentRevisionRow | null
+}
+
 export interface ContentService {
   createType(i: { workspaceId: string; key: string; label: string; fieldSchema: unknown; moderationPolicy?: string; approvalPolicy?: string }): Promise<ContentTypeRow>
   listTypes(a: { workspaceId: string; first?: number; after?: string | null }): Promise<Page<ContentTypeRow>>
   create(i: { workspaceId: string; contentTypeId: string; slug: string; data: Record<string, unknown> }): Promise<ContentItemRow>
   update(i: { itemId: string; data: Record<string, unknown>; expectedRevisionId?: string | null }): Promise<ContentItemRow>
   get(id: string): Promise<ContentItemRow | null>
+  getDetail(id: string): Promise<ContentDetail | null>
   list(a: { workspaceId: string; contentTypeId?: string; status?: string; first?: number; after?: string | null }): Promise<Page<ContentItemRow>>
   listRevisions(a: { itemId: string; first?: number; after?: string | null }): Promise<Page<ContentRevisionRow>>
   submitForApproval(i: { itemId: string; policy?: 'single' | 'multi' | 'moderation'; approvalsRequired?: number }): Promise<ContentItemRow>
@@ -399,28 +370,7 @@ export interface ReportingService {
 }
 
 export interface Domain {
-  event_type: CollectionService<EventTypeRow, EventTypeCreate, EventTypeUpdate>
-  external_record: CollectionService<ExternalRecordRow, ExternalRecordCreate, ExternalRecordUpdate>
-  note: CollectionService<NoteRow, NoteCreate, NoteUpdate>
-  tag: CollectionService<TagRow, TagCreate, TagUpdate>
-  marketing_plan: CollectionService<MarketingPlanRow, MarketingPlanCreate, MarketingPlanUpdate>
-  task_status_option: CollectionService<TaskStatusOptionRow, TaskStatusOptionCreate, TaskStatusOptionUpdate>
-  task_priority_option: CollectionService<TaskPriorityOptionRow, TaskPriorityOptionCreate, TaskPriorityOptionUpdate>
-  campaign_channel: CollectionService<CampaignChannelRow, CampaignChannelCreate, CampaignChannelUpdate>
-  campaign_deliverable: CollectionService<CampaignDeliverableRow, CampaignDeliverableCreate, CampaignDeliverableUpdate>
-  campaign_calendar_event: CollectionService<CampaignCalendarEventRow, CampaignCalendarEventCreate, CampaignCalendarEventUpdate>
-  campaign_metric: CollectionService<CampaignMetricRow, CampaignMetricCreate, CampaignMetricUpdate>
-  campaign_segment: CollectionService<CampaignSegmentRow, CampaignSegmentCreate, CampaignSegmentUpdate>
-  platform_event: CollectionService<PlatformEventRow, PlatformEventCreate, PlatformEventUpdate>
-  segment: CollectionService<SegmentRow, SegmentCreate, SegmentUpdate>
-  segment_rule: CollectionService<SegmentRuleRow, SegmentRuleCreate, SegmentRuleUpdate>
-  segment_membership: CollectionService<SegmentMembershipRow, SegmentMembershipCreate, SegmentMembershipUpdate>
-  segment_snapshot: CollectionService<SegmentSnapshotRow, SegmentSnapshotCreate, SegmentSnapshotUpdate>
-  segment_snapshot_member: CollectionService<SegmentSnapshotMemberRow, SegmentSnapshotMemberCreate, SegmentSnapshotMemberUpdate>
-  segment_recompute_run: CollectionService<SegmentRecomputeRunRow, SegmentRecomputeRunCreate, SegmentRecomputeRunUpdate>
-  automation_rule: CollectionService<AutomationRuleRow, AutomationRuleCreate, AutomationRuleUpdate>
-  webhook_subscription: CollectionService<WebhookSubscriptionRow, WebhookSubscriptionCreate, WebhookSubscriptionUpdate>
-  workflow_run: CollectionService<WorkflowRunRow, WorkflowRunCreate, WorkflowRunUpdate>
+  collection(name: string): CollectionService<{ id: string } & Record<string, unknown>, Record<string, unknown>, Record<string, unknown>>
   task: TaskService
   content: ContentService
   search(a: SearchArgs): Promise<SearchHit[]>

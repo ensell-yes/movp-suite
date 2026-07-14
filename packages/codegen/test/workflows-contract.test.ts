@@ -17,10 +17,12 @@ describe('workflow catalog codegen contract', () => {
       },
     })
     const sql = emitSqlMigration(
-      defineSchema(
-        [eventType],
-        [defineEvent({ key: 'task.completed', domain: 'task', payloadSchema: { type: 'object' }, version: 1 })],
-      ),
+      defineSchema({
+        collections: [eventType],
+        events: [
+          defineEvent({ key: 'task.completed', domain: 'task', payloadSchema: { type: 'object' }, version: 1 }),
+        ],
+      }),
     )
 
     const eventTypeSql = sql.slice(

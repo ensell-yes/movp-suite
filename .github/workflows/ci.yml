@@ -36,6 +36,65 @@ jobs:
       - run: pnpm codegen
       - run: git diff --exit-code
 
+  c6-productization:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v6
+        with: { version: 9.12.0 }
+      - uses: actions/setup-node@v6
+        with: { node-version: 22, cache: pnpm }
+      - uses: denoland/setup-deno@v2
+        with: { deno-version: v2.9.2 }
+      - uses: supabase/setup-cli@v2
+        with: { version: 2.109.1 }
+      - run: deno --version | head -n 1 | grep -qF 'deno 2.9.2'
+      - run: supabase --version | grep -qF '2.109.1'
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @movp/platform test
+      - run: bash fixtures/platform-consumer/gate.sh
+      - run: pnpm --filter @movp/cli test:built-runtime
+      - name: Check schema-aware Edge Function graphs
+        run: |
+          deno check --no-lock --config supabase/functions/flows/deno.json supabase/functions/flows/index.ts
+          deno check --no-lock --config supabase/functions/graphql/deno.json supabase/functions/graphql/index.ts
+          deno check --no-lock --config supabase/functions/index-embeddings/deno.json supabase/functions/index-embeddings/index.ts
+          deno check --no-lock --config supabase/functions/mcp/deno.json supabase/functions/mcp/index.ts
+          deno check --no-lock --config supabase/functions/segment-recompute/deno.json supabase/functions/segment-recompute/index.ts
+
+  c6-surface-wiring:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v6
+        with: { version: 9.12.0 }
+      - uses: actions/setup-node@v6
+        with: { node-version: 22, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - name: Run schema-derived domain registry gate
+        run: pnpm --filter @movp/domain exec vitest run --config vitest.unit.config.ts
+      - name: Run flow schema-injection gate
+        run: pnpm --filter @movp/flows exec vitest run test/schema-injection.test.ts
+      - name: Run complete surface-wiring gate
+        run: pnpm --filter @movp/mcp exec vitest run test/surface-wiring.test.ts
+
+  metadata-consistency:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v6
+        with: { version: 9.12.0 }
+      - uses: actions/setup-node@v6
+        with: { node-version: 22, cache: pnpm }
+      - uses: supabase/setup-cli@v2
+        with: { version: 2.109.1 }
+      - run: supabase --version | grep -qF '2.109.1'
+      - run: pnpm install --frozen-lockfile
+      - run: supabase start
+      - run: supabase db reset
+      - run: pnpm gate:metadata-consistency
+
   package-artifacts:
     runs-on: ubuntu-latest
     steps:

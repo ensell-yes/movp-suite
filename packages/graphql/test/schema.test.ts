@@ -1,6 +1,6 @@
 import { graphql, printSchema } from 'graphql/index.js'
 import { describe, expect, it, vi } from 'vitest'
-import type { FieldDef, MovpSchema } from '@movp/core-schema'
+import { defineSchema, type CollectionDef, type FieldDef } from '@movp/core-schema'
 import { schema as movpSchema } from '@movp/core-schema'
 import { buildSchema } from '../src/schema.ts'
 
@@ -19,33 +19,35 @@ vi.mock('@movp/domain', () => {
   }
   const tag = { create: vi.fn(), get: vi.fn(), list: vi.fn(), update: vi.fn(), delete: vi.fn() }
   return {
-    createDomain: () => ({ note, tag, search: vi.fn(async () => []), graph: { link: vi.fn(), traverse: vi.fn() } }),
+    createDomain: () => ({
+      collection: (name: string) => name === 'note' ? note : tag,
+      search: vi.fn(async () => []),
+      graph: { link: vi.fn(), traverse: vi.fn() },
+    }),
   }
 })
 
 const ctx = { db: {} as never, userId: 'u' }
 
-const recursive: MovpSchema = {
-  collections: [
-    {
-      name: 'node',
-      label: 'Node',
-      labelPlural: 'Nodes',
-      workspaceScoped: true,
-      fields: {
-        title: { type: 'text', label: 'Title' } as FieldDef,
-        children: {
-          type: 'relation',
-          label: 'Children',
-          target: 'node',
-          cardinality: 'many-to-many',
-          graph: true,
-        } as FieldDef,
-      },
-    },
-  ],
-  events: [],
+const recursiveNode: CollectionDef = {
+  name: 'node',
+  label: 'Node',
+  labelPlural: 'Nodes',
+  workspaceScoped: true,
+  layer: 'platform',
+  fields: {
+    title: { type: 'text', label: 'Title' } as FieldDef,
+    children: {
+      type: 'relation',
+      label: 'Children',
+      target: 'node',
+      cardinality: 'many-to-many',
+      graph: true,
+    } as FieldDef,
+  },
 }
+
+const recursive = defineSchema({ collections: [recursiveNode] })
 
 describe('buildSchema', () => {
   it('generates a type, queries, mutation, and search', () => {

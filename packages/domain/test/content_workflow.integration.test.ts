@@ -1,4 +1,5 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
+import { schema } from '@movp/core-schema'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { createDomain } from '../src/index.ts'
 import type { ContentService } from '../src/types.ts'
@@ -79,7 +80,7 @@ describe('CMS approval + publish workflow integration', () => {
   let member: { id: string; token: string }
 
   const svc = (user: { id: string; token: string }): ContentService =>
-    createDomain({ db: userClient(user.token), userId: user.id }).content
+    createDomain({ db: userClient(user.token), userId: user.id }, { schema }).content
 
   const latestApprovalId = async (itemId: string): Promise<string> => {
     const { data, error } = await serviceClient()

@@ -1,4 +1,5 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
+import { schema } from '@movp/core-schema'
 import { describe, expect, it } from 'vitest'
 import { createDomain } from '../src/index.ts'
 
@@ -78,7 +79,7 @@ describe('workflow domain integration', () => {
     await addMember(ws, user.id)
     await addMember(otherWs, user.id)
 
-    const domain = createDomain({ db: userClient(user.token), userId: user.id })
+    const domain = createDomain({ db: userClient(user.token), userId: user.id }, { schema })
     const adminDb = serviceClient()
 
     const catalog = await domain.workflows.listEventTypes({ first: 100 })

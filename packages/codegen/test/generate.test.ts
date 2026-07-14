@@ -1,10 +1,16 @@
-import { mkdtemp, mkdir, readdir, readFile, symlink, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readdir, readFile, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { schema } from '@movp/core-schema'
 import { describe, expect, it } from 'vitest'
 import { generate } from '../src/generate.ts'
 
 const BASELINE = '20260701000002_movp_generated.sql'
+
+if (false) {
+  // @ts-expect-error C6b requires callers to inject a schema.
+  void generate({ root: '/tmp/never-runs' })
+}
 
 async function freshRoot(): Promise<{ root: string; migrationsDir: string }> {
   const root = await mkdtemp(join(tmpdir(), 'movp-codegen-'))
@@ -16,29 +22,39 @@ async function freshRoot(): Promise<{ root: string; migrationsDir: string }> {
 describe('generate() generated-delta strategy (C4a.1)', () => {
   it('bootstraps the baseline and is byte-stable across two runs', async () => {
     const { root, migrationsDir } = await freshRoot()
-    await generate({ root })
+    await generate({ schema, root })
     const first = await readFile(join(migrationsDir, BASELINE), 'utf8')
-    await generate({ root })
+    await generate({ schema, root })
     expect(await readFile(join(migrationsDir, BASELINE), 'utf8')).toBe(first)
+  })
+
+  it('atomically writes every generated output with owner-only permissions', async () => {
+    const { root, migrationsDir } = await freshRoot()
+    const delta = { file: '20990101000001_movp_generated_reporting.sql', emit: () => '-- delta body' }
+    const result = await generate({ schema, root, deltas: [delta] })
+
+    for (const path of [result.migrationPath, result.deltaPaths[0], result.typesPath]) {
+      expect((await stat(path)).mode & 0o777, path).toBe(0o600)
+    }
   })
 
   it('throws on baseline drift instead of rewriting the frozen file', async () => {
     const { root, migrationsDir } = await freshRoot()
-    await generate({ root })
+    await generate({ schema, root })
     const path = join(migrationsDir, BASELINE)
     const tampered = (await readFile(path, 'utf8')) + '\n-- drift'
     await writeFile(path, tampered)
-    await expect(generate({ root })).rejects.toThrow(/generated baseline drift/)
+    await expect(generate({ schema, root })).rejects.toThrow(/generated baseline drift/)
     expect(await readFile(path, 'utf8')).toBe(tampered)
   })
 
   it('writes registered deltas and re-writes them idempotently', async () => {
     const { root, migrationsDir } = await freshRoot()
     const delta = { file: '20990101000001_movp_generated_reporting.sql', emit: () => '-- delta body' }
-    const res = await generate({ root, deltas: [delta] })
+    const res = await generate({ schema, root, deltas: [delta] })
     expect(res.deltaPaths).toHaveLength(1)
     expect(res.deltaPaths[0].endsWith(delta.file)).toBe(true)
-    await generate({ root, deltas: [delta] })
+    await generate({ schema, root, deltas: [delta] })
     expect(await readFile(join(migrationsDir, delta.file), 'utf8')).toBe('-- delta body')
   })
 
@@ -49,12 +65,12 @@ describe('generate() generated-delta strategy (C4a.1)', () => {
       emit: () => '-- owned',
       collections: ['note'],
     }
-    await generate({ root, deltas: [delta] })
+    await generate({ schema, root, deltas: [delta] })
     const baseline = await readFile(join(migrationsDir, BASELINE), 'utf8')
     expect(baseline).not.toContain('create table if not exists public.note (')
 
     const fresh = await freshRoot()
-    await generate({ root: fresh.root })
+    await generate({ schema, root: fresh.root })
     expect(await readFile(join(fresh.migrationsDir, BASELINE), 'utf8'))
       .toContain('create table if not exists public.note (')
   })
@@ -66,12 +82,12 @@ describe('generate() generated-delta strategy (C4a.1)', () => {
       emit: () => '-- owned',
       events: ['note.created'],
     }
-    await generate({ root, deltas: [delta] })
+    await generate({ schema, root, deltas: [delta] })
     const baseline = await readFile(join(migrationsDir, BASELINE), 'utf8')
     expect(baseline).not.toContain("('note.created', 'lifecycle'")
 
     const fresh = await freshRoot()
-    await generate({ root: fresh.root })
+    await generate({ schema, root: fresh.root })
     expect(await readFile(join(fresh.migrationsDir, BASELINE), 'utf8'))
       .toContain("('note.created', 'lifecycle'")
   })
@@ -80,7 +96,7 @@ describe('generate() generated-delta strategy (C4a.1)', () => {
     const { root, migrationsDir } = await freshRoot()
     await writeFile(join(migrationsDir, '20250101000000_movp_generated.sql'), '-- stale')
     const delta = { file: '20990101000001_movp_generated.sql', emit: () => '-- kept' }
-    await generate({ root, deltas: [delta] })
+    await generate({ schema, root, deltas: [delta] })
     const files = await readdir(migrationsDir)
     expect(files).not.toContain('20250101000000_movp_generated.sql')
     expect(files).toContain('20990101000001_movp_generated.sql')
@@ -90,7 +106,7 @@ describe('generate() generated-delta strategy (C4a.1)', () => {
   it('rejects delta filenames that could escape the migrations directory', async () => {
     const { root } = await freshRoot()
     const delta = { file: '../escape.sql', emit: () => '-- must not be written' }
-    await expect(generate({ root, deltas: [delta] })).rejects.toThrow(/invalid generated delta filename/)
+    await expect(generate({ schema, root, deltas: [delta] })).rejects.toThrow(/invalid generated delta filename/)
   })
 
   it('rejects a delta symlink without overwriting its target', async () => {
@@ -99,7 +115,27 @@ describe('generate() generated-delta strategy (C4a.1)', () => {
     const file = '20990101000001_movp_generated_reporting.sql'
     await writeFile(target, '-- outside')
     await symlink(target, join(migrationsDir, file))
-    await expect(generate({ root, deltas: [{ file, emit: () => '-- overwritten' }] })).rejects.toThrow(/symlink/)
+    await expect(generate({ schema, root, deltas: [{ file, emit: () => '-- overwritten' }] })).rejects.toThrow(/symlink/)
     expect(await readFile(target, 'utf8')).toBe('-- outside')
+  })
+
+  it('rejects a generated-types symlink without overwriting its target', async () => {
+    const { root } = await freshRoot()
+    const generatedDir = join(root, 'packages', 'domain', 'src', 'generated')
+    const target = join(root, 'outside.ts')
+    await mkdir(generatedDir, { recursive: true })
+    await writeFile(target, 'export const secret = "SUPERSECRET"\n')
+    await symlink(target, join(generatedDir, 'types.ts'))
+
+    await expect(generate({ schema, root, deltas: [] })).rejects.toThrow(/symlink/)
+    expect(await readFile(target, 'utf8')).toBe('export const secret = "SUPERSECRET"\n')
+  })
+
+  it('emits from the injected schema, not a static import (C6b.2)', async () => {
+    const { root, migrationsDir } = await freshRoot()
+    const res = await generate({ schema, root })
+    const baseline = await readFile(join(migrationsDir, BASELINE), 'utf8')
+    expect(baseline).toContain('create table if not exists public.note')
+    expect(res.typesPath.endsWith('types.ts')).toBe(true)
   })
 })

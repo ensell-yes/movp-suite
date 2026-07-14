@@ -29,7 +29,12 @@ vi.mock('@movp/domain', async (importOriginal) => ({
   createDomain: mocks.createDomain,
 }))
 
-mocks.createDomain.mockImplementation(() => ({ reporting: mocks.reporting }))
+mocks.createDomain.mockImplementation(() => ({
+  collection: () => {
+    throw new Error('no domain service')
+  },
+  reporting: mocks.reporting,
+}))
 const schema = buildSchema(movpSchema)
 const yoga = createYoga({ schema: movpSchema })
 const reportReportingFailure = vi.fn()

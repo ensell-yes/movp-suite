@@ -12,9 +12,13 @@ const inbox = vi.fn(async () => [
   { kind: 'user.mentioned', entity_type: 'note', entity_id: 'n1', ref_id: 'm1', created_at: 't', payload: {} },
 ])
 const taskCreate = vi.fn(async () => ({ id: 't1', title: 'Ship it', status_id: 's1' }))
+const taskList = vi.fn(async () => ({ items: [{ id: 't1' }], nextCursor: 'next-task' }))
 const taskBoard = vi.fn(async () => [{ status: { id: 's1', label: 'Todo' }, tasks: [{ id: 't1' }] }])
+const taskDetail = vi.fn(async () => ({ task: { id: 't1' }, description: 'Ship it', assignments: [], observers: [], dependencies: [], attachments: [] }))
 const contentCreate = vi.fn(async () => ({ id: 'ci1', slug: 'hello', status: 'draft' }))
+const contentUpdate = vi.fn(async () => ({ id: 'ci1', current_revision_id: 'r2' }))
 const contentPublish = vi.fn(async () => ({ id: 'ci1', status: 'published' }))
+const contentDetail = vi.fn(async () => ({ item: { id: 'ci1' }, type: { id: 'ct1' }, currentRevision: { id: 'r2', data: { headline: 'Hi' } } }))
 const contentIssueAsset = vi.fn(async () => ({ uploadUrl: 'https://r2/put', assetId: 'a1', r2Key: 'w/a1' }))
 const campaignLinkTask = vi.fn(async () => undefined)
 const campaignDeliverableSchedules = vi.fn(async () => [])
@@ -41,6 +45,7 @@ function crud() {
 
 vi.mock('@movp/domain', () => ({
   createDomain: vi.fn(() => ({
+    collection: vi.fn(() => crud()),
     event_type: crud(),
     external_record: crud(),
     note: crud(),
@@ -93,7 +98,8 @@ vi.mock('@movp/domain', () => ({
     task: {
       create: taskCreate,
       get: vi.fn(async () => ({ id: 't1' })),
-      list: vi.fn(async () => ({ items: [{ id: 't1' }], nextCursor: null })),
+      getDetail: taskDetail,
+      list: taskList,
       board: taskBoard,
       assign: vi.fn(async () => undefined),
       unassign: vi.fn(),
@@ -108,8 +114,9 @@ vi.mock('@movp/domain', () => ({
     content: {
       createType: vi.fn(async () => ({ id: 'ct1', key: 'article' })),
       create: contentCreate,
-      update: vi.fn(async () => ({ id: 'ci1' })),
+      update: contentUpdate,
       get: vi.fn(async () => ({ id: 'ci1' })),
+      getDetail: contentDetail,
       list: vi.fn(async () => ({ items: [{ id: 'ci1' }], nextCursor: null })),
       listTypes: vi.fn(async () => ({ items: [{ id: 'ct1' }], nextCursor: null })),
       listRevisions: vi.fn(async () => ({ items: [{ id: 'r1' }], nextCursor: null })),
@@ -218,12 +225,18 @@ describe('buildMcpServer', () => {
     expect(names).toEqual(expect.arrayContaining([
       'task.create',
       'task.get',
+      'task.get_detail',
       'task.list',
       'task.board',
       'task.assign',
+      'task.unassign',
+      'task.add_observer',
+      'task.remove_observer',
       'task.transition',
       'task.add_dependency',
+      'task.remove_dependency',
       'task.update_description',
+      'task.attach',
     ]))
     expect(names).not.toContain('task_revision.create')
     expect(names).toEqual(expect.arrayContaining(['task_status_option.create', 'task_priority_option.create']))
@@ -238,8 +251,34 @@ describe('buildMcpServer', () => {
       parentId: undefined,
       startDate: undefined,
       dueDate: undefined,
+      idempotencyKey: undefined,
     })
     expect(JSON.stringify(createRes.content)).toContain('t1')
+    expect(createRes.structuredContent).toEqual({ result: { id: 't1', title: 'Ship it', status_id: 's1' } })
+
+    const detailRes = await client.callTool({ name: 'task.get_detail', arguments: { id: 't1' } })
+    expect(taskDetail).toHaveBeenCalledWith('t1')
+    expect(JSON.stringify(detailRes.structuredContent)).toContain('Ship it')
+
+    await client.callTool({
+      name: 'task.list',
+      arguments: { workspaceId: 'w', topLevel: true, first: 10, after: 'task-cursor' },
+    })
+    expect(taskList).toHaveBeenCalledWith({
+      workspaceId: 'w',
+      statusId: undefined,
+      assigneeId: undefined,
+      parentId: null,
+      first: 10,
+      after: 'task-cursor',
+    })
+
+    const conflictingFilter = await client.callTool({
+      name: 'task.list',
+      arguments: { workspaceId: 'w', topLevel: true, parentId: 'parent-1' },
+    })
+    expect(conflictingFilter.isError).toBe(true)
+    expect(JSON.stringify(conflictingFilter.content)).toContain('invalid_parent_filter')
 
     const boardRes = await client.callTool({ name: 'task.board', arguments: { workspaceId: 'w' } })
     expect(taskBoard).toHaveBeenCalledWith({ workspaceId: 'w' })
@@ -261,10 +300,14 @@ describe('buildMcpServer', () => {
     const names = (await client.listTools()).tools.map((t) => t.name)
     expect(names).toEqual(expect.arrayContaining([
       'content.create_type',
+      'content.list_types',
       'content.create',
       'content.update',
       'content.get',
+      'content.get_detail',
       'content.list',
+      'content.list_revisions',
+      'content.get_published',
       'content.submit_for_approval',
       'content.decide_approval',
       'content.publish',
@@ -272,10 +315,32 @@ describe('buildMcpServer', () => {
       'content.schedule',
       'content.run_seo_audit',
       'content.issue_asset_upload',
+      'content.finalize_asset',
       'content.list_approvals',
+      'content.create_collection',
+      'content.add_to_collection',
+      'content.reorder_collection',
+      'content.link_asset',
+      'content.link_item',
+      'content.link_editorial_task',
     ]))
     expect(names).not.toContain('content_item.create')
     expect(names).not.toContain('content_revision.create')
+    expect((await client.listTools()).tools.find((tool) => tool.name === 'content.get_detail')?.outputSchema).toBeUndefined()
+
+    const emptySchema = await client.callTool({
+      name: 'content.create_type',
+      arguments: { workspaceId: 'w', key: 'empty', label: 'Empty', fieldSchema: '' },
+    })
+    expect(emptySchema.isError).toBe(true)
+    expect(JSON.stringify(emptySchema.content)).toContain('invalid_json')
+
+    const emptyData = await client.callTool({
+      name: 'content.create',
+      arguments: { workspaceId: 'w', contentTypeId: 'ct1', slug: 'empty', data: '   ' },
+    })
+    expect(emptyData.isError).toBe(true)
+    expect(JSON.stringify(emptyData.content)).toContain('invalid_json')
 
     const createRes = await client.callTool({
       name: 'content.create',
@@ -283,6 +348,55 @@ describe('buildMcpServer', () => {
     })
     expect(contentCreate).toHaveBeenCalledWith({ workspaceId: 'w', contentTypeId: 'ct1', slug: 'hello', data: { headline: 'Hi' } })
     expect(JSON.stringify(createRes.content)).toContain('ci1')
+
+    await client.callTool({
+      name: 'content.create_type',
+      arguments: {
+        workspaceId: 'w',
+        key: 'article',
+        label: 'Article',
+        fieldSchema: [{ name: 'headline', type: 'text', required: true }],
+        moderationPolicy: 'pre',
+        approvalPolicy: 'single',
+      },
+    })
+    const domain = vi.mocked(createDomain).mock.results.at(-1)?.value
+    expect(domain?.content.createType).toHaveBeenCalledWith({
+      workspaceId: 'w',
+      key: 'article',
+      label: 'Article',
+      fieldSchema: [{ name: 'headline', type: 'text', required: true }],
+      moderationPolicy: 'pre',
+      approvalPolicy: 'single',
+    })
+
+    await client.callTool({
+      name: 'content.create',
+      arguments: { workspaceId: 'w', contentTypeId: 'ct1', slug: 'structured', data: { headline: 'Structured' } },
+    })
+    expect(contentCreate).toHaveBeenLastCalledWith({
+      workspaceId: 'w',
+      contentTypeId: 'ct1',
+      slug: 'structured',
+      data: { headline: 'Structured' },
+    })
+
+    await client.callTool({
+      name: 'content.update',
+      arguments: { id: 'ci1', data: { headline: 'Updated' }, expectedRevisionId: 'r1' },
+    })
+    expect(contentUpdate).toHaveBeenCalledWith({
+      itemId: 'ci1',
+      data: { headline: 'Updated' },
+      expectedRevisionId: 'r1',
+    })
+
+    const detailRes = await client.callTool({ name: 'content.get_detail', arguments: { id: 'ci1' } })
+    expect(contentDetail).toHaveBeenCalledWith('ci1')
+    expect(JSON.stringify(detailRes.structuredContent)).toContain('headline')
+
+    const publishedRes = await client.callTool({ name: 'content.get_published', arguments: { id: 'ci1' } })
+    expect(JSON.stringify(publishedRes.structuredContent)).toContain('headline')
 
     const publishRes = await client.callTool({ name: 'content.publish', arguments: { itemId: 'ci1' } })
     expect(contentPublish).toHaveBeenCalledWith({ itemId: 'ci1' })
