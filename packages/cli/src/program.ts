@@ -64,9 +64,9 @@ export function buildProgram(opts: BuildProgramOpts = {}): Command {
   const runCodegen =
     opts.runCodegen ??
     (async () => {
-      const mod = await import('@movp/codegen')
+      const [mod, coreSchema] = await Promise.all([import('@movp/codegen'), import('@movp/core-schema')])
       if (!mod.generate) throw new Error('@movp/codegen.generate() not found')
-      await mod.generate()
+      await mod.generate({ schema: coreSchema.schema })
     })
 
   const runMigratePush =

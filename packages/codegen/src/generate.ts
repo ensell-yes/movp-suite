@@ -1,4 +1,3 @@
-import { schema } from '@movp/core-schema'
 import type { MovpSchema } from '@movp/core-schema'
 import { emitReportingSql } from './emit-reporting.ts'
 import { emitDeltaSql, emitSqlMigration } from './emit-sql.ts'
@@ -36,6 +35,7 @@ export const GENERATED_DELTAS: readonly GeneratedDelta[] = [
 ]
 
 export interface GenerateOptions {
+  schema: MovpSchema
   root?: string
   migrationName?: string
   migrationsDir?: string
@@ -109,8 +109,9 @@ async function assertSafeWriteTarget(f: Fs, path: string, label: string): Promis
 }
 
 export async function generate(
-  options: GenerateOptions = {},
+  options: GenerateOptions,
 ): Promise<{ migrationPath: string; typesPath: string; deltaPaths: string[] }> {
+  const schema = options.schema
   const root = options.root ?? defaultRoot()
   const migrationName = migrationFileName(
     options.migrationName ?? '20260701000002_movp_generated.sql',
