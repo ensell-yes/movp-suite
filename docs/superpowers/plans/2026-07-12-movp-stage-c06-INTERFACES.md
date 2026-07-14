@@ -38,8 +38,10 @@ Companion to the design spec `2026-07-12-movp-stage-c06-templates-scaffolding-de
   embeddable, layer }` — EXACTLY the DB-compared columns (`emit-sql.ts:7,11`). Deterministic order:
   collections by name, fields by (collection_name, name).
 - `schemaFingerprint(schema: MovpSchema): string` — sha256 hex over the canonical JSON of
-  `metadataProjection(schema)`. Pure. Consumed by 06b's runtime guard AND serialized by 06c.
-- `internal` is NOT in the projection (manifest-only runtime metadata, not DB-compared).
+  `metadataProjection(schema)`. Pure. Serialized by 06c; it remains DB-exact.
+- `runtimeFingerprint(schema: Pick<MovpSchema, 'collections' | 'events'>): string` — sha256 hex over
+  a canonical runtime projection covering `internal`, complete field semantics, and events. Consumed
+  by the Node/Deno runtime guard. `internal` is intentionally absent only from `metadataProjection`.
 
 ## Schema injection (06b)
 

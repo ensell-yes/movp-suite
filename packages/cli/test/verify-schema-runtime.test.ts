@@ -55,6 +55,23 @@ describe('runVerifySchemaRuntime (C6b.5)', () => {
       spawnDeno: () => ({ status: 1, stdout: '', stderr: 'sensitive diagnostic' }),
     })).rejects.toThrow(/^verify_schema_runtime_spawn_failed: deno exited 1$/)
   })
+
+  it('reports spawn and allowlisted Deno diagnostics without leaking arbitrary stderr', async () => {
+    await expect(runVerifySchemaRuntime({
+      ...baseOpts,
+      spawnDeno: () => ({ status: null, stdout: '', stderr: '', errorCode: 'ENOENT' }),
+    })).rejects.toThrow(/^verify_schema_runtime_spawn_failed: deno spawn ENOENT$/)
+    await expect(runVerifySchemaRuntime({
+      ...baseOpts,
+      spawnDeno: () => ({
+        status: 3, stdout: '', stderr: 'verify_schema_runtime_edge_import_failed',
+      }),
+    })).rejects.toThrow(/deno exited 3 \(verify_schema_runtime_edge_import_failed\)$/)
+    await expect(runVerifySchemaRuntime({
+      ...baseOpts,
+      spawnDeno: () => ({ status: 1, stdout: '', stderr: 'SUPERSECRET' }),
+    })).rejects.not.toThrow(/SUPERSECRET/)
+  })
 })
 
 const hasDeno = spawnSync('deno', ['--version'], { encoding: 'utf8' }).status === 0

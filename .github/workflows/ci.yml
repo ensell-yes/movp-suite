@@ -55,6 +55,8 @@ jobs:
       - run: pnpm --filter @movp/platform test
       - run: bash fixtures/platform-consumer/gate.sh
       - run: pnpm --filter @movp/cli test:built-runtime
+      - run: pnpm --filter @movp/domain exec vitest run test/collection-tier.test.ts
+      - run: pnpm --filter @movp/flows exec vitest run test/schema-injection.test.ts
       - run: pnpm --filter @movp/mcp exec vitest run test/surface-wiring.test.ts
 
   metadata-consistency:

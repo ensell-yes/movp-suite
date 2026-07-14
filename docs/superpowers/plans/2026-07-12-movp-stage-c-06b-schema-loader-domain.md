@@ -7,15 +7,15 @@ implementation. Do not batch multiple steps before running the gate.
 ## Goal
 
 Make the schema an **injected value**, not a static import, across codegen, domain, and the CLI,
-and add the two pure utilities every later C6 part consumes: `metadataProjection(schema)` and
-`schemaFingerprint(schema)`. Derive the domain's generic collection tier from the schema at call
+and add the pure projections later C6 parts consume: `metadataProjection(schema)`,
+`schemaFingerprint(schema)`, and `runtimeFingerprint(schema)`. Derive the domain's generic collection tier from the schema at call
 time (so a novel non-internal collection reaches CLI/GraphQL/MCP with zero hand edits — the C5
 `external_record` precedent), and ship a `movp verify-schema-runtime` command that fails
 **before serve/deploy** when the Node and Deno runtimes would load divergent schemas.
 
 ## Architecture
 
-- `@movp/core-schema` gains **pure** `metadataProjection` + `schemaFingerprint` (a new
+- `@movp/core-schema` gains **pure** `metadataProjection` + DB/runtime fingerprints (a new
   `projection.ts`, re-exported from `index.ts`). No I/O, no per-request state.
 - `@movp/codegen` `generate()` takes a **required** `schema` in options; the module-level
   `import { schema }` is removed. `scripts/codegen.ts` and the CLI's default `runCodegen` pass it.
@@ -28,8 +28,8 @@ time (so a novel non-internal collection reaches CLI/GraphQL/MCP with zero hand 
   already accept `schema` (verified: `packages/mcp/src/server.ts:45`, `packages/graphql/src/schema.ts:141`).
   Their **internal** `createDomain(...)` calls gain `{ schema, ... }`; that is the only edit there.
 - `movp verify-schema-runtime` (new `packages/cli/src/verify-schema-runtime.ts` + committed Deno
-  fingerprint script): Node imports `movp.config.mjs` → `schemaFingerprint`; spawns `deno run` with
-  the scaffold `deno.json` to import the Edge schema module → `schemaFingerprint`; compares; the CLI
+  fingerprint script): Node imports `movp.config.mjs` → `runtimeFingerprint`; spawns `deno run` with
+  the scaffold `deno.json` to import the Edge schema module → `runtimeFingerprint`; compares; the CLI
   command throws `schema_runtime_mismatch` (→ exit 1 via `bin.ts`) on divergence, prints `{ ok: true }`
   (exit 0) on match.
 
@@ -50,8 +50,9 @@ TypeScript (strict, **NEVER `any`**), Node 20+ via `tsx`, Deno (Supabase edge ru
   `createDomain(...)` opts gain `{ schema }`.
 - **`createDomain` must be schema-derived** (C5 `external_record` precedent — a hand-maintained
   per-collection map silently omitted a new collection). Do not reintroduce a hardcoded map.
-- `schemaFingerprint` is **synchronous** and **byte-identical across Node and Deno** — same
-  `node:crypto` `createHash('sha256')`, same `JSON.stringify` of the canonical projection.
+- `schemaFingerprint` remains the DB-exact manifest hash. `runtimeFingerprint` is **synchronous**
+  and **byte-identical across Node and Deno**, and additionally covers `internal`, full field
+  semantics, and events.
 - Migrations are forward-only; this plan touches **no** `.sql` and **no** migration files.
 - Run the monorepo suite green after every task: `pnpm -w test` (or the per-package `vitest run`
   named in each gate) plus `pnpm -w typecheck`.
@@ -70,6 +71,7 @@ export interface FieldMeta {
 }
 export function metadataProjection(schema: MovpSchema): { collections: CollectionMeta[]; fields: FieldMeta[] }
 export function schemaFingerprint(schema: MovpSchema): string // sha256 hex
+export function runtimeFingerprint(schema: Pick<MovpSchema, 'collections' | 'events'>): string
 
 // @movp/codegen
 export function generate(options: { schema: MovpSchema; root?: string; migrationName?: string;
@@ -88,6 +90,11 @@ export function runVerifySchemaRuntime(opts: VerifySchemaRuntimeOpts):
 ```
 
 Stable error code produced here: **`schema_runtime_mismatch`**.
+
+**Post-execution correction:** `schemaFingerprint` remains the DB-exact manifest hash implemented
+in Task 1. The runtime guard in Task 5 uses the separately exported `runtimeFingerprint`, whose
+canonical projection includes `internal`, full field semantics, and events. This correction
+supersedes the original DB-only runtime comparison without changing C6c manifest compatibility.
 
 ---
 
@@ -190,10 +197,9 @@ pnpm --filter @movp/core-schema exec vitest run projection
 Create `packages/core-schema/src/projection.ts`:
 
 ```ts
-// `node:crypto` is a builtin (no new dependency) and resolves under BOTH Node 20+ and the
-// Supabase Deno edge runtime, so schemaFingerprint() is byte-identical across runtimes — the
-// invariant movp verify-schema-runtime relies on. Do NOT switch to Web Crypto: subtle.digest is
-// async and INTERFACES locks schemaFingerprint to a synchronous `string`.
+// `node:crypto` is a builtin (no new dependency). Keep the manifest fingerprint synchronous and
+// deterministic; the post-execution runtimeFingerprint uses the same hashing primitive over its
+// broader canonical runtime projection.
 import { createHash } from 'node:crypto'
 import type { CollectionDef, FieldDef, MovpSchema } from './types.ts'
 
@@ -765,13 +771,13 @@ pnpm --filter @movp/cli exec tsc --noEmit
   `movp.config.mjs`, `deno.json`, `schema.match.mjs`, `schema.diverge.mjs`
 
 **Interfaces**
-- *Consumes from 06a/06b:* `schemaFingerprint` (Task 1), `MovpSchema`.
+- *Consumes from 06a/06b:* `runtimeFingerprint` (Task 1), `MovpSchema`.
 - *Produces:* `runVerifySchemaRuntime(opts): Promise<{ ok; code?: 'schema_runtime_mismatch';
   nodeFingerprint; denoFingerprint }>`; CLI command `movp verify-schema-runtime`.
 
 **Contract (from INTERFACES "Cross-runtime guard"):** Node imports `movp.config.mjs` →
-`schemaFingerprint`; spawns `deno run` with the scaffold `deno.json` to import the Edge schema module
-→ `schemaFingerprint`; compares. Divergence → CLI throws `schema_runtime_mismatch` (exit 1 via
+`runtimeFingerprint`; spawns `deno run` with the scaffold `deno.json` to import the Edge schema module
+→ `runtimeFingerprint`; compares. Divergence → CLI throws `schema_runtime_mismatch` (exit 1 via
 `bin.ts`). Match → prints `{ ok: true }` (exit 0). A **spawn/deno failure is NOT a mismatch** — it
 throws a distinct `verify_schema_runtime_spawn_failed` error (also exit 1) so automation can tell a
 real divergence from an operational failure (idempotency-cli exit-code discipline).
@@ -782,15 +788,14 @@ Write `packages/cli/test/verify-schema-runtime.test.ts`:
 
 ```ts
 import { describe, expect, it } from 'vitest'
-import type { MovpSchema } from '@movp/core-schema'
-import { schemaFingerprint } from '@movp/core-schema'
+import { defineSchema, runtimeFingerprint } from '@movp/core-schema'
 import { runVerifySchemaRuntime } from '../src/verify-schema-runtime.ts'
 
-const nodeSchema: MovpSchema = {
+const nodeSchema = defineSchema({
   collections: [{ name: 'n', label: 'N', labelPlural: 'Ns', workspaceScoped: true, layer: 'platform', fields: {} }],
   events: [],
-}
-const nodeFp = schemaFingerprint(nodeSchema)
+})
+const nodeFp = runtimeFingerprint(nodeSchema)
 
 const baseOpts = {
   configPath: '/virtual/movp.config.mjs',
@@ -846,12 +851,14 @@ Create `packages/cli/src/verify-schema-runtime.ts`:
 // throws `ReferenceError: require is not defined` at runtime here — never introduce one.
 import { spawnSync } from 'node:child_process'
 import type { MovpSchema } from '@movp/core-schema'
-import { schemaFingerprint } from '@movp/core-schema'
+import { runtimeFingerprint } from '@movp/core-schema'
 
 export interface SpawnResult {
   status: number | null
   stdout: string
   stderr: string
+  errorCode?: string
+  signal?: string | null
 }
 
 export interface VerifySchemaRuntimeOpts {
@@ -877,11 +884,16 @@ export interface VerifySchemaRuntimeResult {
 function defaultSpawnDeno(args: string[]): SpawnResult {
   // Node builtin — no new dependency. The Deno process computes the fingerprint out-of-process
   // because a Node process cannot import the Deno-resolved schema in-process (the split-brain this
-  // command closes). NEVER log stdout/stderr contents elsewhere — they are surfaced only in the
-  // spawn-failure error path below and carry no schema field VALUES (only fingerprints/diagnostics).
+  // command closes). NEVER log stdout/stderr contents; Deno import errors may include source bytes.
   // `spawnSync` is statically imported at the top of this file (ESM) — do NOT `require()` it here.
   const r = spawnSync('deno', args, { encoding: 'utf8' })
-  return { status: r.status, stdout: r.stdout ?? '', stderr: r.stderr ?? '' }
+  return {
+    status: r.status,
+    stdout: r.stdout ?? '',
+    stderr: r.stderr ?? '',
+    errorCode: r.error && 'code' in r.error && typeof r.error.code === 'string' ? r.error.code : undefined,
+    signal: r.signal,
+  }
 }
 
 export async function runVerifySchemaRuntime(opts: VerifySchemaRuntimeOpts): Promise<VerifySchemaRuntimeResult> {
@@ -889,7 +901,7 @@ export async function runVerifySchemaRuntime(opts: VerifySchemaRuntimeOpts): Pro
   const spawnDeno = opts.spawnDeno ?? defaultSpawnDeno
 
   const mod = await importConfig(opts.configPath)
-  const nodeFingerprint = schemaFingerprint(mod.schema)
+  const nodeFingerprint = runtimeFingerprint(mod.schema)
 
   const scriptUrl = new URL('./verify-schema-runtime.deno.ts', import.meta.url)
   const scriptPath = decodeURIComponent(scriptUrl.pathname)
@@ -905,8 +917,10 @@ export async function runVerifySchemaRuntime(opts: VerifySchemaRuntimeOpts): Pro
 
   if (result.status !== 0) {
     // Operational failure, NOT a divergence — distinct terminal state so automation reading the exit
-    // code never mistakes a missing/broken deno for a schema mismatch.
-    throw new Error(`verify_schema_runtime_spawn_failed: deno exited ${result.status ?? 'null'}: ${result.stderr.trim()}`)
+    // code never mistakes a missing/broken deno for a schema mismatch. Surface only allowlisted,
+    // content-free categories; never echo arbitrary stderr.
+    if (result.errorCode) throw new Error(`verify_schema_runtime_spawn_failed: deno spawn ${result.errorCode}`)
+    throw new Error(`verify_schema_runtime_spawn_failed: deno exited ${result.status ?? 'null'}`)
   }
 
   const denoFingerprint = result.stdout.trim()
@@ -924,18 +938,38 @@ Create `packages/cli/src/verify-schema-runtime.deno.ts` (committed; runs under D
 
 ```ts
 // Runs under Deno (Supabase edge runtime toolchain). Imports the Edge schema via the specifier the
-// scaffold deno.json resolves, computes the SAME schemaFingerprint as the Node side, prints it.
+// scaffold deno.json resolves, computes the SAME runtimeFingerprint as the Node side, prints it.
 // Deno globals (`Deno`) are intentional here and unavailable under Node — this file is spawned, never
-// imported by Node. schemaFingerprint resolves via the deno.json import map (@movp/core-schema).
-import { schemaFingerprint } from '@movp/core-schema'
+// imported by Node. runtimeFingerprint resolves via the deno.json import map (@movp/core-schema).
+import { runtimeFingerprint } from '@movp/core-schema'
+import type { MovpSchema } from '@movp/core-schema'
+
+type RuntimeSchema = Pick<MovpSchema, 'collections' | 'events'>
+function isRuntimeSchema(value: unknown): value is RuntimeSchema {
+  if (typeof value !== 'object' || value === null) return false
+  const candidate = value as { collections?: unknown; events?: unknown }
+  return Array.isArray(candidate.collections) && Array.isArray(candidate.events)
+}
 
 const specifier = Deno.args[0]
 if (!specifier) {
-  console.error('verify-schema-runtime.deno: missing edge schema specifier')
+  console.error('verify_schema_runtime_missing_specifier')
   Deno.exit(2)
 }
-const mod = await import(specifier)
-console.log(schemaFingerprint(mod.schema))
+let mod: { schema?: unknown }
+try {
+  mod = await import(specifier)
+} catch {
+  console.error('verify_schema_runtime_edge_import_failed')
+  Deno.exit(3)
+}
+try {
+  if (!isRuntimeSchema(mod.schema)) throw new Error('invalid schema shape')
+  console.log(runtimeFingerprint(mod.schema))
+} catch {
+  console.error('verify_schema_runtime_edge_schema_invalid')
+  Deno.exit(4)
+}
 ```
 
 Note for the executor: `verify-schema-runtime.deno.ts` references the `Deno` global, which the CLI

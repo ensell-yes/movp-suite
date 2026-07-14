@@ -188,6 +188,13 @@ monorepo becomes their first consumer (dogfooding) and must stay 100% green thro
 
 ## Deferred (not in C6)
 
+- Project field mutation/removal and collection/event removal. V1 generated project migrations are
+  additive collections/events only. Removal fails with `project_schema_removal_unsupported`; field
+  mutation/removal fails immutable-file comparison. Metadata pruning waits for persisted historical
+  definitions so frozen migrations never need reconstruction from a changed schema.
+- Raw Deno stderr. The runtime verifier surfaces content-free categories (`ENOENT`, edge import
+  failure, invalid edge schema, exit/signal) and deliberately suppresses arbitrary stderr because
+  imported source snippets or filesystem paths may contain secrets.
 - Composable capability manifest / platform-subsetting (monolithic v1).
 - Public `npm publish` workflow + `@movp` scope acquisition (release step).
 - Community template submission; template versioning/upgrade tooling.

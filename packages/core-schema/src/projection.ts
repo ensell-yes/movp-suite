@@ -125,13 +125,13 @@ function runtimeEvent(event: EventDef) {
   }
 }
 
-export function runtimeProjection(schema: MovpSchema) {
+export function runtimeProjection(schema: Pick<MovpSchema, 'collections' | 'events'>) {
   return {
     collections: schema.collections.map(runtimeCollection).sort((a, b) => a.name.localeCompare(b.name)),
     events: schema.events.map(runtimeEvent).sort((a, b) => a.key.localeCompare(b.key)),
   }
 }
 
-export function runtimeFingerprint(schema: MovpSchema): string {
+export function runtimeFingerprint(schema: Pick<MovpSchema, 'collections' | 'events'>): string {
   return createHash('sha256').update(JSON.stringify(runtimeProjection(schema))).digest('hex')
 }

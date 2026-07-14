@@ -7,6 +7,8 @@ export interface SpawnResult {
   status: number | null
   stdout: string
   stderr: string
+  errorCode?: string
+  signal?: string | null
 }
 
 export interface VerifySchemaRuntimeOpts {
@@ -30,8 +32,18 @@ function defaultSpawnDeno(args: string[]): SpawnResult {
     status: result.status,
     stdout: result.stdout ?? '',
     stderr: result.stderr ?? '',
+    errorCode: result.error && 'code' in result.error && typeof result.error.code === 'string'
+      ? result.error.code
+      : undefined,
+    signal: result.signal,
   }
 }
+
+const SAFE_DENO_FAILURES = new Set([
+  'verify_schema_runtime_edge_import_failed',
+  'verify_schema_runtime_edge_schema_invalid',
+  'verify_schema_runtime_missing_specifier',
+])
 
 export async function runVerifySchemaRuntime(
   opts: VerifySchemaRuntimeOpts,
@@ -54,7 +66,15 @@ export async function runVerifySchemaRuntime(
   ])
 
   if (result.status !== 0) {
-    throw new Error(`verify_schema_runtime_spawn_failed: deno exited ${result.status ?? 'null'}`)
+    if (result.errorCode) {
+      throw new Error(`verify_schema_runtime_spawn_failed: deno spawn ${result.errorCode}`)
+    }
+    const diagnostic = result.stderr.trim()
+    const safeDiagnostic = SAFE_DENO_FAILURES.has(diagnostic) ? ` (${diagnostic})` : ''
+    const signal = result.signal ? ` signal=${result.signal}` : ''
+    throw new Error(
+      `verify_schema_runtime_spawn_failed: deno exited ${result.status ?? 'null'}${signal}${safeDiagnostic}`,
+    )
   }
 
   const denoFingerprint = result.stdout.trim()
