@@ -187,6 +187,7 @@ jobs:
         with: { node-version: 22 }
       - uses: supabase/setup-cli@v2
         with: { version: 2.109.1 }
+      - run: node --test scripts/integration-smoke-http.test.mjs
       - run: supabase start
       - run: supabase db reset
       - name: Serve functions and run integration smoke
@@ -208,7 +209,10 @@ jobs:
             tail -n 100 /tmp/integration-smoke-functions.log || true
             exit 1
           fi
-          node scripts/check-integration-smoke.mjs
+          if ! node scripts/check-integration-smoke.mjs; then
+            tail -n 100 /tmp/integration-smoke-functions.log || true
+            exit 1
+          fi
 
   integration-templates:
     runs-on: ubuntu-latest

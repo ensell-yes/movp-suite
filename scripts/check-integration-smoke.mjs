@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { startMockCrm } from '../examples/sync-worker/mock-crm.mjs'
 import { syncRecord } from '../examples/sync-worker/worker.mjs'
+import { exchangePat } from './integration-smoke-http.mjs'
 
 const apiUrl = process.env.SUPABASE_URL ?? process.env.API_URL ?? 'http://127.0.0.1:64321'
 const anonKey = process.env.SUPABASE_ANON_KEY ?? process.env.ANON_KEY
@@ -22,22 +23,6 @@ async function responseJson(response, label) {
   const body = await response.json()
   if (!response.ok) throw new Error(`${label}: HTTP ${response.status}`)
   return body
-}
-
-async function exchangePat(pat) {
-  for (let attempt = 1; attempt <= 3; attempt++) {
-    const response = await fetch(`${apiUrl}/functions/v1/auth-exchange`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${pat}`, apikey: anonKey, 'content-type': 'application/json' },
-      body: '{}',
-    })
-    if (response.status === 503 && attempt < 3) {
-      await new Promise((resolve) => setTimeout(resolve, 500))
-      continue
-    }
-    return responseJson(response, 'exchange smoke PAT')
-  }
-  throw new Error('exchange smoke PAT: function did not become ready')
 }
 
 let mock
@@ -68,7 +53,11 @@ try {
     body: JSON.stringify({ default_ws: workspaceId, name: 'integration-smoke' }),
   }), 'create smoke PAT')
   if (!createdPat || typeof createdPat.token !== 'string') throw new Error('create smoke PAT: missing token')
-  const exchanged = await exchangePat(createdPat.token)
+  const exchanged = await responseJson(await exchangePat({
+    apiUrl,
+    anonKey,
+    pat: createdPat.token,
+  }), 'exchange smoke PAT')
   const sessionToken = exchanged.access_token
   if (typeof sessionToken !== 'string') throw new Error('exchange smoke PAT: missing access_token')
 
