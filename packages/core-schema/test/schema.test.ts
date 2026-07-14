@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest'
+import { f } from '../src/builders.ts'
 import { comment } from '../src/collections/comment.ts'
 import { note } from '../src/collections/note.ts'
 import { tag } from '../src/collections/tag.ts'
-import { defineSchema } from '../src/define.ts'
+import { defineCollection, defineSchema } from '../src/define.ts'
 import { schema } from '../src/schema.ts'
 
 describe('example collections', () => {
@@ -87,10 +88,49 @@ describe('defineSchema aggregate', () => {
   })
 
   it('rejects duplicate collection names', () => {
-    expect(() => defineSchema([tag, tag])).toThrow(/duplicate/)
+    expect(() => defineSchema({ collections: [tag, tag] })).toThrow(/duplicate/)
   })
 
   it('rejects a relation to a collection not in the set', () => {
-    expect(() => defineSchema([note])).toThrow(/unknown collection "tag"/)
+    expect(() => defineSchema({ collections: [note] })).toThrow(/unknown collection "tag"/)
+  })
+})
+
+describe('defineSchema layer composition', () => {
+  it('tags a non-extends schema entirely platform', () => {
+    expect(schema.collections.every((c) => c.layer === 'platform')).toBe(true)
+    expect(schema.projectCollections).toEqual([])
+    expect(schema.platformCollections).toHaveLength(schema.collections.length)
+  })
+
+  it('tags inherited collections platform and local collections project when extends is set', () => {
+    const contact = defineCollection({
+      name: 'contact',
+      label: 'Contact',
+      labelPlural: 'Contacts',
+      workspaceScoped: true,
+      fields: { full_name: f.text({ label: 'Full name', required: true }) },
+    })
+    const extended = defineSchema({ extends: schema, collections: [contact] })
+    expect(extended.collections.find((c) => c.name === 'contact')?.layer).toBe('project')
+    expect(extended.collections.find((c) => c.name === 'note')?.layer).toBe('platform')
+    expect(extended.projectCollections.map((c) => c.name)).toEqual(['contact'])
+    expect(extended.platformCollections.every((c) => c.layer === 'platform')).toBe(true)
+  })
+
+  it('rejects an extension that redeclares a platform collection name', () => {
+    const dupNote = defineCollection({
+      name: 'note',
+      label: 'Note',
+      labelPlural: 'Notes',
+      workspaceScoped: true,
+      fields: { title: f.text({ label: 'Title', required: true }) },
+    })
+    expect(() => defineSchema({ extends: schema, collections: [dupNote] })).toThrow(/duplicate/)
+  })
+
+  it('does not mutate the shared collection singleton (stamps copies)', () => {
+    defineSchema({ extends: schema, collections: [] })
+    expect((note as { layer?: string }).layer).toBeUndefined()
   })
 })

@@ -61,4 +61,8 @@ export interface EventDef {
 export interface MovpSchema {
   collections: CollectionDef[]
   events: EventDef[]
+  /** Derived: collections with layer === 'platform'. */
+  platformCollections: CollectionDef[]
+  /** Derived: collections with layer === 'project' (empty for a non-extends schema). */
+  projectCollections: CollectionDef[]
 }

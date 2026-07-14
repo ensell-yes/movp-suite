@@ -1,6 +1,6 @@
 import { graphql, printSchema } from 'graphql/index.js'
 import { describe, expect, it, vi } from 'vitest'
-import type { FieldDef, MovpSchema } from '@movp/core-schema'
+import type { CollectionDef, FieldDef, MovpSchema } from '@movp/core-schema'
 import { schema as movpSchema } from '@movp/core-schema'
 import { buildSchema } from '../src/schema.ts'
 
@@ -25,26 +25,29 @@ vi.mock('@movp/domain', () => {
 
 const ctx = { db: {} as never, userId: 'u' }
 
+const recursiveNode: CollectionDef = {
+  name: 'node',
+  label: 'Node',
+  labelPlural: 'Nodes',
+  workspaceScoped: true,
+  layer: 'platform',
+  fields: {
+    title: { type: 'text', label: 'Title' } as FieldDef,
+    children: {
+      type: 'relation',
+      label: 'Children',
+      target: 'node',
+      cardinality: 'many-to-many',
+      graph: true,
+    } as FieldDef,
+  },
+}
+
 const recursive: MovpSchema = {
-  collections: [
-    {
-      name: 'node',
-      label: 'Node',
-      labelPlural: 'Nodes',
-      workspaceScoped: true,
-      fields: {
-        title: { type: 'text', label: 'Title' } as FieldDef,
-        children: {
-          type: 'relation',
-          label: 'Children',
-          target: 'node',
-          cardinality: 'many-to-many',
-          graph: true,
-        } as FieldDef,
-      },
-    },
-  ],
+  collections: [recursiveNode],
   events: [],
+  platformCollections: [recursiveNode],
+  projectCollections: [],
 }
 
 describe('buildSchema', () => {

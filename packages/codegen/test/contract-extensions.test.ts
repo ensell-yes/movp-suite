@@ -1,4 +1,4 @@
-import { defineCollection, f, type CollectionDef } from '@movp/core-schema'
+import { defineCollection, f, type CollectionDef, type MovpSchema } from '@movp/core-schema'
 import { describe, expect, it } from 'vitest'
 import { emitCollectionSql, emitTypes } from '../src/index.ts'
 
@@ -18,7 +18,13 @@ const deliverable: CollectionDef = defineCollection({
 
 describe('DSL/codegen contract extensions', () => {
   const sql = emitCollectionSql(deliverable)
-  const ts = emitTypes({ collections: [deliverable], events: [] })
+  const isolatedSchema: MovpSchema = {
+    collections: [deliverable],
+    events: [],
+    platformCollections: [deliverable],
+    projectCollections: [],
+  }
+  const ts = emitTypes(isolatedSchema)
 
   it('many-to-one and one-to-one relations emit FK columns', () => {
     expect(sql).toContain('campaign_id uuid not null references public.campaign(id) on delete cascade')
