@@ -40,3 +40,29 @@ export async function atomicWriteFile(
     throw error
   }
 }
+
+export async function atomicCreateFile(
+  path: string,
+  contents: string,
+  opts: AtomicWriteOptions = {},
+): Promise<void> {
+  const fs = await import('node:fs/promises')
+  const refuse = opts.onRefuse ?? ((reason: string): never => {
+    throw new Error(`safe_write_refused: ${reason}`)
+  })
+  const tempPath = `${path}.${randomBytes(6).toString('hex')}.tmp`
+  await fs.writeFile(tempPath, contents, { flag: 'wx', mode: SAFE_FILE_MODE })
+
+  try {
+    await fs.link(tempPath, path).catch((error: unknown) => {
+      if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'EEXIST') {
+        refuse(`${path}: refusing to replace an existing path`)
+      }
+      throw error
+    })
+    await fs.unlink(tempPath)
+  } catch (error: unknown) {
+    await fs.unlink(tempPath).catch(() => undefined)
+    throw error
+  }
+}

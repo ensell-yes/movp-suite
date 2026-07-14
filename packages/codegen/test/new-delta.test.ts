@@ -1,8 +1,9 @@
-import { mkdir, mkdtemp, readFile, readdir, symlink, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, readdir, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { loadDeltaRegistry, saveDeltaRegistry } from '../src/deltas-registry.ts'
+import { emitProjectDeltaSql } from '../src/emit-sql.ts'
 import { generate } from '../src/generate.ts'
 import { newDelta } from '../src/new-delta.ts'
 import { projectCollection as col, projectEvent, projectSchema } from './project-schema-fixture.ts'
@@ -120,5 +121,58 @@ describe('newDelta', () => {
     })).rejects.toThrow(/delta_file_exists/)
     expect(await loadDeltaRegistry(context.registryPath)).toEqual({ deltas: [] })
     expect(await readFile(join(context.migrationsDir, file), 'utf8')).toBe('-- foreign file\n')
+  })
+
+  it('reconciles an intact generated migration left by a failed registry update', async () => {
+    const context = await scaffold()
+    const schema = projectSchema([col('company')])
+    const file = '20260712180000_movp_generated_company.sql'
+    await writeFile(
+      join(context.migrationsDir, file),
+      emitProjectDeltaSql(schema, { collections: ['company'], events: [] }),
+      { mode: 0o600 },
+    )
+
+    await expect(newDelta({
+      schema,
+      name: 'company',
+      registryPath: context.registryPath,
+      migrationsDir: context.migrationsDir,
+      timestamp: '20260712180000',
+    })).resolves.toEqual({ file, collections: ['company'], events: [] })
+    expect(await loadDeltaRegistry(context.registryPath)).toEqual({
+      deltas: [{ file, collections: ['company'], events: [] }],
+    })
+    expect((await readdir(context.migrationsDir)).filter((name) => name === file)).toHaveLength(1)
+  })
+
+  it('leaves a registry-write failure recoverable by the exact rerun', async () => {
+    const context = await scaffold()
+    const schema = projectSchema([col('company')])
+    const root = join(context.registryPath, '..')
+    const file = '20260712190000_movp_generated_company.sql'
+    await chmod(root, 0o555)
+    try {
+      await expect(newDelta({
+        schema,
+        name: 'company',
+        registryPath: context.registryPath,
+        migrationsDir: context.migrationsDir,
+        timestamp: '20260712190000',
+      })).rejects.toThrow(/delta_registry_update_failed.*rerun "movp new-delta company"/)
+    } finally {
+      await chmod(root, 0o755)
+    }
+
+    expect(await loadDeltaRegistry(context.registryPath)).toEqual({ deltas: [] })
+    expect(await readFile(join(context.migrationsDir, file), 'utf8')).toContain('public.company')
+    await expect(newDelta({
+      schema,
+      name: 'company',
+      registryPath: context.registryPath,
+      migrationsDir: context.migrationsDir,
+      timestamp: '20260712190000',
+    })).resolves.toEqual({ file, collections: ['company'], events: [] })
+    expect((await readdir(context.migrationsDir)).filter((name) => name === file)).toHaveLength(1)
   })
 })
