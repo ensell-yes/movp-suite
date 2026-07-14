@@ -138,6 +138,12 @@ describe('content integration', () => {
     const listed = await ownerDomain.content.listRevisions({ itemId: item.id })
     expect(listed.items.length).toBe(2)
 
+    const getDetail = ownerDomain.content.getDetail
+    const detail = await getDetail(item.id)
+    expect(detail?.type?.key).toBe('article')
+    expect(detail?.currentRevision?.id).toBe(rows[1].id)
+    expect(detail?.currentRevision?.data).toEqual({ title: 'Hello 2', body: '<p>Hi</p>', rank: 2 })
+
     await expect(ownerDomain.content.create({
       workspaceId: ws1,
       contentTypeId: ct.id,
@@ -159,5 +165,6 @@ describe('content integration', () => {
     }).select('id').single()
     const foreignId = (foreign.data as { id: string }).id
     expect(await ownerDomain.content.get(foreignId)).toBeNull()
+    expect(await ownerDomain.content.getDetail(foreignId)).toBeNull()
   })
 })

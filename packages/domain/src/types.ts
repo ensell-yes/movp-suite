@@ -69,6 +69,10 @@ import type {
   TaskPriorityOptionCreate,
   TaskPriorityOptionRow,
   TaskPriorityOptionUpdate,
+  TaskAssignmentRow,
+  TaskAttachmentRow,
+  TaskDependencyRow,
+  TaskObserverRow,
   TaskRow,
   TaskStatusOptionCreate,
   TaskStatusOptionRow,
@@ -184,9 +188,19 @@ export interface TaskBoardColumn {
   tasks: TaskRow[]
 }
 
+export interface TaskDetail {
+  task: TaskRow
+  description: string | null
+  assignments: TaskAssignmentRow[]
+  observers: TaskObserverRow[]
+  dependencies: TaskDependencyRow[]
+  attachments: TaskAttachmentRow[]
+}
+
 export interface TaskService {
   create(i: { workspaceId: string; title: string; description?: string; statusId?: string; priorityId?: string; parentId?: string; startDate?: string; dueDate?: string; idempotencyKey?: string; actorId?: string }): Promise<TaskRow>
   get(id: string): Promise<TaskRow | null>
+  getDetail(id: string): Promise<TaskDetail | null>
   list(a: { workspaceId: string; statusId?: string; assigneeId?: string; parentId?: string | null; first?: number; after?: string | null }): Promise<Page<TaskRow>>
   board(a: { workspaceId: string }): Promise<TaskBoardColumn[]>
   updateDescription(id: string, body: string): Promise<TaskRow>
@@ -200,12 +214,19 @@ export interface TaskService {
   attach(i: { taskId: string; r2Key: string; filename: string; contentType?: string; bytes?: number }): Promise<void>
 }
 
+export interface ContentDetail {
+  item: ContentItemRow
+  type: ContentTypeRow | null
+  currentRevision: ContentRevisionRow | null
+}
+
 export interface ContentService {
   createType(i: { workspaceId: string; key: string; label: string; fieldSchema: unknown; moderationPolicy?: string; approvalPolicy?: string }): Promise<ContentTypeRow>
   listTypes(a: { workspaceId: string; first?: number; after?: string | null }): Promise<Page<ContentTypeRow>>
   create(i: { workspaceId: string; contentTypeId: string; slug: string; data: Record<string, unknown> }): Promise<ContentItemRow>
   update(i: { itemId: string; data: Record<string, unknown>; expectedRevisionId?: string | null }): Promise<ContentItemRow>
   get(id: string): Promise<ContentItemRow | null>
+  getDetail(id: string): Promise<ContentDetail | null>
   list(a: { workspaceId: string; contentTypeId?: string; status?: string; first?: number; after?: string | null }): Promise<Page<ContentItemRow>>
   listRevisions(a: { itemId: string; first?: number; after?: string | null }): Promise<Page<ContentRevisionRow>>
   submitForApproval(i: { itemId: string; policy?: 'single' | 'multi' | 'moderation'; approvalsRequired?: number }): Promise<ContentItemRow>

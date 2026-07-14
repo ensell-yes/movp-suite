@@ -64,6 +64,18 @@
 - Agent-facing auth codes are `missing_token`, `invalid_token`, `expired_token`, and
   `invalid_claims`. A revoked PAT maps to `invalid_token` at every public boundary.
 
+## Task/CMS Agent Contracts
+
+- Consumer contracts live in `docs/agents/task-cms-{data-contract,interface-contract,scaffolding}.md` and
+  are indexed by `llms.txt`. Keep them aligned with the schema, domain types, MCP registry, and CLI commands;
+  `pnpm check:task-cms-contracts` is the drift gate.
+- Task/CMS MCP tools return the same result as JSON text and as `{ result }` structured content. Existing tool
+  names and JSON-string CMS inputs remain compatible; structured `fieldSchema` and `data` are preferred.
+- Agent detail reads are `task.get_detail` and `content.get_detail`; published delivery reads use
+  `content.get_published`. All list surfaces preserve opaque `{ items, nextCursor }` pagination.
+- Agent content updates pass the revision they read as `expectedRevisionId` (CLI `--expected-revision`). Agent
+  task creates reuse `idempotencyKey` after an indeterminate failure.
+
 ## Eight-Dimension Review Harness
 
 When asked to review, audit, critique, assess, or score any artifact, score all eight

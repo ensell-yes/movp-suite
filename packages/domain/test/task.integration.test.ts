@@ -119,7 +119,8 @@ describe('task integration', () => {
     const blocked = await ownerDomain.task.get(task.id)
     expect(blocked?.dependency_blocked).toBe(true)
 
-    const done = await ownerDomain.task.transition({ taskId: task.id, statusId: cfg.doneStatus })
+    const transition = ownerDomain.task.transition
+    const done = await transition({ taskId: task.id, statusId: cfg.doneStatus })
     expect(done.status_id).toBe(cfg.doneStatus)
     expect(done.completed_at).toBeTruthy()
 
@@ -127,6 +128,14 @@ describe('task integration', () => {
     await ownerDomain.task.updateDescription(task.id, 'second body')
     const revs = await adminDb.from('task_revision').select('id').eq('task_id', task.id)
     expect((revs.data ?? []).length).toBe(2)
+
+    const getDetail = ownerDomain.task.getDetail
+    const detail = await getDetail(task.id)
+    expect(detail?.description).toBe('second body')
+    expect(detail?.assignments.map((row) => row.assignee_user_id)).toEqual([assignee.id])
+    expect(detail?.dependencies.map((row) => row.blocker_id)).toEqual([blocker.id])
+    expect(detail?.observers).toEqual([])
+    expect(detail?.attachments).toEqual([])
 
     const comment = await ownerDomain.collab.comment.create({ entityType: 'task', entityId: task.id, body: 'nice' })
     expect(comment.entity_id).toBe(task.id)
@@ -143,6 +152,7 @@ describe('task integration', () => {
     }).select('id').single()
     const foreignId = (foreign.data as { id: string }).id
     expect(await ownerDomain.task.get(foreignId)).toBeNull()
+    expect(await ownerDomain.task.getDetail(foreignId)).toBeNull()
     await expect(ownerDomain.task.transition({ taskId: foreignId, statusId: cfg.doneStatus }))
       .rejects.toThrow(/not found or inaccessible/)
   })

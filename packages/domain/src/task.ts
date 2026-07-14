@@ -1,4 +1,11 @@
-import type { TaskRow, TaskStatusOptionRow } from './generated/types.ts'
+import type {
+  TaskAssignmentRow,
+  TaskAttachmentRow,
+  TaskDependencyRow,
+  TaskObserverRow,
+  TaskRow,
+  TaskStatusOptionRow,
+} from './generated/types.ts'
 import type { DomainCtx, Page, TaskBoardColumn, TaskService } from './types.ts'
 
 const DEFAULT_PAGE = 20
@@ -6,6 +13,15 @@ const MAX_PAGE = 100
 const clamp = (n: number, lo: number, hi: number) => Math.min(Math.max(n, lo), hi)
 const encodeCursor = (id: string) => btoa(id)
 const decodeCursor = (cursor: string) => atob(cursor)
+const byId = <T extends { id: string }>(rows: T[]): T[] => [...rows].sort((a, b) => a.id.localeCompare(b.id))
+
+type TaskDetailQueryRow = TaskRow & {
+  current_revision: { body: string } | null
+  assignments: TaskAssignmentRow[]
+  observers: TaskObserverRow[]
+  dependencies: TaskDependencyRow[]
+  attachments: TaskAttachmentRow[]
+}
 
 export function makeTaskService(ctx: DomainCtx): TaskService {
   const fail = (op: string, code: string | undefined): never => {
@@ -33,6 +49,12 @@ export function makeTaskService(ctx: DomainCtx): TaskService {
     const ws = (data as { workspace_id?: string } | null)?.workspace_id
     if (!ws) throw new Error('domain.task: task not found or inaccessible')
     return ws
+  }
+
+  async function getTask(id: string): Promise<TaskRow | null> {
+    const { data, error } = await ctx.db.from('task').select('*').eq('id', id).maybeSingle()
+    if (error) fail('get', error.code)
+    return (data as TaskRow | null) ?? null
   }
 
   return {
@@ -66,10 +88,33 @@ export function makeTaskService(ctx: DomainCtx): TaskService {
       return data as TaskRow
     },
 
-    async get(id) {
-      const { data, error } = await ctx.db.from('task').select('*').eq('id', id).maybeSingle()
-      if (error) fail('get', error.code)
-      return (data as TaskRow | null) ?? null
+    get: getTask,
+
+    async getDetail(id) {
+      const { data, error } = await ctx.db
+        .from('task')
+        .select(`
+          *,
+          current_revision:task_revision!task_current_revision_fk(body),
+          assignments:task_assignment!task_assignment_task_id_fkey(*),
+          observers:task_observer!task_observer_task_id_fkey(*),
+          dependencies:task_dependency!task_dependency_task_id_fkey(*),
+          attachments:task_attachment!task_attachment_task_id_fkey(*)
+        `)
+        .eq('id', id)
+        .maybeSingle()
+      if (error) fail('getDetail', error.code)
+      if (!data) return null
+      const row = data as TaskDetailQueryRow
+      const { current_revision, assignments, observers, dependencies, attachments, ...task } = row
+      return {
+        task,
+        description: current_revision?.body ?? null,
+        assignments: byId(assignments),
+        observers: byId(observers),
+        dependencies: byId(dependencies),
+        attachments: byId(attachments),
+      }
     },
 
     async list(a) {
@@ -162,7 +207,7 @@ export function makeTaskService(ctx: DomainCtx): TaskService {
         .maybeSingle()
       if (error) fail('transition', error.code)
       if (!data) throw new Error('domain.task.transition: task not found or inaccessible')
-      const refreshed = await this.get(i.taskId)
+      const refreshed = await getTask(i.taskId)
       if (!refreshed) throw new Error('domain.task.transition: task not found or inaccessible')
       return refreshed
     },
