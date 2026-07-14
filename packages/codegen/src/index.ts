@@ -25,3 +25,9 @@ export {
   type ManifestField,
   type SchemaManifest,
 } from './emit-manifest.ts'
+export {
+  checkMetadataConsistency,
+  MetadataConsistencyError,
+  type MetadataConsistencyCode,
+  type MetadataDbState,
+} from './metadata-consistency.ts'
