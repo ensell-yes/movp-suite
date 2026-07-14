@@ -3,7 +3,7 @@ import { lstatSync, readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const EXPECTED_VERSION_LINE = 'with: { version: 2.109.1 }'
+const EXPECTED_VERSION = '2.109.1'
 const MAX_WORKFLOW_BYTES = 512 * 1024
 
 function indentation(line) {
@@ -45,6 +45,11 @@ function workflowSteps(source) {
   return steps
 }
 
+function inlineVersion(line) {
+  const match = line.match(/^with:\s*\{\s*version:\s*(?:"([^"]+)"|'([^']+)'|([^\s,}]+))\s*\}\s*$/)
+  return match?.[1] ?? match?.[2] ?? match?.[3]
+}
+
 export function checkSupabaseCliPins(source) {
   const setupSteps = workflowSteps(source).filter((step) =>
     step.lines.some((line) => /^uses:\s*supabase\/setup-cli@\S+$/.test(line)),
@@ -52,8 +57,8 @@ export function checkSupabaseCliPins(source) {
   if (setupSteps.length === 0) return ['supabase_cli_step_missing']
 
   return setupSteps
-    .filter((step) => !step.lines.includes(EXPECTED_VERSION_LINE))
-    .map((step) => `supabase_cli_pin_missing: line ${step.line} must contain ${EXPECTED_VERSION_LINE}`)
+    .filter((step) => !step.lines.some((line) => inlineVersion(line) === EXPECTED_VERSION))
+    .map((step) => `supabase_cli_pin_missing: line ${step.line} must pin version ${EXPECTED_VERSION}`)
 }
 
 function readWorkflowGuarded(path) {

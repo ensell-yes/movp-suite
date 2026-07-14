@@ -9,13 +9,15 @@ const workflow = (steps) => `jobs:
 ${steps}
 `
 
-test('accepts direct and named setup steps pinned to 2.109.1', () => {
+test('accepts unquoted, double-quoted, and single-quoted 2.109.1 pins', () => {
   const source = workflow(`      - uses: supabase/setup-cli@v2
         with: { version: 2.109.1 }
       - name: Install Supabase
         id: supabase
         uses: supabase/setup-cli@v2
-        with: { version: 2.109.1 }`)
+        with: { version: "2.109.1" }
+      - uses: supabase/setup-cli@v2
+        with: { version: '2.109.1' }`)
 
   assert.deepEqual(checkSupabaseCliPins(source), [])
 })
@@ -32,6 +34,19 @@ test('rejects an unpinned step when a different step contains a decoy pin', () =
   const source = workflow(`      - uses: supabase/setup-cli@v2
         with: { version: latest }
       - run: echo 'with: { version: 2.109.1 }'`)
+
+  assert.match(checkSupabaseCliPins(source)[0], /^supabase_cli_pin_missing:/)
+})
+
+test('rejects a different quoted version', () => {
+  const source = workflow(`      - uses: supabase/setup-cli@v2
+        with: { version: "2.99.9" }`)
+
+  assert.match(checkSupabaseCliPins(source)[0], /^supabase_cli_pin_missing:/)
+})
+
+test('rejects a setup step with no version', () => {
+  const source = workflow('      - uses: supabase/setup-cli@v2')
 
   assert.match(checkSupabaseCliPins(source)[0], /^supabase_cli_pin_missing:/)
 })
