@@ -37,8 +37,15 @@ export interface CollectionDef {
   /**
    * Internal collections still generate tables/types, but are intentionally
    * skipped by generic public surfaces when writes need bespoke atomic logic.
-   */
+  */
   internal?: boolean
+  /**
+   * Tier marker distinguishing platform-owned collections from project extensions. Stamped by
+   * defineSchema: 'platform' for a non-extends (monorepo) schema and for inherited collections;
+   * 'project' for collections declared locally in an `extends` schema. Optional on hand-authored
+   * defs (absent === 'platform').
+   */
+  layer?: 'platform' | 'project'
   fields: Record<string, FieldDef>
 }
 
