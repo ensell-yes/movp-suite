@@ -51,7 +51,10 @@ export function defineSchema(opts: {
 }): MovpSchema {
   // Spread into NEW objects so the shared exported collection singletons (e.g. `note`) are never
   // mutated by the layer stamp — callers import those singletons elsewhere.
-  const inherited = (opts.extends?.collections ?? []).map((c) => ({ ...c, layer: 'platform' as const }))
+  const inherited = (opts.extends?.collections ?? []).map((c) => ({
+    ...c,
+    layer: c.layer ?? 'platform',
+  }))
   const local = opts.collections.map((c) => ({
     ...c,
     layer: (opts.extends ? 'project' : 'platform') as 'platform' | 'project',
@@ -59,7 +62,7 @@ export function defineSchema(opts: {
   const collections = [...inherited, ...local]
   const inheritedEvents = (opts.extends?.events ?? []).map((event) => ({
     ...event,
-    layer: 'platform' as const,
+    layer: event.layer ?? 'platform',
   }))
   const localEvents = (opts.events ?? []).map((event) => ({
     ...event,

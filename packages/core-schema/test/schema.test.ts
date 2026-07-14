@@ -126,6 +126,34 @@ describe('defineSchema layer composition', () => {
     expect(extended.platformEvents.map((event) => event.key)).toEqual(schema.events.map((event) => event.key))
   })
 
+  it('preserves project ownership through nested extensions', () => {
+    const contact = defineCollection({
+      name: 'contact', label: 'Contact', labelPlural: 'Contacts', workspaceScoped: true, fields: {},
+    })
+    const company = defineCollection({
+      name: 'company', label: 'Company', labelPlural: 'Companies', workspaceScoped: true, fields: {},
+    })
+    const contactCreated = defineEvent({
+      key: 'contact.created', domain: 'lifecycle', payloadSchema: {}, version: 1,
+    })
+    const companyCreated = defineEvent({
+      key: 'company.created', domain: 'lifecycle', payloadSchema: {}, version: 1,
+    })
+    const template = defineSchema({
+      extends: schema, collections: [contact], events: [contactCreated],
+    })
+    const project = defineSchema({
+      extends: template, collections: [company], events: [companyCreated],
+    })
+
+    expect(project.platformCollections.map((collection) => collection.name)).toEqual(
+      schema.collections.map((collection) => collection.name),
+    )
+    expect(project.projectCollections.map((collection) => collection.name)).toEqual(['contact', 'company'])
+    expect(project.platformEvents.map((event) => event.key)).toEqual(schema.events.map((event) => event.key))
+    expect(project.projectEvents.map((event) => event.key)).toEqual(['contact.created', 'company.created'])
+  })
+
   it('rejects an extension that redeclares a platform collection name', () => {
     const dupNote = defineCollection({
       name: 'note',
