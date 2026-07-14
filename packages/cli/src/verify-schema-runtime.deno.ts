@@ -1,4 +1,4 @@
-import { schemaFingerprint } from '@movp/core-schema'
+import { runtimeFingerprint } from '@movp/core-schema'
 
 const specifier = Deno.args[0]
 if (!specifier) {
@@ -7,4 +7,4 @@ if (!specifier) {
 }
 
 const module = await import(specifier)
-console.log(schemaFingerprint(module.schema))
+console.log(runtimeFingerprint(module.schema))

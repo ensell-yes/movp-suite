@@ -1,7 +1,7 @@
 import { spawnSync } from 'node:child_process'
 import { resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { schemaFingerprint, type MovpSchema } from '@movp/core-schema'
+import { runtimeFingerprint, type MovpSchema } from '@movp/core-schema'
 
 export interface SpawnResult {
   status: number | null
@@ -42,7 +42,7 @@ export async function runVerifySchemaRuntime(
   })
   const spawnDeno = opts.spawnDeno ?? defaultSpawnDeno
   const config = await importConfig(opts.configPath)
-  const nodeFingerprint = schemaFingerprint(config.schema)
+  const nodeFingerprint = runtimeFingerprint(config.schema)
   const scriptPath = fileURLToPath(new URL('./verify-schema-runtime.deno.ts', import.meta.url))
   const result = spawnDeno([
     'run',

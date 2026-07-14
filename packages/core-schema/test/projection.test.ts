@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { CollectionDef, MovpSchema } from '../src/index.ts'
-import { metadataProjection, schemaFingerprint } from '../src/index.ts'
+import { metadataProjection, runtimeFingerprint, runtimeProjection, schemaFingerprint } from '../src/index.ts'
 
 function makeSchema(): MovpSchema {
   const collections: CollectionDef[] = [
@@ -67,5 +67,40 @@ describe('schemaFingerprint', () => {
     const mutated = makeSchema()
     mutated.collections[0].fields.zeta.label = 'Zeta 2'
     expect(schemaFingerprint(mutated)).not.toBe(base)
+  })
+})
+
+describe('runtimeFingerprint', () => {
+  it('includes exposure and field semantics that are intentionally absent from DB metadata', () => {
+    const base = makeSchema()
+    const exposureChanged = makeSchema()
+    exposureChanged.collections[1].internal = false
+    const requiredChanged = makeSchema()
+    requiredChanged.collections[0].fields.zeta.required = true
+
+    expect(runtimeFingerprint(exposureChanged)).not.toBe(runtimeFingerprint(base))
+    expect(runtimeFingerprint(requiredChanged)).not.toBe(runtimeFingerprint(base))
+    expect(schemaFingerprint(exposureChanged)).toBe(schemaFingerprint(base))
+  })
+
+  it('includes events and canonicalizes payload-schema object key order', () => {
+    const first = makeSchema()
+    first.events = [{
+      key: 'beta.created', domain: 'lifecycle', version: 1, layer: 'project',
+      payloadSchema: { type: 'object', properties: { zeta: { type: 'string' }, alpha: { type: 'number' } } },
+    }]
+    const reordered = makeSchema()
+    reordered.events = [{
+      key: 'beta.created', domain: 'lifecycle', version: 1, layer: 'project',
+      payloadSchema: { properties: { alpha: { type: 'number' }, zeta: { type: 'string' } }, type: 'object' },
+    }]
+    const changed = makeSchema()
+    changed.events = [{
+      key: 'beta.created', domain: 'lifecycle', version: 2, layer: 'project', payloadSchema: {},
+    }]
+
+    expect(runtimeProjection(first).events).toEqual(runtimeProjection(reordered).events)
+    expect(runtimeFingerprint(first)).toBe(runtimeFingerprint(reordered))
+    expect(runtimeFingerprint(changed)).not.toBe(runtimeFingerprint(first))
   })
 })

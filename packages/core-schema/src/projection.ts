@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import type { CollectionDef, FieldDef, MovpSchema } from './types.ts'
+import type { CollectionDef, EventDef, FieldDef, MovpSchema } from './types.ts'
 
 export interface CollectionMeta {
   name: string
@@ -19,6 +19,24 @@ export interface FieldMeta {
   searchable: boolean
   embeddable: boolean
   layer: string
+}
+
+type CanonicalJson = null | boolean | number | string | CanonicalJson[] | { [key: string]: CanonicalJson }
+
+function canonicalJson(value: unknown): CanonicalJson {
+  if (value === null || typeof value === 'boolean' || typeof value === 'number' || typeof value === 'string') {
+    return value
+  }
+  if (Array.isArray(value)) return value.map(canonicalJson)
+  if (typeof value === 'object') {
+    const result: { [key: string]: CanonicalJson } = {}
+    for (const key of Object.keys(value).sort()) {
+      const child = (value as Record<string, unknown>)[key]
+      if (child !== undefined) result[key] = canonicalJson(child)
+    }
+    return result
+  }
+  throw new Error(`runtime_projection_invalid_value: unsupported ${typeof value}`)
 }
 
 function collectionMeta(c: CollectionDef): CollectionMeta {
@@ -65,4 +83,55 @@ export function metadataProjection(schema: MovpSchema): { collections: Collectio
 
 export function schemaFingerprint(schema: MovpSchema): string {
   return createHash('sha256').update(JSON.stringify(metadataProjection(schema))).digest('hex')
+}
+
+function runtimeCollection(collection: CollectionDef) {
+  return {
+    name: collection.name,
+    label: collection.label,
+    labelPlural: collection.labelPlural,
+    workspaceScoped: collection.workspaceScoped,
+    internal: collection.internal === true,
+    layer: collection.layer ?? 'platform',
+    fields: Object.entries(collection.fields)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([name, field]) => ({
+        name,
+        type: field.type,
+        label: field.label,
+        description: field.description ?? null,
+        required: field.required === true,
+        default: field.default ?? null,
+        searchable: field.searchable === true,
+        embeddable: field.embeddable === true,
+        reportingRole: field.reporting?.role ?? null,
+        values: field.values ?? null,
+        target: field.target ?? null,
+        cardinality: field.cardinality ?? null,
+        graph: field.graph === true,
+      })),
+  }
+}
+
+function runtimeEvent(event: EventDef) {
+  return {
+    key: event.key,
+    domain: event.domain,
+    payloadSchema: canonicalJson(event.payloadSchema),
+    version: event.version,
+    label: event.label ?? null,
+    description: event.description ?? null,
+    layer: event.layer ?? 'platform',
+  }
+}
+
+export function runtimeProjection(schema: MovpSchema) {
+  return {
+    collections: schema.collections.map(runtimeCollection).sort((a, b) => a.name.localeCompare(b.name)),
+    events: schema.events.map(runtimeEvent).sort((a, b) => a.key.localeCompare(b.key)),
+  }
+}
+
+export function runtimeFingerprint(schema: MovpSchema): string {
+  return createHash('sha256').update(JSON.stringify(runtimeProjection(schema))).digest('hex')
 }

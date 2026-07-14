@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import { defineSchema, schemaFingerprint, type MovpSchema } from '@movp/core-schema'
+import { defineSchema, runtimeFingerprint, type MovpSchema } from '@movp/core-schema'
 import { describe, expect, it } from 'vitest'
 import { runVerifySchemaRuntime } from '../src/verify-schema-runtime.ts'
 
@@ -13,7 +13,7 @@ const collection: MovpSchema['collections'][number] = {
   fields: {},
 }
 const nodeSchema = defineSchema({ collections: [collection] })
-const nodeFingerprint = schemaFingerprint(nodeSchema)
+const nodeFingerprint = runtimeFingerprint(nodeSchema)
 
 const baseOpts = {
   configPath: '/virtual/movp.config.mjs',
@@ -77,6 +77,16 @@ describe.skipIf(!hasDeno)('verify-schema-runtime real Deno gate', () => {
       configPath: `${fixture}movp.config.mjs`,
       denoConfigPath: `${fixture}deno.json`,
       edgeSchemaSpecifier: `${fixture}schema.diverge.mjs`,
+    })
+    expect(result.ok).toBe(false)
+    expect(result.code).toBe('schema_runtime_mismatch')
+  })
+
+  it('detects a Deno-only internal exposure change', async () => {
+    const result = await runVerifySchemaRuntime({
+      configPath: `${fixture}movp.config.mjs`,
+      denoConfigPath: `${fixture}deno.json`,
+      edgeSchemaSpecifier: `${fixture}schema.internal.mjs`,
     })
     expect(result.ok).toBe(false)
     expect(result.code).toBe('schema_runtime_mismatch')
