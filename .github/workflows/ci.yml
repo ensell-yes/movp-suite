@@ -19,6 +19,7 @@ jobs:
       - uses: actions/setup-node@v6
         with: { node-version: 22, cache: pnpm }
       - run: pnpm install --frozen-lockfile
+      - run: pnpm check:supabase-cli-pins
       - run: pnpm check:docs
       - run: pnpm build
       - run: pnpm typecheck

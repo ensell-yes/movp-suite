@@ -12,6 +12,7 @@
     "check:quickstart-docs": "node scripts/check-quickstart-docs.mjs",
     "check:onboarding-debt": "node scripts/check-onboarding-debt.mjs",
     "check:supabase-ports": "node scripts/check-supabase-port-strategy.mjs",
+    "check:supabase-cli-pins": "node --test scripts/check-supabase-cli-pins.test.mjs && node scripts/check-supabase-cli-pins.mjs",
     "check:agent-configs": "node scripts/check-agent-configs.mjs",
     "check:task-cms-contracts": "node --test scripts/check-task-cms-contracts.test.mjs && node scripts/check-task-cms-contracts.mjs",
     "seed:demo": "tsx scripts/seed-demo.ts",

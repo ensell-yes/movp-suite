@@ -14,6 +14,8 @@
   Shell-prefixed env vars may not propagate into the edge runtime and can look like JWT/auth defects.
 - The integration smoke retries only transient Edge gateway responses (`502`/`503`/`504`), at most three
   attempts, and prints the content-disciplined function log on final failure. Authentication failures are terminal.
+- Every `supabase/setup-cli` CI step pins CLI `2.109.1`; `pnpm check:supabase-cli-pins` enforces the
+  step-scoped pin and must run before build/typecheck so config parsing cannot drift by job.
 - The slice only kills existing local edge-runtime/function processes in CI, or when explicitly run with
   `MOVP_CLEAN_EDGE_RUNTIME=1`; keep that cleanup opt-in locally so other Supabase projects are not disturbed.
 
