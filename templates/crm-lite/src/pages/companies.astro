@@ -1,0 +1,28 @@
+---
+import Base from '../layouts/Base.astro'
+import { readServerEnv } from '../lib/env'
+import { postGraphql } from '../lib/graphql'
+
+type Company = { id: string; name: string; domain: string | null; tier: string | null }
+type Data = { companies: { items: Company[] } }
+const env = readServerEnv()
+const token = Astro.cookies.get('movp_token')?.value ?? env.supabaseAnonKey
+const result = await postGraphql<Data>(
+  env.graphqlEndpoint,
+  token,
+  `query Companies($workspaceId: ID!) {
+    companies(workspaceId: $workspaceId, first: 50) { items { id name domain tier } }
+  }`,
+  { workspaceId: env.workspaceId },
+)
+---
+
+<Base title="Companies">
+  {result.ok ? (
+    <table>
+      <thead><tr><th>Company</th><th>Domain</th><th>Tier</th></tr></thead>
+      <tbody>{result.data.companies.items.map((row) => <tr><td>{row.name}</td><td>{row.domain ?? '-'}</td><td>{row.tier ?? '-'}</td></tr>)}</tbody>
+    </table>
+  ) : <p class="error">Could not load companies ({result.code}).</p>}
+</Base>
+

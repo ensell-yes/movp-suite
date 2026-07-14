@@ -109,8 +109,9 @@ export function copyTemplate(opts: CopyOptions): { filesWritten: number; bytesWr
       }
       if (!info.isFile()) continue
 
-      const ext = extname(entry)
-      const isText = TEXT_EXTS.has(ext) || TEXT_NAMES.has(entry)
+      const nameForExt = entry.endsWith('.template') ? entry.slice(0, -'.template'.length) : entry
+      const ext = extname(nameForExt)
+      const isText = TEXT_EXTS.has(ext) || TEXT_NAMES.has(nameForExt)
       const isBinary = BINARY_EXTS.has(ext)
       if (!isText && !isBinary) continue // not allowlisted → skip (fonts, unknown blobs)
 
@@ -120,7 +121,8 @@ export function copyTemplate(opts: CopyOptions): { filesWritten: number; bytesWr
 
       const buf = readFileSync(abs)
       mkdirSync(join(opts.targetDir, relDir), { recursive: true })
-      const outPath = join(opts.targetDir, rel)
+      const relOut = rel.endsWith('.template') ? rel.slice(0, -'.template'.length) : rel
+      const outPath = join(opts.targetDir, relOut)
       if (isBinary || isBinaryBuffer(buf)) {
         writeFileSync(outPath, buf) // byte-for-byte; NEVER substitute a binary
       } else {

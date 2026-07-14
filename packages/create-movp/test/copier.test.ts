@@ -119,6 +119,14 @@ describe('copyTemplate', () => {
     expect(() => copyTemplate({ templateDir, targetDir: join(work, 'out'), tokens }))
       .toThrow(/unresolved_token/)
   })
+
+  it('renames a .template file and strips the suffix for the allowlist', () => {
+    writeFileSync(join(templateDir, 'package.json.template'), '{"name":"__PROJECT_NAME__"}\n')
+    const target = join(work, 'out')
+    copyTemplate({ templateDir, targetDir: target, tokens })
+    expect(readFileSync(join(target, 'package.json'), 'utf8')).toBe('{"name":"acme-crm"}\n')
+    expect(() => readFileSync(join(target, 'package.json.template'))).toThrow()
+  })
 })
 
 describe('copyTreeGuarded (pack-harness staging — INTERFACES F1)', () => {

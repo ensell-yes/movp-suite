@@ -1,0 +1,28 @@
+---
+import Base from '../layouts/Base.astro'
+import { readServerEnv } from '../lib/env'
+import { postGraphql } from '../lib/graphql'
+
+type Contact = { id: string; full_name: string; email: string | null }
+type Data = { contacts: { items: Contact[] } }
+const env = readServerEnv()
+const token = Astro.cookies.get('movp_token')?.value ?? env.supabaseAnonKey
+const result = await postGraphql<Data>(
+  env.graphqlEndpoint,
+  token,
+  `query Contacts($workspaceId: ID!) {
+    contacts(workspaceId: $workspaceId, first: 50) { items { id full_name email } }
+  }`,
+  { workspaceId: env.workspaceId },
+)
+---
+
+<Base title="Contacts">
+  {result.ok ? (
+    <table>
+      <thead><tr><th>Name</th><th>Email</th></tr></thead>
+      <tbody>{result.data.contacts.items.map((row) => <tr><td>{row.full_name}</td><td>{row.email ?? '-'}</td></tr>)}</tbody>
+    </table>
+  ) : <p class="error">Could not load contacts ({result.code}).</p>}
+</Base>
+
