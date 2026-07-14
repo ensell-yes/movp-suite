@@ -55,9 +55,22 @@ jobs:
       - run: pnpm --filter @movp/platform test
       - run: bash fixtures/platform-consumer/gate.sh
       - run: pnpm --filter @movp/cli test:built-runtime
-      - run: pnpm --filter @movp/domain exec vitest run test/collection-tier.test.ts
-      - run: pnpm --filter @movp/flows exec vitest run test/schema-injection.test.ts
-      - run: pnpm --filter @movp/mcp exec vitest run test/surface-wiring.test.ts
+
+  c6-surface-wiring:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v6
+        with: { version: 9.12.0 }
+      - uses: actions/setup-node@v6
+        with: { node-version: 22, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - name: Run schema-derived domain registry gate
+        run: pnpm --filter @movp/domain exec vitest run --config vitest.unit.config.ts
+      - name: Run flow schema-injection gate
+        run: pnpm --filter @movp/flows exec vitest run test/schema-injection.test.ts
+      - name: Run complete surface-wiring gate
+        run: pnpm --filter @movp/mcp exec vitest run test/surface-wiring.test.ts
 
   metadata-consistency:
     runs-on: ubuntu-latest

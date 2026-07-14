@@ -84,6 +84,9 @@
   Monorepo and Edge Function entrypoints import `@movp/core-schema` and inject it into CLI, domain,
   GraphQL, MCP, and flows. Preserve `packages/flows/test/schema-injection.test.ts` and the real-schema
   surface gate when adding a new collection or runtime consumer.
+- The schema-derived domain registry, flow injection, and complete surface inventory are pure unit gates.
+  Keep them in the independent `c6-surface-wiring` CI job; use `packages/domain/vitest.unit.config.ts`
+  rather than coupling these gates to a running Supabase stack or a preceding artifact job.
 - `@movp/platform` validates the artifact root and migrations directory with `lstat` before any
   enumeration. Never move a `readdir` ahead of those guards or follow a symlinked migration root.
 
