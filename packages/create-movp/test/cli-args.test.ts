@@ -4,6 +4,7 @@ import {
   MAX_CREATE_INPUT_BYTES,
   parseCreateCliArgs,
   parseCreateInput,
+  validateWorkspaceId,
 } from '../src/cli-args.ts'
 
 describe('parseCreateCliArgs', () => {
@@ -49,6 +50,18 @@ describe('parseCreateCliArgs', () => {
 
   it('rejects more than one positional project name', () => {
     expect(() => parseCreateCliArgs(['acme', 'other'])).toThrow(/unexpected_argument/)
+  })
+
+  it('rejects malformed workspace IDs before scaffolding', () => {
+    expect(validateWorkspaceId('33333333-3333-3333-3333-333333333333')).toBe(
+      '33333333-3333-3333-3333-333333333333',
+    )
+    expect(() => parseCreateCliArgs(['--workspace-id', 'not-a-uuid'])).toThrow(
+      /^invalid_workspace_id:/,
+    )
+    expect(() => parseCreateInput("crm-lite\nacme\n'); drop table workspace; --\n")).toThrow(
+      /^invalid_workspace_id:/,
+    )
   })
 })
 

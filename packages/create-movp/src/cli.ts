@@ -10,6 +10,7 @@ import {
   parseCreateInput,
   TEMPLATES,
   type TemplateName,
+  validateWorkspaceId,
 } from './cli-args.ts'
 
 function bundledTemplateDir(name: TemplateName): string {
@@ -71,6 +72,7 @@ async function main(): Promise<void> {
     }
   }
   if (projectName === undefined) throw new Error('missing_project_name')
+  workspaceId = validateWorkspaceId(workspaceId)
 
   const { targetDir, bootstrap } = await scaffold({
     templateDir: bundledTemplateDir(template),

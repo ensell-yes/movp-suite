@@ -3,11 +3,20 @@ export type TemplateName = (typeof TEMPLATES)[number]
 
 export const DEFAULT_WORKSPACE_ID = '33333333-3333-3333-3333-333333333333'
 export const MAX_CREATE_INPUT_BYTES = 4 * 1024
+const WORKSPACE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 export type CreateCliArgs = {
   template: TemplateName
   projectName?: string
   workspaceId: string
+}
+
+export function validateWorkspaceId(value: string): string {
+  const workspaceId = value.trim()
+  if (!WORKSPACE_ID.test(workspaceId)) {
+    throw new Error('invalid_workspace_id: expected UUID format')
+  }
+  return workspaceId
 }
 
 export function parseCreateCliArgs(args: string[]): CreateCliArgs {
@@ -47,7 +56,7 @@ export function parseCreateCliArgs(args: string[]): CreateCliArgs {
     }
     throw new Error(`unknown_option: ${flag}`)
   }
-  return { template, projectName, workspaceId }
+  return { template, projectName, workspaceId: validateWorkspaceId(workspaceId) }
 }
 
 export function parseCreateInput(input: string): CreateCliArgs {

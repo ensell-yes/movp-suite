@@ -1,6 +1,7 @@
 import { lstatSync, mkdirSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { verifyPlatformArtifact } from '@movp/platform'
+import { validateWorkspaceId } from './cli-args.ts'
 import { copyFileGuarded, copyTemplate, resolveTargetDir } from './copier.ts'
 
 export interface ScaffoldOptions {
@@ -16,6 +17,7 @@ export interface ScaffoldOptions {
 export async function scaffold(
   opts: ScaffoldOptions,
 ): Promise<{ targetDir: string; bootstrap: string[] }> {
+  const workspaceId = validateWorkspaceId(opts.workspaceId)
   const targetDir = resolveTargetDir(opts.parentDir, opts.projectName)
 
   // 1. Copy the template + substitute the two declared tokens.
@@ -24,7 +26,7 @@ export async function scaffold(
     targetDir,
     tokens: {
       __PROJECT_NAME__: opts.projectName,
-      __WORKSPACE_ID__: opts.workspaceId,
+      __WORKSPACE_ID__: workspaceId,
     },
   })
 

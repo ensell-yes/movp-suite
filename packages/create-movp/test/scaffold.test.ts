@@ -81,4 +81,15 @@ describe('scaffold', () => {
       workspaceId: '33333333-3333-3333-3333-333333333333', platformArtifactDir: platformDir,
     })).rejects.toThrow(/platform_artifact_invalid/)
   })
+
+  it('rejects an invalid workspace ID before creating the target', async () => {
+    await expect(scaffold({
+      templateDir: join(work, 'missing-template'),
+      parentDir: work,
+      projectName: 'invalid-workspace',
+      workspaceId: 'not-a-uuid',
+      platformArtifactDir: join(work, 'missing-platform'),
+    })).rejects.toThrow(/^invalid_workspace_id:/)
+    expect(existsSync(join(work, 'invalid-workspace'))).toBe(false)
+  })
 })
