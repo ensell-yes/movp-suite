@@ -1258,6 +1258,12 @@ PLATFORM_DIST="$REPO_ROOT/packages/platform/dist"
 MIGRATIONS="$FIXTURE_DIR/supabase/migrations"
 DB_URL="postgresql://postgres:postgres@127.0.0.1:64422/postgres"
 
+cleanup() {
+  supabase stop --project-id movp-c6a-consumer --no-backup >/dev/null 2>&1 ||
+    echo "gate: warning: could not stop isolated movp-c6a-consumer stack" >&2
+}
+trap cleanup EXIT
+
 # Platform-metadata digest: canonical, order-stable projection of layer='platform' rows only.
 platform_digest() {
   psql "$DB_URL" -tAqc "
@@ -1287,6 +1293,7 @@ if grep -rEl '\.\./|/Code/supasuite|packages/[a-z]' "$MIGRATIONS" >/dev/null; th
 fi
 
 # 4. Reset WITHOUT the extension; capture the platform digest.
+( cd "$FIXTURE_DIR" && supabase start )
 ( cd "$FIXTURE_DIR" && supabase db reset )
 DIGEST_BASE="$(platform_digest)"
 echo "platform digest (no extension): $DIGEST_BASE"
