@@ -854,6 +854,21 @@ export function buildProgram(schema: MovpSchema, opts: BuildProgramOpts = {}): C
       out(JSON.stringify({ ok: true, fingerprint: result.nodeFingerprint }))
     })
 
+  program
+    .command('new-delta <name>')
+    .description('Allocate one additive migration for unowned project collections')
+    .action(async (name: string) => {
+      const { newDelta } = await import('@movp/codegen')
+      const cwd = process.cwd()
+      const created = await newDelta({
+        schema,
+        name,
+        registryPath: `${cwd}/movp.deltas.json`,
+        migrationsDir: `${cwd}/supabase/migrations`,
+      })
+      out(`registered delta ${created.file} owning collections: ${created.collections.join(', ')}`)
+    })
+
   program.command('migrate').description('Codegen then apply via supabase db push').action(async () => {
     await runCodegen()
     await runMigratePush()

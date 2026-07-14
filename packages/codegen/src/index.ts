@@ -17,3 +17,4 @@ export {
   type DeltaRegistry,
   type DeltaRegistryEntry,
 } from './deltas-registry.ts'
+export { newDelta, type NewDeltaOptions } from './new-delta.ts'
