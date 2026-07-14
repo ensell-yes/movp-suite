@@ -1,3 +1,5 @@
+import { existsSync } from 'node:fs'
+import { join } from 'node:path'
 import { Command, InvalidArgumentError, Option } from 'commander'
 import type { CollectionDef, FieldDef, MovpSchema } from '@movp/core-schema'
 import { createDomain as createDomainWithSchema, type CollectionService, type Domain } from '@movp/domain'
@@ -62,6 +64,15 @@ export function buildProgram(schema: MovpSchema, opts: BuildProgramOpts = {}): C
   const runCodegen =
     opts.runCodegen ??
     (async () => {
+      // This default is platform codegen. Project mode has one authority: the project's bin, which
+      // owns its frozen baseline filename and delta registry. Refuse rather than duplicate that state.
+      if (existsSync(join(process.cwd(), 'movp.deltas.json'))) {
+        throw new Error(
+          'project_codegen_use_project_bin: this directory is a MOVP project (movp.deltas.json is present). ' +
+            'Run `npm run codegen` (the project codegen bin) - `movp codegen` runs PLATFORM codegen and ' +
+            'would overwrite the project baseline.',
+        )
+      }
       const mod = await import('@movp/codegen')
       if (!mod.generate) throw new Error('@movp/codegen.generate() not found')
       await mod.generate({ schema })
