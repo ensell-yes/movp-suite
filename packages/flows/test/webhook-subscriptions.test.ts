@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { NotificationProvider } from '@movp/notifications'
+import { schema } from '@movp/core-schema'
 import type { Job } from '../src/jobs.ts'
 import { runFlowsWorker } from '../src/flows-worker.ts'
 
@@ -59,7 +60,7 @@ describe('runFlowsWorker webhook subscription filters', () => {
     const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('ok', { status: 200 }))
     const { db, completed } = fakeDb({ webhookJobs: [baseWebhookJob], subscription: null })
 
-    const result = await runFlowsWorker(db, fakeNotifier(), 10)
+    const result = await runFlowsWorker(db, fakeNotifier(), 10, { schema })
 
     expect(fetch).toHaveBeenCalledTimes(1)
     expect(db.rpc).toHaveBeenCalledWith('webhook_subscription_for_delivery', expect.objectContaining({
@@ -76,7 +77,7 @@ describe('runFlowsWorker webhook subscription filters', () => {
       subscription: { status: 'deliver', filter: { field: 'event', op: 'eq', value: 'task.completed' } },
     })
 
-    const result = await runFlowsWorker(db, fakeNotifier(), 10)
+    const result = await runFlowsWorker(db, fakeNotifier(), 10, { schema })
 
     expect(fetch).toHaveBeenCalledTimes(1)
     const [, init] = fetch.mock.calls[0]
@@ -93,7 +94,7 @@ describe('runFlowsWorker webhook subscription filters', () => {
       subscription: { status: 'deliver', filter: null },
     })
 
-    const result = await runFlowsWorker(db, fakeNotifier(), 10)
+    const result = await runFlowsWorker(db, fakeNotifier(), 10, { schema })
 
     expect(fetch).toHaveBeenCalledTimes(1)
     expect(completed).toContainEqual(expect.objectContaining({ job_id: 'job-webhook-1', ok: true }))
@@ -107,7 +108,7 @@ describe('runFlowsWorker webhook subscription filters', () => {
       subscription: { status: 'deliver', filter: { field: 'event', op: 'eq', value: 'content.published' } },
     })
 
-    const result = await runFlowsWorker(db, fakeNotifier(), 10)
+    const result = await runFlowsWorker(db, fakeNotifier(), 10, { schema })
 
     expect(fetch).not.toHaveBeenCalled()
     expect(completed).toContainEqual(expect.objectContaining({ job_id: 'job-webhook-1', ok: true }))
@@ -121,7 +122,7 @@ describe('runFlowsWorker webhook subscription filters', () => {
       subscription: { status: 'skip' },
     })
 
-    const result = await runFlowsWorker(db, fakeNotifier(), 10)
+    const result = await runFlowsWorker(db, fakeNotifier(), 10, { schema })
 
     expect(fetch).not.toHaveBeenCalled()
     expect(completed).toContainEqual(expect.objectContaining({ job_id: 'job-webhook-1', ok: true }))
@@ -135,7 +136,7 @@ describe('runFlowsWorker webhook subscription filters', () => {
       subscription: { status: 'deliver', filter: 'not-a-filter-object' },
     })
 
-    const result = await runFlowsWorker(db, fakeNotifier(), 10)
+    const result = await runFlowsWorker(db, fakeNotifier(), 10, { schema })
 
     expect(fetch).not.toHaveBeenCalled()
     expect(completed).toContainEqual(expect.objectContaining({

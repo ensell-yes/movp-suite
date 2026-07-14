@@ -1,9 +1,11 @@
 {
   "imports": {
     "@movp/flows": "../../../packages/flows/src/index.ts",
+    "@movp/core-schema": "../../../packages/core-schema/src/index.ts",
     "@movp/notifications": "../../../packages/notifications/src/index.ts",
     "@movp/search": "../../../packages/search/src/index.ts",
     "@movp/domain": "../../../packages/domain/src/index.ts",
+    "zod": "npm:zod@^3.23.8",
     "@supabase/supabase-js": "npm:@supabase/supabase-js@2"
   }
 }

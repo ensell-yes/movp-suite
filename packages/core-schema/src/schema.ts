@@ -47,7 +47,8 @@ import { workflowRun } from './collections/workflow_run.ts'
 import { defineSchema } from './define.ts'
 import { events } from './events.ts'
 
-export const schema = defineSchema([
+export const schema = defineSchema({
+  collections: [
   // Domain Workflows (Phase 7, Part A). `event_type` is the one global public
   // collection and must precede workflow FK consumers.
   eventType,
@@ -104,5 +105,7 @@ export const schema = defineSchema([
   segmentRecomputeRun,
   automationRule,
   webhookSubscription,
-  workflowRun,
-], events)
+    workflowRun,
+  ],
+  events,
+})

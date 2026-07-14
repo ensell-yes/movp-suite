@@ -1,4 +1,5 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
+import { schema } from '@movp/core-schema'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { createDomain } from '../src/index.ts'
 
@@ -90,7 +91,7 @@ beforeAll(async () => {
   otherWorkspaceId = await makeWorkspace(`RepDomX-${crypto.randomUUID().slice(0, 8)}`)
   await addMember(workspaceId, user.id)
   const db = userClient(user.token)
-  domain = createDomain({ db, userId: user.id })
+  domain = createDomain({ db, userId: user.id }, { schema })
 
   const { data: campaign, error: campaignError } = await db
     .from('campaign')

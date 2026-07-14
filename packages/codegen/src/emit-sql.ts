@@ -74,9 +74,30 @@ function tsvExpression(c: CollectionDef): string {
 }
 
 function collectionMetadataSql(c: CollectionDef): string {
+  // Platform collections (layer 'platform' or absent) emit BYTE-IDENTICAL SQL to the frozen
+  // baseline 20260701000002_movp_generated.sql, which PREDATES the `layer` column (added by
+  // 20260713000001_metadata_layer.sql). Emitting `layer` unconditionally would (a) drift the frozen
+  // baseline -> `pnpm codegen` throws "generated baseline drift", and (b) reference a column that
+  // does not yet exist at baseline apply time. Only project extension codegen (which runs AFTER the
+  // platform bundle adds the column) writes `layer = 'project'`.
+  const isProject = c.layer === 'project'
+
+  const collectionCols = isProject
+    ? '(name, label, label_plural, workspace_scoped, layer)'
+    : '(name, label, label_plural, workspace_scoped)'
+  const collectionVals = isProject
+    ? `(${q(c.name)}, ${q(c.label)}, ${q(c.labelPlural)}, ${String(c.workspaceScoped)}, 'project')`
+    : `(${q(c.name)}, ${q(c.label)}, ${q(c.labelPlural)}, ${String(c.workspaceScoped)})`
+  const collectionUpdate = isProject
+    ? 'label = excluded.label, label_plural = excluded.label_plural, workspace_scoped = excluded.workspace_scoped, layer = excluded.layer'
+    : 'label = excluded.label, label_plural = excluded.label_plural, workspace_scoped = excluded.workspace_scoped'
+
+  const fieldCols = isProject
+    ? '(collection_name, name, type, label, cardinality, reporting_role, searchable, embeddable, layer)'
+    : '(collection_name, name, type, label, cardinality, reporting_role, searchable, embeddable)'
   const fieldRows = Object.entries(c.fields)
-    .map(([name, field]) =>
-      [
+    .map(([name, field]) => {
+      const cells = [
         q(c.name),
         q(name),
         q(field.type),
@@ -85,26 +106,37 @@ function collectionMetadataSql(c: CollectionDef): string {
         field.reporting?.role ? q(field.reporting.role) : 'null',
         String(!!field.searchable),
         String(!!field.embeddable),
-      ].join(', '),
-    )
+      ]
+      if (isProject) cells.push(`'project'`)
+      return cells.join(', ')
+    })
     .map((row) => `  (${row})`)
     .join(',\n')
-
-  return `
-insert into public.movp_collections (name, label, label_plural, workspace_scoped)
-values (${q(c.name)}, ${q(c.label)}, ${q(c.labelPlural)}, ${String(c.workspaceScoped)})
-on conflict (name) do update set label = excluded.label, label_plural = excluded.label_plural, workspace_scoped = excluded.workspace_scoped;
-
-insert into public.movp_fields (collection_name, name, type, label, cardinality, reporting_role, searchable, embeddable)
-values
-${fieldRows}
-on conflict (collection_name, name) do update set
-  type = excluded.type,
+  const fieldUpdate = isProject
+    ? `  type = excluded.type,
   label = excluded.label,
   cardinality = excluded.cardinality,
   reporting_role = excluded.reporting_role,
   searchable = excluded.searchable,
-  embeddable = excluded.embeddable;`
+  embeddable = excluded.embeddable,
+  layer = excluded.layer`
+    : `  type = excluded.type,
+  label = excluded.label,
+  cardinality = excluded.cardinality,
+  reporting_role = excluded.reporting_role,
+  searchable = excluded.searchable,
+  embeddable = excluded.embeddable`
+
+  return `
+insert into public.movp_collections ${collectionCols}
+values ${collectionVals}
+on conflict (name) do update set ${collectionUpdate};
+
+insert into public.movp_fields ${fieldCols}
+values
+${fieldRows}
+on conflict (collection_name, name) do update set
+${fieldUpdate};`
 }
 
 function ftsSql(c: CollectionDef): string {
@@ -411,4 +443,56 @@ export function emitDeltaSql(
     }
   }
   return `${HEADER}\n${collections.join('\n')}\n${eventCatalogSeedSql(events)}`
+}
+
+function assertProjectLayer(collection: CollectionDef): void {
+  if (collection.layer !== 'project') {
+    throw new Error(
+      `platform_row_delete_forbidden: collection "${collection.name}" is layer="${collection.layer}"`,
+    )
+  }
+}
+
+function projectOwnershipMarkers(collections: CollectionDef[], events: EventDef[]): string {
+  return [
+    ...collections.map((collection) => `-- movp-project-collection: ${collection.name}`),
+    ...events.map((event) => `-- movp-project-event: ${event.key}`),
+  ].join('\n')
+}
+
+export function emitProjectMigration(
+  schema: MovpSchema,
+  opts: { excludeCollections?: readonly string[]; excludeEvents?: readonly string[] } = {},
+): string {
+  const excludedCollections = new Set(opts.excludeCollections ?? [])
+  const excludedEvents = new Set(opts.excludeEvents ?? [])
+  const collections = schema.projectCollections.filter(
+    (collection) => !excludedCollections.has(collection.name),
+  )
+  for (const collection of collections) assertProjectLayer(collection)
+  const events = schema.projectEvents.filter((event) => !excludedEvents.has(event.key))
+  return `${HEADER}\n${projectOwnershipMarkers(collections, events)}\n${collections.map(emitCollectionSql).join('\n')}\n${eventCatalogSeedSql(events)}`
+}
+
+export function emitProjectDeltaSql(
+  schema: MovpSchema,
+  owned: { collections?: readonly string[]; events?: readonly string[] },
+): string {
+  const collections = (owned.collections ?? []).map((name) => {
+    const collection = schema.projectCollections.find((entry) => entry.name === name)
+    if (!collection) throw new Error(`delta collection not registered: ${name}`)
+    assertProjectLayer(collection)
+    return emitCollectionSql(collection)
+  })
+  const eventKeys = new Set(owned.events ?? [])
+  const events = schema.projectEvents.filter((event) => eventKeys.has(event.key))
+  for (const key of owned.events ?? []) {
+    if (!events.some((event) => event.key === key)) throw new Error(`delta event not registered: ${key}`)
+  }
+  const collectionDefs = (owned.collections ?? []).map((name) => {
+    const collection = schema.projectCollections.find((entry) => entry.name === name)
+    if (!collection) throw new Error(`delta collection not registered: ${name}`)
+    return collection
+  })
+  return `${HEADER}\n${projectOwnershipMarkers(collectionDefs, events)}\n${collections.join('\n')}\n${eventCatalogSeedSql(events)}`
 }

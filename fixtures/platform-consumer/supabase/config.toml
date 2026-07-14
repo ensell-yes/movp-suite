@@ -1,0 +1,39 @@
+project_id = "movp-c6a-consumer"
+
+[api]
+enabled = false
+
+[db]
+port = 64422
+shadow_port = 64420
+major_version = 17
+
+[db.migrations]
+enabled = true
+schema_paths = []
+
+[db.seed]
+enabled = false
+
+[db.pooler]
+enabled = false
+port = 64429
+
+[realtime]
+enabled = false
+
+[studio]
+enabled = false
+port = 64423
+
+[storage]
+enabled = false
+
+[auth]
+enabled = false
+
+[analytics]
+enabled = false
+
+[edge_runtime]
+enabled = false

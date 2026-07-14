@@ -1,4 +1,5 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
+import { schema } from '@movp/core-schema'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { createDomain } from '../src/index.ts'
 
@@ -90,7 +91,7 @@ beforeAll(async () => {
   wsOwner[ws] = user.id
   wsOwner[otherWs] = other.id                    // otherWs campaigns owned by `other`, not the actor
   db = userClient(user.token)                    // user JWT -> caller RLS
-  domain = createDomain({ db, userId: user.id }) // production-shaped user ctx (NO service role)
+  domain = createDomain({ db, userId: user.id }, { schema }) // production-shaped user ctx (NO service role)
 })
 
 // ── seed helpers (service-role inserts; return the ids the assertions use) ──────

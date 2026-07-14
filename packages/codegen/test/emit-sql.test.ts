@@ -68,3 +68,31 @@ describe('emitSqlMigration', () => {
     expect(sql).toContain('create table if not exists public.tag')
   })
 })
+
+describe('collection metadata layer marker', () => {
+  const platformCollection = { ...note, layer: 'platform' as const }
+  const projectCollection = { ...note, layer: 'project' as const }
+
+  it('omits the layer column for platform collections (byte-identical to the frozen baseline)', () => {
+    const sql = emitCollectionSql(platformCollection)
+    expect(sql).toContain('insert into public.movp_collections (name, label, label_plural, workspace_scoped)')
+    expect(sql).toContain("values ('note', 'Note', 'Notes', true)")
+    expect(sql).toContain(
+      'insert into public.movp_fields (collection_name, name, type, label, cardinality, reporting_role, searchable, embeddable)',
+    )
+    expect(sql).not.toContain(", 'project')")
+  })
+
+  it('writes layer=project in both metadata upserts for project collections', () => {
+    const sql = emitCollectionSql(projectCollection)
+    expect(sql).toContain(
+      'insert into public.movp_collections (name, label, label_plural, workspace_scoped, layer)',
+    )
+    expect(sql).toContain("values ('note', 'Note', 'Notes', true, 'project')")
+    expect(sql).toContain(
+      'insert into public.movp_fields (collection_name, name, type, label, cardinality, reporting_role, searchable, embeddable, layer)',
+    )
+    expect(sql).toContain("('note', 'title', 'text', 'Title', null, null, true, false, 'project')")
+    expect(sql).toContain('layer = excluded.layer')
+  })
+})

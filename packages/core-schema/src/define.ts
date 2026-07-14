@@ -44,7 +44,32 @@ export function defineEvent(def: EventDef): EventDef {
   return def
 }
 
-export function defineSchema(collections: CollectionDef[], events: EventDef[] = []): MovpSchema {
+export function defineSchema(opts: {
+  extends?: MovpSchema
+  collections: CollectionDef[]
+  events?: EventDef[]
+}): MovpSchema {
+  // Spread into NEW objects so the shared exported collection singletons (e.g. `note`) are never
+  // mutated by the layer stamp — callers import those singletons elsewhere.
+  const inherited = (opts.extends?.collections ?? []).map((c) => ({
+    ...c,
+    layer: c.layer ?? 'platform',
+  }))
+  const local = opts.collections.map((c) => ({
+    ...c,
+    layer: (opts.extends ? 'project' : 'platform') as 'platform' | 'project',
+  }))
+  const collections = [...inherited, ...local]
+  const inheritedEvents = (opts.extends?.events ?? []).map((event) => ({
+    ...event,
+    layer: event.layer ?? 'platform',
+  }))
+  const localEvents = (opts.events ?? []).map((event) => ({
+    ...event,
+    layer: (opts.extends ? 'project' : 'platform') as 'platform' | 'project',
+  }))
+  const events = [...inheritedEvents, ...localEvents]
+
   const names = new Set<string>()
   for (const c of collections) {
     if (names.has(c.name)) throw new Error(`duplicate collection name "${c.name}"`)
@@ -65,5 +90,12 @@ export function defineSchema(collections: CollectionDef[], events: EventDef[] = 
     }
   }
 
-  return { collections, events }
+  return {
+    collections,
+    events,
+    platformCollections: collections.filter((c) => c.layer === 'platform'),
+    projectCollections: collections.filter((c) => c.layer === 'project'),
+    platformEvents: events.filter((event) => event.layer === 'platform'),
+    projectEvents: events.filter((event) => event.layer === 'project'),
+  }
 }

@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { schema } from '@movp/core-schema'
 import { createDomain } from '@movp/domain'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -18,8 +19,11 @@ const inbox = vi.fn(async () => [
 const taskCreate = vi.fn(async () => ({ id: 't1', title: 'Ship it' }))
 const taskList = vi.fn(async () => ({ items: [{ id: 't1' }], nextCursor: null }))
 const taskBoard = vi.fn(async () => [{ status: { id: 's1' }, tasks: [{ id: 't1' }] }])
+const taskDetail = vi.fn(async () => ({ task: { id: 't1' }, description: 'Ship it', assignments: [], observers: [], dependencies: [], attachments: [] }))
 const contentCreate = vi.fn(async () => ({ id: 'ci1', slug: 'hello' }))
+const contentUpdate = vi.fn(async () => ({ id: 'ci1', current_revision_id: 'r2' }))
 const contentList = vi.fn(async () => ({ items: [{ id: 'ci1' }], nextCursor: null }))
+const contentDetail = vi.fn(async () => ({ item: { id: 'ci1' }, type: { id: 'ct1' }, currentRevision: { id: 'r2', data: { headline: 'Hi' } } }))
 const contentPublish = vi.fn(async () => ({ id: 'ci1', status: 'published' }))
 const contentIssueAsset = vi.fn(async () => ({ uploadUrl: 'https://r2/put', assetId: 'a1', r2Key: 'w/a1' }))
 const workflowListEventTypes = vi.fn(async () => ({ items: [{ id: 'evt1', key: 'task.completed' }], nextCursor: null }))
@@ -44,8 +48,23 @@ function crud() {
   }
 }
 
+function collection(name: string) {
+  if (name === 'note') {
+    return {
+      create: noteCreate,
+      get: vi.fn(async () => created),
+      list: noteList,
+      update: vi.fn(),
+      delete: vi.fn(),
+    }
+  }
+  if (name === 'workflow_run') return { ...crud(), list: workflowRunList }
+  return crud()
+}
+
 vi.mock('@movp/domain', () => ({
   createDomain: vi.fn(() => ({
+    collection,
     event_type: crud(),
     note: {
       create: noteCreate,
@@ -96,6 +115,7 @@ vi.mock('@movp/domain', () => ({
     task: {
       create: taskCreate,
       get: vi.fn(),
+      getDetail: taskDetail,
       list: taskList,
       board: taskBoard,
       assign: vi.fn(async () => undefined),
@@ -111,8 +131,9 @@ vi.mock('@movp/domain', () => ({
     content: {
       createType: vi.fn(async () => ({ id: 'ct1' })),
       create: contentCreate,
-      update: vi.fn(async () => ({ id: 'ci1' })),
+      update: contentUpdate,
       get: vi.fn(async () => ({ id: 'ci1' })),
+      getDetail: contentDetail,
       list: contentList,
       listTypes: vi.fn(async () => ({ items: [{ id: 'ct1' }], nextCursor: null })),
       listRevisions: vi.fn(async () => ({ items: [{ id: 'r1' }], nextCursor: null })),
@@ -136,15 +157,21 @@ vi.mock('@movp/domain', () => ({
   })),
 }))
 
-function program(opts: Partial<Parameters<typeof buildProgram>[0]> = {}) {
+function program(opts: Partial<NonNullable<Parameters<typeof buildProgram>[1]>> = {}) {
   const out: string[] = []
-  const cmd = buildProgram({
+  const err: string[] = []
+  const cmd = buildProgram(schema, {
     resolveCtx: () => ({ db: {} as never, userId: 'u' }),
     out: (line) => out.push(line),
     ...opts,
   })
-  cmd.exitOverride()
-  return { cmd, out }
+  const prepareForTest = (command: ReturnType<typeof buildProgram>): void => {
+    command.exitOverride()
+    command.configureOutput({ writeErr: (line) => err.push(line) })
+    command.commands.forEach(prepareForTest)
+  }
+  prepareForTest(cmd)
+  return { cmd, out, err }
 }
 
 describe('movp CLI', () => {
@@ -311,6 +338,7 @@ describe('movp CLI', () => {
       parentId: undefined,
       startDate: undefined,
       dueDate: undefined,
+      idempotencyKey: undefined,
     })
     expect(out[0]).toContain('t1')
   })
@@ -318,12 +346,43 @@ describe('movp CLI', () => {
   it('task list and task board print results', async () => {
     const { cmd, out } = program()
     await cmd.parseAsync(['node', 'movp', 'task', 'list', '--workspace', 'w'])
-    expect(taskList).toHaveBeenCalledWith({ workspaceId: 'w', statusId: undefined, assigneeId: undefined })
+    expect(taskList).toHaveBeenCalledWith({
+      workspaceId: 'w',
+      statusId: undefined,
+      assigneeId: undefined,
+      parentId: undefined,
+      first: undefined,
+      after: null,
+    })
     expect(out[0]).toContain('t1')
     const p2 = program()
     await p2.cmd.parseAsync(['node', 'movp', 'task', 'board', '--workspace', 'w'])
     expect(taskBoard).toHaveBeenCalledWith({ workspaceId: 'w' })
     expect(p2.out[0]).toContain('s1')
+  })
+
+  it('rejects conflicting task filters and invalid numeric options', async () => {
+    const { cmd } = program()
+    await expect(cmd.parseAsync([
+      'node', 'movp', 'task', 'list', '--workspace', 'w', '--top-level', '--parent', 'parent-1',
+    ])).rejects.toThrow(/--top-level cannot be combined with --parent/)
+
+    const invalidNumber = program().cmd
+    await expect(invalidNumber.parseAsync([
+      'node', 'movp', 'task', 'list', '--workspace', 'w', '--first', 'abc',
+    ])).rejects.toThrow(/expected an integer greater than or equal to 1/)
+
+    const invalidPosition = program().cmd
+    await expect(invalidPosition.parseAsync([
+      'node', 'movp', 'content', 'collection-add', '--collection', 'c1', '--item', 'ci1', '--position', '-1',
+    ])).rejects.toThrow(/expected an integer greater than or equal to 0/)
+  })
+
+  it('task get prints the complete detail contract', async () => {
+    const { cmd, out } = program()
+    await cmd.parseAsync(['node', 'movp', 'task', 'get', '--task', 't1'])
+    expect(taskDetail).toHaveBeenCalledWith('t1')
+    expect(out[0]).toContain('Ship it')
   })
 
   it('surfaces the custom task group but no generic CRUD group for internal task/task_revision', () => {
@@ -332,7 +391,21 @@ describe('movp CLI', () => {
     expect(top).not.toContain('task_revision')
     expect(top).toEqual(expect.arrayContaining(['task', 'task_status_option', 'task_priority_option']))
     const task = cmd.commands.find((c) => c.name() === 'task')
-    expect(task?.commands.map((s) => s.name())).toEqual(['create', 'list', 'board', 'assign', 'transition', 'depend', 'describe'])
+    expect(task?.commands.map((s) => s.name())).toEqual([
+      'create',
+      'get',
+      'list',
+      'board',
+      'assign',
+      'unassign',
+      'observe',
+      'unobserve',
+      'transition',
+      'depend',
+      'undepend',
+      'describe',
+      'attach',
+    ])
   })
 
   it('content create routes to content.create with parsed JSON data', async () => {
@@ -355,16 +428,67 @@ describe('movp CLI', () => {
     expect(out[0]).toContain('ci1')
   })
 
+  it('rejects unsupported content policies before resolving the domain', async () => {
+    const { cmd } = program()
+    await expect(cmd.parseAsync([
+      'node',
+      'movp',
+      'content',
+      'create-type',
+      '--workspace',
+      'w',
+      '--key',
+      'article',
+      '--label',
+      'Article',
+      '--field-schema',
+      '[]',
+      '--moderation-policy',
+      'sometimes',
+    ])).rejects.toThrow(/Allowed choices are none, pre, post/)
+  })
+
   it('content list and content publish print results', async () => {
     const { cmd, out } = program()
     await cmd.parseAsync(['node', 'movp', 'content', 'list', '--workspace', 'w'])
-    expect(contentList).toHaveBeenCalledWith({ workspaceId: 'w', contentTypeId: undefined, status: undefined })
+    expect(contentList).toHaveBeenCalledWith({
+      workspaceId: 'w',
+      contentTypeId: undefined,
+      status: undefined,
+      first: undefined,
+      after: null,
+    })
     expect(out[0]).toContain('ci1')
 
     const p2 = program()
     await p2.cmd.parseAsync(['node', 'movp', 'content', 'publish', '--item', 'ci1'])
     expect(contentPublish).toHaveBeenCalledWith({ itemId: 'ci1' })
     expect(p2.out[0]).toContain('published')
+  })
+
+  it('content get and update preserve revision data and optimistic concurrency', async () => {
+    const { cmd, out } = program()
+    await cmd.parseAsync(['node', 'movp', 'content', 'get', '--item', 'ci1'])
+    expect(contentDetail).toHaveBeenCalledWith('ci1')
+    expect(out[0]).toContain('headline')
+
+    await cmd.parseAsync([
+      'node',
+      'movp',
+      'content',
+      'update',
+      '--item',
+      'ci1',
+      '--data',
+      '{"headline":"Updated"}',
+      '--expected-revision',
+      'r1',
+    ])
+    expect(contentUpdate).toHaveBeenCalledWith({
+      itemId: 'ci1',
+      data: { headline: 'Updated' },
+      expectedRevisionId: 'r1',
+    })
   })
 
   it('content asset-upload routes to issueAssetUpload and forwards asset ctx', async () => {
@@ -392,10 +516,13 @@ describe('movp CLI', () => {
     ])
     expect(contentIssueAsset).toHaveBeenCalledWith({ workspaceId: 'w', filename: 'x.png', mime: 'image/png', sizeBytes: 10 })
     expect(out[0]).toContain('r2/put')
-    expect(vi.mocked(createDomain)).toHaveBeenCalledWith(expect.objectContaining({
-      accessToken: 'test',
-      assetsFnUrl: 'http://localhost:54321/functions/v1/content-assets',
-    }))
+    expect(vi.mocked(createDomain)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        accessToken: 'test',
+        assetsFnUrl: 'http://localhost:54321/functions/v1/content-assets',
+      }),
+      { schema },
+    )
   })
 
   it('surfaces the custom content group but no generic CRUD group for internal CMS collections', () => {
@@ -407,11 +534,14 @@ describe('movp CLI', () => {
     const content = cmd.commands.find((c) => c.name() === 'content')
     expect(content?.commands.map((s) => s.name())).toEqual([
       'create-type',
+      'types',
       'create',
       'update',
       'list',
       'approvals',
       'get',
+      'revisions',
+      'published',
       'submit',
       'decide',
       'publish',
@@ -419,6 +549,13 @@ describe('movp CLI', () => {
       'schedule',
       'seo-audit',
       'asset-upload',
+      'asset-finalize',
+      'collection-create',
+      'collection-add',
+      'collection-reorder',
+      'link-asset',
+      'link-item',
+      'link-task',
     ])
   })
 

@@ -12,6 +12,7 @@
     "build": "tsup src/index.ts --format esm --dts --sourcemap --clean --target node20 --out-dir dist"
   },
   "dependencies": {
+    "@movp/core-schema": "workspace:*",
     "@movp/domain": "workspace:*",
     "@movp/notifications": "workspace:*",
     "@movp/search": "workspace:*",

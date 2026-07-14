@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
+import type { MovpSchema } from '@movp/core-schema'
 import type { NotificationProvider } from '@movp/notifications'
 import { escapeHtml } from '@movp/notifications'
 import { claimDueJobs, completeJob, type Job } from './jobs.ts'
@@ -66,6 +67,7 @@ export async function runFlowsWorker(
   db: SupabaseClient,
   notifier: NotificationProvider,
   limit = 10,
+  opts: { schema: MovpSchema },
 ): Promise<{ processed: number; failed: number }> {
   let processed = 0
   let failed = 0
@@ -93,7 +95,7 @@ export async function runFlowsWorker(
     }
   }
 
-  const automate = await runAutomationWorker(db, limit)
+  const automate = await runAutomationWorker(db, limit, { schema: opts.schema })
   processed += automate.processed
   failed += automate.failed
 

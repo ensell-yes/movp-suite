@@ -45,24 +45,17 @@ function plural(s: string): string {
 }
 
 function service(domain: Domain, name: string): CollectionService<Row, Record<string, unknown>, Record<string, unknown>> {
-  const svc = (domain as unknown as Record<
-    string,
-    CollectionService<Row, Record<string, unknown>, Record<string, unknown>>
-  >)[name]
-  if (!svc || typeof svc.create !== 'function') {
-    throw new Error(`no domain service for collection: ${name}`)
-  }
-  return svc
+  return domain.collection(name) as unknown as CollectionService<Row, Record<string, unknown>, Record<string, unknown>>
 }
 
-function domainFrom(ctx: GraphQLContext): Domain {
+function domainFromSchema(ctx: GraphQLContext, schema: MovpSchema): Domain {
   if (ctx.domain) return ctx.domain
   ctx.domain = createDomain({
     db: ctx.db,
     userId: ctx.userId,
     accessToken: ctx.accessToken,
     assetsFnUrl: ctx.assetsFnUrl,
-  }, { embedder: ctx.embedder })
+  }, { schema, embedder: ctx.embedder })
   return ctx.domain
 }
 
@@ -139,6 +132,7 @@ function workflowAuditEvent(event: Record<string, unknown>): Record<string, unkn
 }
 
 export function buildSchema(schema: MovpSchema): GraphQLSchema {
+  const domainFrom = (ctx: GraphQLContext): Domain => domainFromSchema(ctx, schema)
   const builder = new SchemaBuilder<{ Context: GraphQLContext }>({
     plugins: [DataloaderPlugin, ComplexityPlugin],
     complexity: { limit: { complexity: COMPLEXITY_BUDGET, depth: DEPTH_LIMIT, breadth: 500 } },

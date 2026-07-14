@@ -1,9 +1,11 @@
 #!/usr/bin/env -S npx tsx
 import { emit, REDACTION_VERSION } from '@movp/obs'
 import { AdminDomainError } from '@movp/domain'
+import { schema } from '@movp/core-schema'
+import { cliErrorCode } from './error-code.ts'
 import { buildProgram } from './program.ts'
 
-buildProgram()
+buildProgram(schema)
   .parseAsync(process.argv)
   .catch((err: unknown) => {
     emit({
@@ -11,7 +13,7 @@ buildProgram()
       request_id: crypto.randomUUID(),
       surface: 'cli',
       operation: process.argv[2] ?? 'unknown',
-      error_code: err instanceof AdminDomainError ? err.pgCode : 'cli_error',
+      error_code: err instanceof AdminDomainError ? err.pgCode : cliErrorCode(err),
       redaction_version: REDACTION_VERSION,
     })
     console.error(String(err instanceof Error ? err.message : err))

@@ -15,9 +15,7 @@ export interface McpCtx {
 type AnyService = CollectionService<Record<string, unknown>, Record<string, unknown>, Record<string, unknown>>
 
 function service(domain: Domain, name: string): AnyService {
-  const svc = (domain as unknown as Record<string, AnyService>)[name]
-  if (!svc || typeof svc.create !== 'function') throw new Error(`no domain service for collection: ${name}`)
-  return svc
+  return domain.collection(name) as unknown as AnyService
 }
 
 function createShape(c: CollectionDef): Record<string, z.ZodTypeAny> {
@@ -30,7 +28,40 @@ function createShape(c: CollectionDef): Record<string, z.ZodTypeAny> {
 }
 
 function text(value: unknown) {
-  return { content: [{ type: 'text' as const, text: JSON.stringify(value) }] }
+  return {
+    content: [{ type: 'text' as const, text: JSON.stringify(value) }],
+    structuredContent: { result: value },
+  }
+}
+
+const jsonObjectInput = z.union([z.string(), z.record(z.unknown())])
+const fieldSchemaInput = z.union([
+  z.string(),
+  z.array(z.object({
+    name: z.string(),
+    type: z.enum(['text', 'richtext', 'number', 'bool', 'date', 'enum', 'asset', 'reference', 'json']),
+    required: z.boolean().optional(),
+    values: z.array(z.string()).optional(),
+  })),
+])
+
+function parseJsonObject(value: string | Record<string, unknown>): Record<string, unknown> {
+  const parsed = typeof value === 'string' ? parseRequiredJson(value) : value
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) throw new Error('invalid_json_object')
+  return parsed as Record<string, unknown>
+}
+
+function parseFieldSchema(value: string | Array<Record<string, unknown>>): unknown {
+  return typeof value === 'string' ? parseRequiredJson(value) : value
+}
+
+function parseRequiredJson(value: string): unknown {
+  if (value.trim().length === 0) throw new Error('invalid_json')
+  try {
+    return JSON.parse(value)
+  } catch {
+    throw new Error('invalid_json')
+  }
 }
 
 function parseJson(value: string | undefined, fallback: unknown): unknown {
@@ -49,7 +80,7 @@ export function buildMcpServer(schema: MovpSchema, ctx: McpCtx): McpServer {
     userId: ctx.userId,
     accessToken: ctx.accessToken,
     assetsFnUrl: ctx.assetsFnUrl,
-  }, { embedder: ctx.embedder })
+  }, { schema, embedder: ctx.embedder })
 
   for (const c of schema.collections) {
     if (c.internal) continue
@@ -203,16 +234,27 @@ export function buildMcpServer(schema: MovpSchema, ctx: McpCtx): McpServer {
         parentId: z.string().optional(),
         startDate: z.string().optional(),
         dueDate: z.string().optional(),
+        idempotencyKey: z.string().optional(),
       },
     },
-    async ({ workspaceId, title, description, statusId, priorityId, parentId, startDate, dueDate }) =>
-      text(await domain.task.create({ workspaceId, title, description, statusId, priorityId, parentId, startDate, dueDate })),
+    async ({ workspaceId, title, description, statusId, priorityId, parentId, startDate, dueDate, idempotencyKey }) =>
+      text(await domain.task.create({ workspaceId, title, description, statusId, priorityId, parentId, startDate, dueDate, idempotencyKey })),
   )
 
   server.registerTool(
     'task.get',
-    { title: 'Get task', description: 'Fetch a task by id', inputSchema: { id: z.string() } },
+    { title: 'Get task', description: 'Fetch task metadata by id', inputSchema: { id: z.string() } },
     async ({ id }) => text(await domain.task.get(id)),
+  )
+
+  server.registerTool(
+    'task.get_detail',
+    {
+      title: 'Get task detail',
+      description: 'Fetch a task with its current description and related assignment, observer, dependency, and attachment rows',
+      inputSchema: { id: z.string() },
+    },
+    async ({ id }) => text(await domain.task.getDetail(id)),
   )
 
   server.registerTool(
@@ -225,11 +267,22 @@ export function buildMcpServer(schema: MovpSchema, ctx: McpCtx): McpServer {
         statusId: z.string().optional(),
         assigneeId: z.string().optional(),
         parentId: z.string().optional(),
+        topLevel: z.boolean().optional(),
         first: z.number().optional(),
+        after: z.string().optional(),
       },
     },
-    async ({ workspaceId, statusId, assigneeId, parentId, first }) =>
-      text(await domain.task.list({ workspaceId, statusId, assigneeId, parentId, first })),
+    async ({ workspaceId, statusId, assigneeId, parentId, topLevel, first, after }) => {
+      if (topLevel && parentId) throw new Error('invalid_parent_filter')
+      return text(await domain.task.list({
+        workspaceId,
+        statusId,
+        assigneeId,
+        parentId: topLevel ? null : parentId,
+        first,
+        after: after ?? null,
+      }))
+    },
   )
 
   server.registerTool(
@@ -251,6 +304,45 @@ export function buildMcpServer(schema: MovpSchema, ctx: McpCtx): McpServer {
     },
     async ({ taskId, userId }) => {
       await domain.task.assign({ taskId, userId })
+      return text({ ok: true })
+    },
+  )
+
+  server.registerTool(
+    'task.unassign',
+    {
+      title: 'Unassign task',
+      description: 'Remove a user assignment from a task idempotently',
+      inputSchema: { taskId: z.string(), userId: z.string() },
+    },
+    async ({ taskId, userId }) => {
+      await domain.task.unassign({ taskId, userId })
+      return text({ ok: true })
+    },
+  )
+
+  server.registerTool(
+    'task.add_observer',
+    {
+      title: 'Add task observer',
+      description: 'Add an observer to a task idempotently',
+      inputSchema: { taskId: z.string(), userId: z.string() },
+    },
+    async ({ taskId, userId }) => {
+      await domain.task.addObserver({ taskId, userId })
+      return text({ ok: true })
+    },
+  )
+
+  server.registerTool(
+    'task.remove_observer',
+    {
+      title: 'Remove task observer',
+      description: 'Remove an observer from a task idempotently',
+      inputSchema: { taskId: z.string(), userId: z.string() },
+    },
+    async ({ taskId, userId }) => {
+      await domain.task.removeObserver({ taskId, userId })
       return text({ ok: true })
     },
   )
@@ -279,6 +371,19 @@ export function buildMcpServer(schema: MovpSchema, ctx: McpCtx): McpServer {
   )
 
   server.registerTool(
+    'task.remove_dependency',
+    {
+      title: 'Remove task dependency',
+      description: 'Remove a blocking relationship idempotently',
+      inputSchema: { taskId: z.string(), blockerId: z.string() },
+    },
+    async ({ taskId, blockerId }) => {
+      await domain.task.removeDependency({ taskId, blockerId })
+      return text({ ok: true })
+    },
+  )
+
+  server.registerTool(
     'task.update_description',
     {
       title: 'Update task description',
@@ -289,14 +394,58 @@ export function buildMcpServer(schema: MovpSchema, ctx: McpCtx): McpServer {
   )
 
   server.registerTool(
+    'task.attach',
+    {
+      title: 'Attach file to task',
+      description: 'Attach an uploaded R2 object to a task',
+      inputSchema: {
+        taskId: z.string(),
+        r2Key: z.string(),
+        filename: z.string(),
+        contentType: z.string().optional(),
+        bytes: z.number().optional(),
+      },
+    },
+    async ({ taskId, r2Key, filename, contentType, bytes }) => {
+      await domain.task.attach({ taskId, r2Key, filename, contentType, bytes })
+      return text({ ok: true })
+    },
+  )
+
+  server.registerTool(
     'content.create_type',
     {
       title: 'Create content type',
       description: 'Define a content type with a JSON field schema',
-      inputSchema: { workspaceId: z.string(), key: z.string(), label: z.string(), fieldSchema: z.string() },
+      inputSchema: {
+        workspaceId: z.string(),
+        key: z.string(),
+        label: z.string(),
+        fieldSchema: fieldSchemaInput,
+        moderationPolicy: z.enum(['none', 'pre', 'post']).optional(),
+        approvalPolicy: z.enum(['none', 'single', 'multi']).optional(),
+      },
     },
-    async ({ workspaceId, key, label, fieldSchema }) =>
-      text(await domain.content.createType({ workspaceId, key, label, fieldSchema: JSON.parse(fieldSchema) })),
+    async ({ workspaceId, key, label, fieldSchema, moderationPolicy, approvalPolicy }) =>
+      text(await domain.content.createType({
+        workspaceId,
+        key,
+        label,
+        fieldSchema: parseFieldSchema(fieldSchema),
+        moderationPolicy,
+        approvalPolicy,
+      })),
+  )
+
+  server.registerTool(
+    'content.list_types',
+    {
+      title: 'List content types',
+      description: 'List content types in a workspace',
+      inputSchema: { workspaceId: z.string(), first: z.number().optional(), after: z.string().optional() },
+    },
+    async ({ workspaceId, first, after }) =>
+      text(await domain.content.listTypes({ workspaceId, first, after: after ?? null })),
   )
 
   server.registerTool(
@@ -304,10 +453,10 @@ export function buildMcpServer(schema: MovpSchema, ctx: McpCtx): McpServer {
     {
       title: 'Create content',
       description: 'Create a content item with JSON data',
-      inputSchema: { workspaceId: z.string(), contentTypeId: z.string(), slug: z.string(), data: z.string() },
+      inputSchema: { workspaceId: z.string(), contentTypeId: z.string(), slug: z.string(), data: jsonObjectInput },
     },
     async ({ workspaceId, contentTypeId, slug, data }) =>
-      text(await domain.content.create({ workspaceId, contentTypeId, slug, data: JSON.parse(data) })),
+      text(await domain.content.create({ workspaceId, contentTypeId, slug, data: parseJsonObject(data) })),
   )
 
   server.registerTool(
@@ -315,15 +464,26 @@ export function buildMcpServer(schema: MovpSchema, ctx: McpCtx): McpServer {
     {
       title: 'Update content',
       description: 'Update a content item with JSON data',
-      inputSchema: { id: z.string(), data: z.string() },
+      inputSchema: { id: z.string(), data: jsonObjectInput, expectedRevisionId: z.string().optional() },
     },
-    async ({ id, data }) => text(await domain.content.update({ itemId: id, data: JSON.parse(data) })),
+    async ({ id, data, expectedRevisionId }) =>
+      text(await domain.content.update({ itemId: id, data: parseJsonObject(data), expectedRevisionId })),
   )
 
   server.registerTool(
     'content.get',
-    { title: 'Get content', description: 'Fetch a content item by id', inputSchema: { id: z.string() } },
+    { title: 'Get content', description: 'Fetch content metadata by id', inputSchema: { id: z.string() } },
     async ({ id }) => text(await domain.content.get(id)),
+  )
+
+  server.registerTool(
+    'content.get_detail',
+    {
+      title: 'Get content detail',
+      description: 'Fetch content metadata, its type, and the current immutable revision data',
+      inputSchema: { id: z.string() },
+    },
+    async ({ id }) => text(await domain.content.getDetail(id)),
   )
 
   server.registerTool(
@@ -336,10 +496,32 @@ export function buildMcpServer(schema: MovpSchema, ctx: McpCtx): McpServer {
         contentTypeId: z.string().optional(),
         status: z.string().optional(),
         first: z.number().optional(),
+        after: z.string().optional(),
       },
     },
-    async ({ workspaceId, contentTypeId, status, first }) =>
-      text(await domain.content.list({ workspaceId, contentTypeId, status, first })),
+    async ({ workspaceId, contentTypeId, status, first, after }) =>
+      text(await domain.content.list({ workspaceId, contentTypeId, status, first, after: after ?? null })),
+  )
+
+  server.registerTool(
+    'content.list_revisions',
+    {
+      title: 'List content revisions',
+      description: 'List immutable revisions for a content item',
+      inputSchema: { itemId: z.string(), first: z.number().optional(), after: z.string().optional() },
+    },
+    async ({ itemId, first, after }) =>
+      text(await domain.content.listRevisions({ itemId, first, after: after ?? null })),
+  )
+
+  server.registerTool(
+    'content.get_published',
+    {
+      title: 'Get published content',
+      description: 'Fetch a content item and its exact published immutable revision',
+      inputSchema: { id: z.string() },
+    },
+    async ({ id }) => text(await domain.content.getPublished(id)),
   )
 
   server.registerTool(
@@ -408,6 +590,23 @@ export function buildMcpServer(schema: MovpSchema, ctx: McpCtx): McpServer {
   )
 
   server.registerTool(
+    'content.finalize_asset',
+    {
+      title: 'Finalize content asset',
+      description: 'Verify an uploaded object and finalize its asset metadata',
+      inputSchema: {
+        assetId: z.string(),
+        checksum: z.string(),
+        sizeBytes: z.number(),
+        width: z.number().optional(),
+        height: z.number().optional(),
+      },
+    },
+    async ({ assetId, checksum, sizeBytes, width, height }) =>
+      text(await domain.content.finalizeAsset({ assetId, checksum, sizeBytes, width, height })),
+  )
+
+  server.registerTool(
     'content.list_approvals',
     {
       title: 'List content approvals',
@@ -416,9 +615,88 @@ export function buildMcpServer(schema: MovpSchema, ctx: McpCtx): McpServer {
         workspaceId: z.string(),
         itemId: z.string().optional(),
         state: z.enum(['pending', 'approved', 'rejected', 'superseded']).optional(),
+        first: z.number().optional(),
+        after: z.string().optional(),
       },
     },
-    async ({ workspaceId, itemId, state }) => text(await domain.content.listApprovals({ workspaceId, itemId, state })),
+    async ({ workspaceId, itemId, state, first, after }) =>
+      text(await domain.content.listApprovals({ workspaceId, itemId, state, first, after: after ?? null })),
+  )
+
+  server.registerTool(
+    'content.create_collection',
+    {
+      title: 'Create content collection',
+      description: 'Create an ordered content collection',
+      inputSchema: { workspaceId: z.string(), key: z.string(), label: z.string(), description: z.string().optional() },
+    },
+    async ({ workspaceId, key, label, description }) =>
+      text(await domain.content.createCollection({ workspaceId, key, label, description })),
+  )
+
+  server.registerTool(
+    'content.add_to_collection',
+    {
+      title: 'Add content to collection',
+      description: 'Add a content item to an ordered collection',
+      inputSchema: { collectionId: z.string(), itemId: z.string(), position: z.number().optional() },
+    },
+    async ({ collectionId, itemId, position }) => {
+      await domain.content.addToCollection({ collectionId, itemId, position })
+      return text({ ok: true })
+    },
+  )
+
+  server.registerTool(
+    'content.reorder_collection',
+    {
+      title: 'Reorder content collection',
+      description: 'Replace the item order in a content collection',
+      inputSchema: { collectionId: z.string(), orderedItemIds: z.array(z.string()) },
+    },
+    async ({ collectionId, orderedItemIds }) => {
+      await domain.content.reorderCollection({ collectionId, orderedItemIds })
+      return text({ ok: true })
+    },
+  )
+
+  server.registerTool(
+    'content.link_asset',
+    {
+      title: 'Link content asset',
+      description: 'Create a references edge from content to an asset',
+      inputSchema: { itemId: z.string(), assetId: z.string() },
+    },
+    async ({ itemId, assetId }) => {
+      await domain.content.linkAsset({ itemId, assetId })
+      return text({ ok: true })
+    },
+  )
+
+  server.registerTool(
+    'content.link_item',
+    {
+      title: 'Link content item',
+      description: 'Create a references edge from content to another content item',
+      inputSchema: { itemId: z.string(), targetItemId: z.string() },
+    },
+    async ({ itemId, targetItemId }) => {
+      await domain.content.linkItem({ itemId, targetItemId })
+      return text({ ok: true })
+    },
+  )
+
+  server.registerTool(
+    'content.link_editorial_task',
+    {
+      title: 'Link editorial task',
+      description: 'Create an editorial_task edge from content to a task',
+      inputSchema: { itemId: z.string(), taskId: z.string() },
+    },
+    async ({ itemId, taskId }) => {
+      await domain.content.linkEditorialTask({ itemId, taskId })
+      return text({ ok: true })
+    },
   )
 
   server.registerTool(
@@ -477,7 +755,7 @@ export function buildMcpServer(schema: MovpSchema, ctx: McpCtx): McpServer {
       description: 'List workflow run audit rows in a workspace',
       inputSchema: { workspaceId: z.string(), first: z.number().optional(), after: z.string().optional() },
     },
-    async ({ workspaceId, first, after }) => text(await domain.workflow_run.list({ workspaceId, first, after: after ?? null })),
+    async ({ workspaceId, first, after }) => text(await domain.collection('workflow_run').list({ workspaceId, first, after: after ?? null })),
   )
 
   server.registerTool(

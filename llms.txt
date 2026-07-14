@@ -15,3 +15,8 @@
 ## Conventions
 - [Error codes & conventions](docs/agents/error-codes.md): stable codes, tool naming, workspace-id.
 - [Consumer AGENTS.md template](docs/agents/AGENTS.template.md).
+
+## Build on Task and CMS
+- [Task and CMS data contract](docs/agents/task-cms-data-contract.md): entities, states, relations, and invariants.
+- [Task and CMS interface contract](docs/agents/task-cms-interface-contract.md): MCP/CLI capabilities and compatibility.
+- [Task and CMS scaffolding guide](docs/agents/task-cms-scaffolding.md): implementation sequence and agent rules.

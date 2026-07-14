@@ -37,8 +37,15 @@ export interface CollectionDef {
   /**
    * Internal collections still generate tables/types, but are intentionally
    * skipped by generic public surfaces when writes need bespoke atomic logic.
-   */
+  */
   internal?: boolean
+  /**
+   * Tier marker distinguishing platform-owned collections from project extensions. Stamped by
+   * defineSchema: 'platform' for a non-extends (monorepo) schema; 'project' for collections declared
+   * locally in an `extends` schema. Nested composition preserves the inherited layer. Optional on
+   * hand-authored defs (absent === 'platform').
+   */
+  layer?: 'platform' | 'project'
   fields: Record<string, FieldDef>
 }
 
@@ -49,9 +56,19 @@ export interface EventDef {
   version: number
   label?: string
   description?: string
+  /** Ownership is stamped by defineSchema; absent on standalone event definitions. */
+  layer?: 'platform' | 'project'
 }
 
 export interface MovpSchema {
   collections: CollectionDef[]
   events: EventDef[]
+  /** Derived: collections with layer === 'platform'. */
+  platformCollections: CollectionDef[]
+  /** Derived: collections with layer === 'project' (empty for a non-extends schema). */
+  projectCollections: CollectionDef[]
+  /** Derived: events owned by the platform schema. */
+  platformEvents: EventDef[]
+  /** Derived: events declared by a project extension. */
+  projectEvents: EventDef[]
 }

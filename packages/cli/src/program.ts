@@ -1,7 +1,6 @@
-import { Command } from 'commander'
-import type { CollectionDef, FieldDef } from '@movp/core-schema'
-import { schema } from '@movp/core-schema'
-import { createDomain, type CollectionService, type Domain } from '@movp/domain'
+import { Command, InvalidArgumentError, Option } from 'commander'
+import type { CollectionDef, FieldDef, MovpSchema } from '@movp/core-schema'
+import { createDomain as createDomainWithSchema, type CollectionService, type Domain } from '@movp/domain'
 import { resolveCliCtx, exchangePat, type CliCtx } from './client.ts'
 import { writeCliConfig, loadCliConfig } from './config.ts'
 import { selectSecureStore } from './secure-store.ts'
@@ -24,9 +23,7 @@ export interface BuildProgramOpts {
 type AnyService = CollectionService<Record<string, unknown>, Record<string, unknown>, Record<string, unknown>>
 
 function service(domain: Domain, name: string): AnyService {
-  const svc = (domain as unknown as Record<string, AnyService>)[name]
-  if (!svc || typeof svc.create !== 'function') throw new Error(`no domain service for collection: ${name}`)
-  return svc
+  return domain.collection(name) as unknown as AnyService
 }
 
 function parseJsonFlag(value: string | undefined, fallback: unknown): unknown {
@@ -38,23 +35,36 @@ function parseJsonFlag(value: string | undefined, fallback: unknown): unknown {
   }
 }
 
+function parseInteger(value: string, minimum: number): number {
+  if (!/^\d+$/.test(value)) throw new InvalidArgumentError(`expected an integer greater than or equal to ${minimum}`)
+  const parsed = Number(value)
+  if (!Number.isSafeInteger(parsed) || parsed < minimum) {
+    throw new InvalidArgumentError(`expected an integer greater than or equal to ${minimum}`)
+  }
+  return parsed
+}
+
+const parsePositiveInteger = (value: string) => parseInteger(value, 1)
+const parseNonNegativeInteger = (value: string) => parseInteger(value, 0)
+
 async function readTokenFromStdin(): Promise<string> {
   const chunks: Buffer[] = []
   for await (const chunk of process.stdin) chunks.push(chunk as Buffer)
   return Buffer.concat(chunks).toString('utf8').trim()
 }
 
-export function buildProgram(opts: BuildProgramOpts = {}): Command {
+export function buildProgram(schema: MovpSchema, opts: BuildProgramOpts = {}): Command {
   const out = opts.out ?? ((l: string) => console.log(l))
   const resolveCtx = opts.resolveCtx ?? (() => resolveCliCtx())
   const readLoginToken = opts.readLoginToken ?? readTokenFromStdin
+  const createDomain = (ctx: CliCtx): Domain => createDomainWithSchema(ctx, { schema })
 
   const runCodegen =
     opts.runCodegen ??
     (async () => {
       const mod = await import('@movp/codegen')
       if (!mod.generate) throw new Error('@movp/codegen.generate() not found')
-      await mod.generate()
+      await mod.generate({ schema })
     })
 
   const runMigratePush =
@@ -111,7 +121,7 @@ export function buildProgram(opts: BuildProgramOpts = {}): Command {
     cmd
       .command('list')
       .requiredOption('--workspace <id>', 'workspace id')
-      .option('--first <n>', 'page size', (v) => parseInt(v, 10))
+      .option('--first <n>', 'page size', parsePositiveInteger)
       .option('--after <cursor>', 'page cursor')
       .action(async (o: { workspace: string; first?: number; after?: string }) => {
         const domain = createDomain(await resolveCtx())
@@ -132,7 +142,7 @@ export function buildProgram(opts: BuildProgramOpts = {}): Command {
     .description('List the current user inbox feed')
     .requiredOption('--workspace <id>', 'workspace id')
     .option('--tab <tab>', 'all | mentions | saved | assigned', 'all')
-    .option('--first <n>', 'max items', (v) => parseInt(v, 10))
+    .option('--first <n>', 'max items', parsePositiveInteger)
     .action(async (o: { workspace: string; tab?: string; first?: number }) => {
       const domain = createDomain(await resolveCtx())
       out(
@@ -180,7 +190,8 @@ export function buildProgram(opts: BuildProgramOpts = {}): Command {
     .option('--parent <id>', 'parent task id')
     .option('--start <date>', 'start date')
     .option('--due <date>', 'due date')
-    .action(async (o: { workspace: string; title: string; description?: string; status?: string; priority?: string; parent?: string; start?: string; due?: string }) => {
+    .option('--idempotency-key <key>', 'stable key for retry-safe creation')
+    .action(async (o: { workspace: string; title: string; description?: string; status?: string; priority?: string; parent?: string; start?: string; due?: string; idempotencyKey?: string }) => {
       const domain = createDomain(await resolveCtx())
       out(
         JSON.stringify(
@@ -193,18 +204,38 @@ export function buildProgram(opts: BuildProgramOpts = {}): Command {
             parentId: o.parent,
             startDate: o.start,
             dueDate: o.due,
+            idempotencyKey: o.idempotencyKey,
           }),
         ),
       )
+    })
+  taskCmd
+    .command('get')
+    .requiredOption('--task <id>', 'task id')
+    .action(async (o: { task: string }) => {
+      const domain = createDomain(await resolveCtx())
+      out(JSON.stringify(await domain.task.getDetail(o.task)))
     })
   taskCmd
     .command('list')
     .requiredOption('--workspace <id>', 'workspace id')
     .option('--status <id>', 'filter by status option id')
     .option('--assignee <id>', 'filter by assignee user id')
-    .action(async (o: { workspace: string; status?: string; assignee?: string }) => {
+    .option('--parent <id>', 'filter by parent task id')
+    .option('--top-level', 'list only tasks without a parent')
+    .option('--first <n>', 'page size', parsePositiveInteger)
+    .option('--after <cursor>', 'page cursor')
+    .action(async (o: { workspace: string; status?: string; assignee?: string; parent?: string; topLevel?: boolean; first?: number; after?: string }) => {
+      if (o.topLevel && o.parent) throw new InvalidArgumentError('--top-level cannot be combined with --parent')
       const domain = createDomain(await resolveCtx())
-      out(JSON.stringify(await domain.task.list({ workspaceId: o.workspace, statusId: o.status, assigneeId: o.assignee })))
+      out(JSON.stringify(await domain.task.list({
+        workspaceId: o.workspace,
+        statusId: o.status,
+        assigneeId: o.assignee,
+        parentId: o.topLevel ? null : o.parent,
+        first: o.first,
+        after: o.after ?? null,
+      })))
     })
   taskCmd
     .command('board')
@@ -220,6 +251,33 @@ export function buildProgram(opts: BuildProgramOpts = {}): Command {
     .action(async (o: { task: string; user: string }) => {
       const domain = createDomain(await resolveCtx())
       await domain.task.assign({ taskId: o.task, userId: o.user })
+      out(JSON.stringify({ ok: true }))
+    })
+  taskCmd
+    .command('unassign')
+    .requiredOption('--task <id>', 'task id')
+    .requiredOption('--user <id>', 'assignee user id')
+    .action(async (o: { task: string; user: string }) => {
+      const domain = createDomain(await resolveCtx())
+      await domain.task.unassign({ taskId: o.task, userId: o.user })
+      out(JSON.stringify({ ok: true }))
+    })
+  taskCmd
+    .command('observe')
+    .requiredOption('--task <id>', 'task id')
+    .requiredOption('--user <id>', 'observer user id')
+    .action(async (o: { task: string; user: string }) => {
+      const domain = createDomain(await resolveCtx())
+      await domain.task.addObserver({ taskId: o.task, userId: o.user })
+      out(JSON.stringify({ ok: true }))
+    })
+  taskCmd
+    .command('unobserve')
+    .requiredOption('--task <id>', 'task id')
+    .requiredOption('--user <id>', 'observer user id')
+    .action(async (o: { task: string; user: string }) => {
+      const domain = createDomain(await resolveCtx())
+      await domain.task.removeObserver({ taskId: o.task, userId: o.user })
       out(JSON.stringify({ ok: true }))
     })
   taskCmd
@@ -240,12 +298,39 @@ export function buildProgram(opts: BuildProgramOpts = {}): Command {
       out(JSON.stringify({ ok: true }))
     })
   taskCmd
+    .command('undepend')
+    .requiredOption('--task <id>', 'blocked task id')
+    .requiredOption('--blocker <id>', 'blocking task id')
+    .action(async (o: { task: string; blocker: string }) => {
+      const domain = createDomain(await resolveCtx())
+      await domain.task.removeDependency({ taskId: o.task, blockerId: o.blocker })
+      out(JSON.stringify({ ok: true }))
+    })
+  taskCmd
     .command('describe')
     .requiredOption('--task <id>', 'task id')
     .requiredOption('--body <text>', 'new description body')
     .action(async (o: { task: string; body: string }) => {
       const domain = createDomain(await resolveCtx())
       out(JSON.stringify(await domain.task.updateDescription(o.task, o.body)))
+    })
+  taskCmd
+    .command('attach')
+    .requiredOption('--task <id>', 'task id')
+    .requiredOption('--r2-key <key>', 'uploaded R2 object key')
+    .requiredOption('--filename <name>', 'file name')
+    .option('--content-type <mime>', 'MIME type')
+    .option('--bytes <n>', 'byte size', parseNonNegativeInteger)
+    .action(async (o: { task: string; r2Key: string; filename: string; contentType?: string; bytes?: number }) => {
+      const domain = createDomain(await resolveCtx())
+      await domain.task.attach({
+        taskId: o.task,
+        r2Key: o.r2Key,
+        filename: o.filename,
+        contentType: o.contentType,
+        bytes: o.bytes,
+      })
+      out(JSON.stringify({ ok: true }))
     })
 
   const contentCmd = program.command('content').description('Manage CMS content')
@@ -255,14 +340,27 @@ export function buildProgram(opts: BuildProgramOpts = {}): Command {
     .requiredOption('--key <key>', 'content type key')
     .requiredOption('--label <label>', 'display label')
     .requiredOption('--field-schema <json>', 'field schema JSON')
-    .action(async (o: { workspace: string; key: string; label: string; fieldSchema: string }) => {
+    .addOption(new Option('--moderation-policy <policy>', 'moderation policy').choices(['none', 'pre', 'post']))
+    .addOption(new Option('--approval-policy <policy>', 'approval policy').choices(['none', 'single', 'multi']))
+    .action(async (o: { workspace: string; key: string; label: string; fieldSchema: string; moderationPolicy?: string; approvalPolicy?: string }) => {
       const domain = createDomain(await resolveCtx())
       out(JSON.stringify(await domain.content.createType({
         workspaceId: o.workspace,
         key: o.key,
         label: o.label,
         fieldSchema: JSON.parse(o.fieldSchema),
+        moderationPolicy: o.moderationPolicy,
+        approvalPolicy: o.approvalPolicy,
       })))
+    })
+  contentCmd
+    .command('types')
+    .requiredOption('--workspace <id>', 'workspace id')
+    .option('--first <n>', 'page size', parsePositiveInteger)
+    .option('--after <cursor>', 'page cursor')
+    .action(async (o: { workspace: string; first?: number; after?: string }) => {
+      const domain = createDomain(await resolveCtx())
+      out(JSON.stringify(await domain.content.listTypes({ workspaceId: o.workspace, first: o.first, after: o.after ?? null })))
     })
   contentCmd
     .command('create')
@@ -283,30 +381,47 @@ export function buildProgram(opts: BuildProgramOpts = {}): Command {
     .command('update')
     .requiredOption('--item <id>', 'content item id')
     .requiredOption('--data <json>', 'content data JSON')
-    .action(async (o: { item: string; data: string }) => {
+    .option('--expected-revision <id>', 'revision id read before editing')
+    .action(async (o: { item: string; data: string; expectedRevision?: string }) => {
       const domain = createDomain(await resolveCtx())
-      out(JSON.stringify(await domain.content.update({ itemId: o.item, data: JSON.parse(o.data) })))
+      out(JSON.stringify(await domain.content.update({
+        itemId: o.item,
+        data: JSON.parse(o.data),
+        expectedRevisionId: o.expectedRevision,
+      })))
     })
   contentCmd
     .command('list')
     .requiredOption('--workspace <id>', 'workspace id')
     .option('--type <id>', 'content type id')
     .option('--status <status>', 'status')
-    .action(async (o: { workspace: string; type?: string; status?: string }) => {
+    .option('--first <n>', 'page size', parsePositiveInteger)
+    .option('--after <cursor>', 'page cursor')
+    .action(async (o: { workspace: string; type?: string; status?: string; first?: number; after?: string }) => {
       const domain = createDomain(await resolveCtx())
-      out(JSON.stringify(await domain.content.list({ workspaceId: o.workspace, contentTypeId: o.type, status: o.status })))
+      out(JSON.stringify(await domain.content.list({
+        workspaceId: o.workspace,
+        contentTypeId: o.type,
+        status: o.status,
+        first: o.first,
+        after: o.after ?? null,
+      })))
     })
   contentCmd
     .command('approvals')
     .requiredOption('--workspace <id>', 'workspace id')
     .option('--item <id>', 'content item id')
     .option('--state <state>', 'approval state')
-    .action(async (o: { workspace: string; item?: string; state?: string }) => {
+    .option('--first <n>', 'page size', parsePositiveInteger)
+    .option('--after <cursor>', 'page cursor')
+    .action(async (o: { workspace: string; item?: string; state?: string; first?: number; after?: string }) => {
       const domain = createDomain(await resolveCtx())
       out(JSON.stringify(await domain.content.listApprovals({
         workspaceId: o.workspace,
         itemId: o.item,
         state: o.state as 'pending' | 'approved' | 'rejected' | 'superseded' | undefined,
+        first: o.first,
+        after: o.after ?? null,
       })))
     })
   contentCmd
@@ -314,7 +429,23 @@ export function buildProgram(opts: BuildProgramOpts = {}): Command {
     .requiredOption('--item <id>', 'content item id')
     .action(async (o: { item: string }) => {
       const domain = createDomain(await resolveCtx())
-      out(JSON.stringify(await domain.content.get(o.item)))
+      out(JSON.stringify(await domain.content.getDetail(o.item)))
+    })
+  contentCmd
+    .command('revisions')
+    .requiredOption('--item <id>', 'content item id')
+    .option('--first <n>', 'page size', parsePositiveInteger)
+    .option('--after <cursor>', 'page cursor')
+    .action(async (o: { item: string; first?: number; after?: string }) => {
+      const domain = createDomain(await resolveCtx())
+      out(JSON.stringify(await domain.content.listRevisions({ itemId: o.item, first: o.first, after: o.after ?? null })))
+    })
+  contentCmd
+    .command('published')
+    .requiredOption('--item <id>', 'content item id')
+    .action(async (o: { item: string }) => {
+      const domain = createDomain(await resolveCtx())
+      out(JSON.stringify(await domain.content.getPublished(o.item)))
     })
   contentCmd
     .command('submit')
@@ -375,7 +506,7 @@ export function buildProgram(opts: BuildProgramOpts = {}): Command {
     .requiredOption('--workspace <id>', 'workspace id')
     .requiredOption('--filename <name>', 'file name')
     .requiredOption('--mime <mime>', 'MIME type')
-    .requiredOption('--size-bytes <n>', 'declared byte size', (v) => parseInt(v, 10))
+    .requiredOption('--size-bytes <n>', 'declared byte size', parsePositiveInteger)
     .action(async (o: { workspace: string; filename: string; mime: string; sizeBytes: number }) => {
       const domain = createDomain(await resolveCtx())
       out(JSON.stringify(await domain.content.issueAssetUpload({
@@ -385,11 +516,93 @@ export function buildProgram(opts: BuildProgramOpts = {}): Command {
         sizeBytes: o.sizeBytes,
       })))
     })
+  contentCmd
+    .command('asset-finalize')
+    .requiredOption('--asset <id>', 'asset id')
+    .requiredOption('--checksum <sha256>', 'uploaded object checksum')
+    .requiredOption('--size-bytes <n>', 'uploaded byte size', parsePositiveInteger)
+    .option('--width <n>', 'image width', parsePositiveInteger)
+    .option('--height <n>', 'image height', parsePositiveInteger)
+    .action(async (o: { asset: string; checksum: string; sizeBytes: number; width?: number; height?: number }) => {
+      const domain = createDomain(await resolveCtx())
+      out(JSON.stringify(await domain.content.finalizeAsset({
+        assetId: o.asset,
+        checksum: o.checksum,
+        sizeBytes: o.sizeBytes,
+        width: o.width,
+        height: o.height,
+      })))
+    })
+  contentCmd
+    .command('collection-create')
+    .requiredOption('--workspace <id>', 'workspace id')
+    .requiredOption('--key <key>', 'collection key')
+    .requiredOption('--label <label>', 'display label')
+    .option('--description <text>', 'description')
+    .action(async (o: { workspace: string; key: string; label: string; description?: string }) => {
+      const domain = createDomain(await resolveCtx())
+      out(JSON.stringify(await domain.content.createCollection({
+        workspaceId: o.workspace,
+        key: o.key,
+        label: o.label,
+        description: o.description,
+      })))
+    })
+  contentCmd
+    .command('collection-add')
+    .requiredOption('--collection <id>', 'collection id')
+    .requiredOption('--item <id>', 'content item id')
+    .option('--position <n>', 'position', parseNonNegativeInteger)
+    .action(async (o: { collection: string; item: string; position?: number }) => {
+      const domain = createDomain(await resolveCtx())
+      await domain.content.addToCollection({ collectionId: o.collection, itemId: o.item, position: o.position })
+      out(JSON.stringify({ ok: true }))
+    })
+  contentCmd
+    .command('collection-reorder')
+    .requiredOption('--collection <id>', 'collection id')
+    .requiredOption('--items <json>', 'ordered JSON array of content item ids')
+    .action(async (o: { collection: string; items: string }) => {
+      const orderedItemIds = parseJsonFlag(o.items, [])
+      if (!Array.isArray(orderedItemIds) || !orderedItemIds.every((id) => typeof id === 'string')) {
+        throw new Error('invalid_item_id_array')
+      }
+      const domain = createDomain(await resolveCtx())
+      await domain.content.reorderCollection({ collectionId: o.collection, orderedItemIds })
+      out(JSON.stringify({ ok: true }))
+    })
+  contentCmd
+    .command('link-asset')
+    .requiredOption('--item <id>', 'content item id')
+    .requiredOption('--asset <id>', 'asset id')
+    .action(async (o: { item: string; asset: string }) => {
+      const domain = createDomain(await resolveCtx())
+      await domain.content.linkAsset({ itemId: o.item, assetId: o.asset })
+      out(JSON.stringify({ ok: true }))
+    })
+  contentCmd
+    .command('link-item')
+    .requiredOption('--item <id>', 'content item id')
+    .requiredOption('--target <id>', 'target content item id')
+    .action(async (o: { item: string; target: string }) => {
+      const domain = createDomain(await resolveCtx())
+      await domain.content.linkItem({ itemId: o.item, targetItemId: o.target })
+      out(JSON.stringify({ ok: true }))
+    })
+  contentCmd
+    .command('link-task')
+    .requiredOption('--item <id>', 'content item id')
+    .requiredOption('--task <id>', 'editorial task id')
+    .action(async (o: { item: string; task: string }) => {
+      const domain = createDomain(await resolveCtx())
+      await domain.content.linkEditorialTask({ itemId: o.item, taskId: o.task })
+      out(JSON.stringify({ ok: true }))
+    })
 
   const workflowsCmd = program.command('workflows').description('Manage workflow automation and webhooks')
   workflowsCmd
     .command('events')
-    .option('--first <n>', 'page size', (v) => parseInt(v, 10))
+    .option('--first <n>', 'page size', parsePositiveInteger)
     .option('--after <cursor>', 'page cursor')
     .action(async (o: { first?: number; after?: string }) => {
       const domain = createDomain(await resolveCtx())
@@ -400,7 +613,7 @@ export function buildProgram(opts: BuildProgramOpts = {}): Command {
   workflowRulesCmd
     .command('list')
     .requiredOption('--workspace <id>', 'workspace id')
-    .option('--first <n>', 'page size', (v) => parseInt(v, 10))
+    .option('--first <n>', 'page size', parsePositiveInteger)
     .option('--after <cursor>', 'page cursor')
     .action(async (o: { workspace: string; first?: number; after?: string }) => {
       const domain = createDomain(await resolveCtx())
@@ -416,7 +629,7 @@ export function buildProgram(opts: BuildProgramOpts = {}): Command {
     .requiredOption('--action-config <json>', 'action config JSON')
     .option('--enabled', 'enable the rule')
     .option('--disabled', 'disable the rule')
-    .option('--priority <n>', 'rule priority', (v) => parseInt(v, 10), 100)
+    .option('--priority <n>', 'rule priority', parseNonNegativeInteger, 100)
     .action(async (o: {
       workspace: string
       id?: string
@@ -444,11 +657,11 @@ export function buildProgram(opts: BuildProgramOpts = {}): Command {
   workflowsCmd
     .command('runs')
     .requiredOption('--workspace <id>', 'workspace id')
-    .option('--first <n>', 'page size', (v) => parseInt(v, 10))
+    .option('--first <n>', 'page size', parsePositiveInteger)
     .option('--after <cursor>', 'page cursor')
     .action(async (o: { workspace: string; first?: number; after?: string }) => {
       const domain = createDomain(await resolveCtx())
-      out(JSON.stringify(await domain.workflow_run.list({ workspaceId: o.workspace, first: o.first, after: o.after ?? null })))
+      out(JSON.stringify(await domain.collection('workflow_run').list({ workspaceId: o.workspace, first: o.first, after: o.after ?? null })))
     })
 
   const workflowWebhookCmd = workflowsCmd.command('webhooks').description('Workflow webhook subscriptions')
@@ -540,7 +753,7 @@ export function buildProgram(opts: BuildProgramOpts = {}): Command {
     .requiredOption('--workspace <id>', 'workspace id')
     .option('--mode <mode>', 'fts (direct PG) | semantic | hybrid (via the GraphQL edge)')
     .option('--collection <name>', 'restrict to a collection')
-    .option('--limit <n>', 'max hits', (v) => parseInt(v, 10))
+    .option('--limit <n>', 'max hits', parsePositiveInteger)
     .action(async (query: string, o: { workspace: string; mode?: string; collection?: string; limit?: number }) => {
       const ctx = await resolveCtx()
       if (o.mode === 'semantic' || o.mode === 'hybrid') {
@@ -619,6 +832,42 @@ export function buildProgram(opts: BuildProgramOpts = {}): Command {
   program.command('codegen').description('Run the codegen pipeline (Plan 2)').action(async () => {
     await runCodegen()
   })
+
+  program
+    .command('verify-schema-runtime')
+    .description('Fail before serve or deploy if Node and Deno schema fingerprints diverge')
+    .requiredOption('--config <path>', 'path to movp.config.mjs')
+    .requiredOption('--deno-config <path>', 'path to deno.json')
+    .requiredOption('--edge-schema <specifier>', 'Edge schema module specifier')
+    .action(async (o: { config: string; denoConfig: string; edgeSchema: string }) => {
+      const { runVerifySchemaRuntime } = await import('./verify-schema-runtime.ts')
+      const result = await runVerifySchemaRuntime({
+        configPath: o.config,
+        denoConfigPath: o.denoConfig,
+        edgeSchemaSpecifier: o.edgeSchema,
+      })
+      if (!result.ok) {
+        throw new Error(
+          `schema_runtime_mismatch: node=${result.nodeFingerprint} deno=${result.denoFingerprint}`,
+        )
+      }
+      out(JSON.stringify({ ok: true, fingerprint: result.nodeFingerprint }))
+    })
+
+  program
+    .command('new-delta <name>')
+    .description('Allocate one additive migration for unowned project collections')
+    .action(async (name: string) => {
+      const { newDelta } = await import('@movp/codegen')
+      const cwd = process.cwd()
+      const created = await newDelta({
+        schema,
+        name,
+        registryPath: `${cwd}/movp.deltas.json`,
+        migrationsDir: `${cwd}/supabase/migrations`,
+      })
+      out(`registered delta ${created.file} owning collections: ${created.collections.join(', ')}`)
+    })
 
   program.command('migrate').description('Codegen then apply via supabase db push').action(async () => {
     await runCodegen()

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { NotificationProvider } from '@movp/notifications'
+import { schema } from '@movp/core-schema'
 import { runFlowsWorker } from '../src/flows-worker.ts'
 
 function fakeDb(notifyJobs: Array<Record<string, unknown>>) {
@@ -44,7 +45,7 @@ describe('runFlowsWorker notify recipient resolution', () => {
       },
     ])
     const { notifier, sent } = fakeNotifier()
-    const res = await runFlowsWorker(db, notifier, 10)
+    const res = await runFlowsWorker(db, notifier, 10, { schema })
     expect(getUserById).toHaveBeenCalledWith('u2')
     expect(getUserById).toHaveBeenCalledTimes(1)
     expect(sent).toHaveLength(1)
@@ -63,7 +64,7 @@ describe('runFlowsWorker notify recipient resolution', () => {
       },
     ])
     const { notifier, sent } = fakeNotifier()
-    await runFlowsWorker(db, notifier, 10)
+    await runFlowsWorker(db, notifier, 10, { schema })
     expect(sent).toHaveLength(1)
     expect(sent[0].to).toBe('owner@example.test')
   })

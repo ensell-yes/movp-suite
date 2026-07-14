@@ -78,6 +78,16 @@ vi.mock('@movp/domain', () => ({
       update: vi.fn(),
       delete: vi.fn(),
     },
+    collection: (name: string) => {
+      if (name !== 'webhook_subscription') throw new Error(`unexpected collection: ${name}`)
+      return {
+        create: vi.fn(),
+        get: vi.fn(),
+        list: mocks.webhookList,
+        update: vi.fn(),
+        delete: vi.fn(),
+      }
+    },
   }),
 }))
 

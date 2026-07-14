@@ -20,6 +20,11 @@ const clamp = (n: number, lo: number, hi: number) => Math.min(Math.max(n, lo), h
 const encodeCursor = (v: string) => btoa(v)
 const decodeCursor = (cursor: string) => atob(cursor)
 
+type ContentDetailQueryRow = ContentItemRow & {
+  type: ContentTypeRow | null
+  current_revision: ContentRevisionRow | null
+}
+
 async function sha256Hex(input: string): Promise<string> {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(input))
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('')
@@ -144,6 +149,12 @@ export function makeContentService(ctx: DomainCtx): ContentService {
     return id
   }
 
+  async function getContentItem(id: string): Promise<ContentItemRow | null> {
+    const { data, error } = await ctx.db.from('content_item').select('*').eq('id', id).maybeSingle()
+    if (error) fail('get', error.code)
+    return (data as ContentItemRow | null) ?? null
+  }
+
   async function prepare(
     fields: FieldDefShape[],
     data: Record<string, unknown>,
@@ -227,10 +238,27 @@ export function makeContentService(ctx: DomainCtx): ContentService {
       return data as ContentItemRow
     },
 
-    async get(id) {
-      const { data, error } = await ctx.db.from('content_item').select('*').eq('id', id).maybeSingle()
-      if (error) fail('get', error.code)
-      return (data as ContentItemRow | null) ?? null
+    get: getContentItem,
+
+    async getDetail(id) {
+      const { data, error } = await ctx.db
+        .from('content_item')
+        .select(`
+          *,
+          type:content_type!content_item_content_type_id_fkey(*),
+          current_revision:content_revision!content_item_current_revision_fk(*)
+        `)
+        .eq('id', id)
+        .maybeSingle()
+      if (error) fail('getDetail', error.code)
+      if (!data) return null
+      const row = data as ContentDetailQueryRow
+      const { type, current_revision, ...item } = row
+      return {
+        item,
+        type,
+        currentRevision: current_revision,
+      }
     },
 
     async list(args) {
