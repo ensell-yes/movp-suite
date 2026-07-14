@@ -109,6 +109,19 @@ jobs:
       - run: pnpm check:packages
       - run: pnpm check:release-preflight
 
+  publishable-versions:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v6
+        with: { version: 9.12.0 }
+      - uses: actions/setup-node@v6
+        with: { node-version: 22, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      # This dependency-free gate must remain runnable before packages are built.
+      - run: pnpm test:version-gate
+      - run: pnpm check:publishable-versions
+
   quickstart:
     runs-on: ubuntu-latest
     timeout-minutes: 30
