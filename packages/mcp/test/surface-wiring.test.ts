@@ -38,6 +38,8 @@ const surfaceSchema = defineSchema({
 })
 const publicCollections = surfaceSchema.collections.filter((collection) => collection.internal !== true)
 const internalCollections = surfaceSchema.collections.filter((collection) => collection.internal === true)
+const realInternalCollections = schema.collections.filter((collection) => collection.internal === true)
+const customInternalCliGroups = new Set(['comment', 'task'])
 
 describe('real-schema generic surface wiring', () => {
   it('resolves every public collection through the real domain registry', () => {
@@ -62,20 +64,32 @@ describe('real-schema generic surface wiring', () => {
       expect(names.has(`${collection.name}.create`), collection.name).toBe(true)
       expect(names.has(`${collection.name}.list`), collection.name).toBe(true)
     }
-    expect(names.has('surface_secret.create')).toBe(false)
+    for (const collection of realInternalCollections) {
+      expect(names.has(`${collection.name}.link`), collection.name).toBe(false)
+    }
+    expect(names.has('surface_secret.link')).toBe(false)
   })
 
   it('exposes every public collection through GraphQL and CLI', () => {
     const graphql = buildSchema(surfaceSchema)
     const queries = graphql.getQueryType()?.getFields() ?? {}
     const mutations = graphql.getMutationType()?.getFields() ?? {}
-    const cliCommands = new Set(buildProgram(surfaceSchema).commands.map((command) => command.name()))
+    const cliProgram = buildProgram(surfaceSchema)
+    const cliCommands = new Set(cliProgram.commands.map((command) => command.name()))
 
     for (const collection of publicCollections) {
       expect(queries[collection.name], collection.name).toBeDefined()
       expect(queries[`${collection.name}s`], collection.name).toBeDefined()
       expect(mutations[`create${pascal(collection.name)}`], collection.name).toBeDefined()
       expect(cliCommands.has(collection.name), collection.name).toBe(true)
+    }
+    for (const collection of realInternalCollections) {
+      expect(mutations[`update${pascal(collection.name)}`], collection.name).toBeUndefined()
+      const expectedCustomCommands = customInternalCliGroups.has(collection.name) ? 1 : 0
+      expect(
+        cliProgram.commands.filter((command) => command.name() === collection.name),
+        collection.name,
+      ).toHaveLength(expectedCustomCommands)
     }
     expect(queries.surface_secret).toBeUndefined()
     expect(cliCommands.has('surface_secret')).toBe(false)
