@@ -80,7 +80,8 @@ Ship the first piece of the C6 productization seam:
   `@movp/*` package). The dist entrypoint (`dist/index.js`) and the full published `exports` map
   (`"."`, `"./package.json"`, `"./migrations/*"`) live ONLY in `publishConfig`, which npm/pnpm apply
   when PACKING the tarball. Validate the PACKED tarball (Task 3 Step 10), not the working tree — a
-  wrong `exports`/`files` combination only manifests after `npm pack` + install.
+  wrong `exports`/`files` combination only manifests after `pnpm pack` + install. `npm pack` does not
+  apply pnpm's publish-field overrides and is therefore not a valid proof for this workspace contract.
 - **Untrusted-I/O at every source read (F6, [[untrusted-io-and-resource-bounds]]).** The platform
   build treats the local `supabase/migrations` tree and any manifest as untrusted at read time:
   `lstat` (reject symlinks) + regular-file + size-bound BEFORE reading any bytes, and never
@@ -690,8 +691,14 @@ function readManifest(dir: string): PlatformManifest {
   if (!info.isFile()) throw new PlatformArtifactError('manifest.json is not a regular file')
   if (info.size > MAX_MANIFEST_BYTES) throw new PlatformArtifactError('manifest.json exceeds size bound')
 
-  const parsed: unknown = JSON.parse(readFileSync(manifestPath, 'utf8'))
-  if (typeof parsed !== 'object' || parsed === null) {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(readFileSync(manifestPath, 'utf8'))
+  } catch {
+    // JSON.parse error messages include input snippets. Never interpolate the parse error or bytes.
+    throw new PlatformArtifactError('manifest.json is not valid JSON')
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
     throw new PlatformArtifactError('manifest.json is not an object')
   }
   const version = (parsed as { platformVersion?: unknown }).platformVersion
@@ -976,6 +983,19 @@ describe('verifyPlatformArtifact', () => {
     writeFileSync(join(dir, 'manifest.json'), huge)
     expect(() => verifyPlatformArtifact(dir)).toThrow(/platform_artifact_invalid/)
   })
+
+  it('rejects malformed JSON without exposing its content', () => {
+    mkdirSync(join(dir, 'migrations'), { recursive: true })
+    writeFileSync(join(dir, 'manifest.json'), 'aws_secret_access_key = SUPERSECRET\n')
+    let message = ''
+    try {
+      verifyPlatformArtifact(dir)
+    } catch (error: unknown) {
+      message = String(error)
+    }
+    expect(message).toMatch(/platform_artifact_invalid/)
+    expect(message).not.toMatch(/SUPERSECRET|aws_secret/)
+  })
 })
 ```
 
@@ -1042,7 +1062,7 @@ describe('buildPlatformArtifact untrusted-I/O guards', () => {
 })
 ```
 
-Re-run — **Expected: PASS** (`verify.test.ts` 7 tests + `build.test.ts` 3 tests = 10):
+Re-run — **Expected: PASS** (`verify.test.ts` 8 tests + `build.test.ts` 3 tests = 11):
 
 ```
 pnpm --filter @movp/platform exec vitest run
@@ -1069,7 +1089,7 @@ the migration artifacts. Run from the repo root:
 set -euo pipefail
 TMP="$(mktemp -d)"
 pnpm --filter @movp/platform build
-TARBALL="$(cd packages/platform && npm pack --pack-destination "$TMP" | tail -n1)"
+TARBALL="$(cd packages/platform && pnpm pack --pack-destination "$TMP" --silent | tail -n1)"
 mkdir -p "$TMP/consumer"
 ( cd "$TMP/consumer" && npm init -y >/dev/null && npm install "$TMP/$TARBALL" \
   && node --input-type=module -e '
@@ -1102,7 +1122,7 @@ pnpm --filter @movp/platform test \
   && node -e "require('node:fs').accessSync('packages/platform/dist/manifest.json'); require('node:fs').accessSync('packages/platform/dist/index.js')"
 ```
 
-**Expected:** suites green (`verify.test.ts` 7 + `build.test.ts` 3 = 10 tests); typecheck green; build
+**Expected:** suites green (`verify.test.ts` 8 + `build.test.ts` 3 = 11 tests); typecheck green; build
 prints the bundle line; `dist/manifest.json` AND `dist/index.js` present. Then run **Step 10's PACKED
 tarball proof** — Expected final line `installed-tarball artifact ok` (this is the load-bearing F1 gate:
 it fails loudly on a wrong `exports`/`files`/`publishConfig`, which the working tree cannot surface).
