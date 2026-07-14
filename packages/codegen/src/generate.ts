@@ -262,7 +262,8 @@ async function generateProject(
       toWrite.push(item)
     } else if (existing !== item.expected) {
       throw new Error(
-        `new_generated_delta_required: ${item.path} is frozen but the current project schema emits different SQL`,
+        `new_generated_delta_required: ${item.path} is frozen but the current project schema emits different SQL; `
+        + 'v1 allocates additive collections/events only, so restore field mutations or removals',
       )
     }
   }

@@ -28,11 +28,13 @@ function utcTimestamp(): string {
 async function existingMigrationOwnership(migrationsDir: string): Promise<{
   collections: Set<string>
   events: Set<string>
+  projectCollections: Set<string>
   generatedDeltas: Array<{ file: string; collections: string[]; events: string[]; body: string }>
 }> {
   const fs = await import('node:fs/promises')
   const collections = new Set<string>()
   const events = new Set<string>()
+  const projectCollections = new Set<string>()
   const generatedDeltas: Array<{ file: string; collections: string[]; events: string[]; body: string }> = []
   const root = await fs.lstat(migrationsDir)
   if (root.isSymbolicLink()) throw new Error(`new_delta_migrations_dir_symlink_rejected: ${migrationsDir}`)
@@ -53,6 +55,7 @@ async function existingMigrationOwnership(migrationsDir: string): Promise<{
     for (const match of sql.matchAll(PROJECT_COLLECTION_MARKER)) {
       if (match[1]) {
         collections.add(match[1])
+        projectCollections.add(match[1])
         fileCollections.push(match[1])
       }
     }
@@ -71,7 +74,7 @@ async function existingMigrationOwnership(migrationsDir: string): Promise<{
       })
     }
   }
-  return { collections, events, generatedDeltas }
+  return { collections, events, projectCollections, generatedDeltas }
 }
 
 async function assertNewMigrationTarget(path: string): Promise<void> {
@@ -93,6 +96,15 @@ export async function newDelta(
   if (!TIMESTAMP.test(timestamp)) throw new Error(`invalid delta timestamp: ${timestamp}`)
   const registry = await loadDeltaRegistry(options.registryPath)
   const existing = await existingMigrationOwnership(options.migrationsDir)
+  const currentCollections = new Set(options.schema.projectCollections.map((collection) => collection.name))
+  const currentEvents = new Set(options.schema.projectEvents.map((event) => event.key))
+  const removedCollections = [...existing.projectCollections].filter((name) => !currentCollections.has(name)).sort()
+  const removedEvents = [...existing.events].filter((key) => !currentEvents.has(key)).sort()
+  if (removedCollections.length > 0 || removedEvents.length > 0) {
+    throw new Error(
+      `project_schema_removal_unsupported: restore removed collections [${removedCollections.join(', ')}] and events [${removedEvents.join(', ')}]; v1 project migrations are additive-only`,
+    )
+  }
   const registeredFiles = new Set(registry.deltas.map((delta) => delta.file))
   const recoverable = existing.generatedDeltas.filter((delta) => !registeredFiles.has(delta.file))
   if (recoverable.length > 0) {
@@ -126,7 +138,9 @@ export async function newDelta(
     .filter((key) => !ownedEvents.has(key))
     .sort()
   if (collections.length === 0 && events.length === 0) {
-    throw new Error(`nothing_to_allocate: no unowned project collection or event for delta "${options.name}"`)
+    throw new Error(
+      `nothing_to_allocate: no unowned project collection or event for delta "${options.name}"; v1 cannot allocate field mutations`,
+    )
   }
   const file = `${timestamp}_movp_generated_${options.name}.sql`
   if (registry.deltas.some((delta) => delta.file === file)) {

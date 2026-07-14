@@ -58,6 +58,18 @@ describe('newDelta', () => {
     })).rejects.toThrow(/nothing_to_allocate/)
   })
 
+  it('rejects project collection removal with an actionable stable code', async () => {
+    const context = await scaffold()
+    await generate({
+      schema: projectSchema([col('deal')]), migrationsDir: context.migrationsDir,
+      migrationName: BASELINE, deltasRegistryPath: context.registryPath,
+    })
+    await expect(newDelta({
+      schema: projectSchema([]), name: 'remove_deal', registryPath: context.registryPath,
+      migrationsDir: context.migrationsDir, timestamp: '20260712145000',
+    })).rejects.toThrow(/project_schema_removal_unsupported.*deal.*additive-only/)
+  })
+
   it('allocates an unowned project event without re-emitting platform events', async () => {
     const context = await scaffold()
     await generate({

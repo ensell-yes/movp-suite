@@ -1,6 +1,6 @@
 import type { CollectionDef, MovpSchema } from '@movp/core-schema'
 import { describe, expect, it } from 'vitest'
-import { emitProjectMetadataPrune, emitProjectMigration } from '../src/emit-sql.ts'
+import { emitProjectMigration } from '../src/emit-sql.ts'
 import { projectEvent, projectSchema } from './project-schema-fixture.ts'
 
 const deal: CollectionDef = {
@@ -42,13 +42,5 @@ describe('project SQL emitters', () => {
       platformEvents: [],
     } as unknown as MovpSchema
     expect(() => emitProjectMigration(malformed)).toThrow(/platform_row_delete_forbidden/)
-  })
-
-  it('prunes only project-layer metadata rows', () => {
-    const sql = emitProjectMetadataPrune(projectSchema([deal]))
-    expect(sql).toContain("delete from public.movp_fields where layer = 'project'")
-    expect(sql).toContain("delete from public.movp_collections where layer = 'project'")
-    expect(sql).toContain("name not in ('deal')")
-    expect(sql).not.toContain("layer = 'platform'")
   })
 })

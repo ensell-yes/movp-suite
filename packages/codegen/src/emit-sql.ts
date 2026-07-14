@@ -496,18 +496,3 @@ export function emitProjectDeltaSql(
   })
   return `${HEADER}\n${projectOwnershipMarkers(collectionDefs, events)}\n${collections.join('\n')}\n${eventCatalogSeedSql(events)}`
 }
-
-export function emitProjectMetadataPrune(schema: MovpSchema): string {
-  for (const collection of schema.projectCollections) assertProjectLayer(collection)
-  const collectionNames = schema.projectCollections.map((collection) => q(collection.name)).sort()
-  const fieldKeys = schema.projectCollections
-    .flatMap((collection) => Object.keys(collection.fields).map(
-      (field) => `(${q(collection.name)}, ${q(field)})`,
-    ))
-    .sort()
-  const collectionList = collectionNames.length > 0 ? collectionNames.join(', ') : "''"
-  const fieldList = fieldKeys.length > 0 ? fieldKeys.join(', ') : '(null, null)'
-  return `
-delete from public.movp_fields where layer = 'project' and (collection_name, name) not in (${fieldList});
-delete from public.movp_collections where layer = 'project' and name not in (${collectionList});`
-}

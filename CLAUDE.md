@@ -66,10 +66,15 @@
 
 ## Schema Productization
 
-- `defineSchema({ extends })` is the ownership boundary: inherited collections/events are
-  `platform`, while locally declared collections/events are `project`. Downstream codegen emits
-  only `projectCollections` and `projectEvents`; platform objects come exclusively from
-  `@movp/platform`.
+- `defineSchema({ extends })` is the ownership boundary: a root schema is `platform`, locally
+  declared extensions are `project`, and nested composition preserves the inherited layer.
+  Downstream codegen emits only `projectCollections` and `projectEvents`; platform objects come
+  exclusively from `@movp/platform`.
+- V1 project migration generation is additive for collections/events. Collection/event removal
+  fails with `project_schema_removal_unsupported`; field mutation/removal fails immutable-file
+  comparison. Automatic metadata pruning is deferred until historical definitions are persisted.
+- `schemaFingerprint` remains the DB-metadata hash used by manifests. Runtime parity uses
+  `runtimeFingerprint`, which additionally covers `internal`, full field semantics, and events.
 - Runtime packages receive a `MovpSchema`; they do not import the platform schema internally.
   Monorepo and Edge Function entrypoints import `@movp/core-schema` and inject it into CLI, domain,
   GraphQL, MCP, and flows. Preserve `packages/flows/test/schema-injection.test.ts` and the real-schema

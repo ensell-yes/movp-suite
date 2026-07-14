@@ -2,7 +2,6 @@ export {
   emitCollectionSql,
   emitDeltaSql,
   emitProjectDeltaSql,
-  emitProjectMetadataPrune,
   emitProjectMigration,
   emitSharedInfraSql,
   emitSqlMigration,

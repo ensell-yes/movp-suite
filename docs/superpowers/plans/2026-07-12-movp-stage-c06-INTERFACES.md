@@ -56,9 +56,9 @@ Companion to the design spec `2026-07-12-movp-stage-c06-templates-scaffolding-de
 
 ## Cross-runtime guard (06b)
 
-- CLI command `movp verify-schema-runtime`: Node imports `movp.config.mjs` → `schemaFingerprint`;
+- CLI command `movp verify-schema-runtime`: Node imports `movp.config.mjs` → `runtimeFingerprint`;
   spawns `deno run` with the scaffold's `deno.json` importing the Edge schema module →
-  `schemaFingerprint`; compares; exits non-zero with stable code `schema_runtime_mismatch` on
+  `runtimeFingerprint`; compares; exits non-zero with stable code `schema_runtime_mismatch` on
   divergence, `0` on match.
 
 ## Project codegen: deltas + manifest (06c)
@@ -70,8 +70,10 @@ Companion to the design spec `2026-07-12-movp-stage-c06-templates-scaffolding-de
   owning `movp.deltas.json` entry → exit non-zero with stable code `new_generated_delta_required`,
   ZERO file writes. CLI `movp new-delta <name>` appends a registry entry and emits exactly one
   additive `<ts>_movp_generated_<name>.sql`.
-- Project codegen emits DDL/metadata for `layer='project'` collections ONLY; deletes only
-  `layer='project'` metadata rows absent from the project schema; never touches `layer='platform'`.
+- Project codegen emits DDL/metadata for `layer='project'` collections ONLY and never touches
+  `layer='platform'`. V1 is additive-only: collection/event removal fails with
+  `project_schema_removal_unsupported`; field mutation fails frozen-file comparison and must be
+  restored. Metadata pruning is deferred until immutable historical definitions are available.
 - Manifest `movp.schema.json`:
   `{ manifestVersion: 1, generatorVersion: string, schemaFingerprint: string,
      collections: [{ name, internal, label, workspaceScoped, layer,
@@ -99,7 +101,7 @@ Companion to the design spec `2026-07-12-movp-stage-c06-templates-scaffolding-de
   `collectionMetadataSql` layer-aware (writes `layer='project'` only for `layer:'project'`
   collections; byte-identical for platform). C6c REUSES it (no duplicate `emitProjectCollectionSql`);
   C6c owns `emitProjectMigration`/`emitProjectDeltaSql` (call the shared emitter, guard
-  `platform_row_delete_forbidden`) + `emitProjectMetadataPrune`.
+  `platform_row_delete_forbidden`).
 - **Version bump (06d owns).** The `0.0.0 → 0.1.0` bump across publishable `@movp/*` + `@movp/platform`
   happens in C6d (before the Verdaccio publish). 06a's `platformVersion` starts `0.0.0`; 06d bumps it.
 

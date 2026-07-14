@@ -26,7 +26,7 @@
 
 - Create `packages/codegen/src/safe-write.ts` — the ONE shared `atomicWriteFile` helper (F1, Task 1).
 - Create `packages/codegen/src/deltas-registry.ts` — `movp.deltas.json` types + validated loader (Task 1).
-- Modify `packages/codegen/src/emit-sql.ts` — add project-scoped emitters + prune guard (Task 2).
+- Modify `packages/codegen/src/emit-sql.ts` — add project-scoped emitters (Task 2).
 - Modify `packages/codegen/src/generate.ts` — add project-mode branch keyed on `deltasRegistryPath` (Task 3).
 - Create `packages/codegen/src/new-delta.ts` — allocate ownership + emit one additive migration (Task 4); wire `@movp/cli`.
 - Create `packages/codegen/src/emit-manifest.ts` — `movp.schema.json` emitter (Task 5).
@@ -326,7 +326,7 @@ git commit -m "feat(codegen): C6c.1 atomicWriteFile helper + validated movp.delt
 
 ---
 
-### Task 2: Project-scoped SQL emitters (reuse C6a layer-aware emitter) + prune guard
+### Task 2: Project-scoped SQL emitters (reuse C6a layer-aware emitter)
 
 **Files:**
 - Modify: `packages/codegen/src/emit-sql.ts` (add project wrappers only; C6a already made `emitCollectionSql`/`collectionMetadataSql` layer-aware — do NOT re-implement metadata emission)
@@ -340,8 +340,6 @@ git commit -m "feat(codegen): C6c.1 atomicWriteFile helper + validated movp.delt
 - Produces:
   - `emitProjectMigration(schema, opts?): string` — emits ONLY `schema.projectCollections` (minus `opts.excludeCollections`) via the shared `emitCollectionSql`, plus owned event seeds; NO `emitSharedInfraSql()` (platform owns the metadata tables). Asserts every emitted collection is `layer==='project'` and throws `platform_row_delete_forbidden` otherwise (guard lives here, at the emit boundary).
   - `emitProjectDeltaSql(schema, owned): string` — project counterpart of `emitDeltaSql`, calling the shared `emitCollectionSql` for each owned project collection.
-  - `emitProjectMetadataPrune(schema): string` — emits `delete ... where layer = 'project' and <key> not in (...)` for `movp_collections`/`movp_fields`, deleting ONLY stale project rows. Never emits an unguarded delete.
-
   (There is deliberately NO `emitProjectCollectionSql`: the shared, C6a layer-aware `emitCollectionSql` is the single source of per-collection DDL+metadata for both tiers — DRY.)
 
 - [ ] **Step 1: Write the failing test**
@@ -351,7 +349,6 @@ git commit -m "feat(codegen): C6c.1 atomicWriteFile helper + validated movp.delt
 import { describe, expect, it } from 'vitest'
 import type { CollectionDef, MovpSchema } from '@movp/core-schema'
 import {
-  emitProjectMetadataPrune,
   emitProjectMigration,
 } from '../src/emit-sql.ts'
 
@@ -394,15 +391,6 @@ describe('emitProjectMigration reuses the C6a layer-aware shared emitter', () =>
   it('refuses to emit a platform-layer collection on the project path', () => {
     expect(() => emitProjectMigration(projectSchema([platformNote]))).toThrow(/platform_row_delete_forbidden/)
   })
-
-  it('prune deletes only layer=project rows and lists current project keys', () => {
-    const sql = emitProjectMetadataPrune(projectSchema([deal]))
-    expect(sql).toContain("delete from public.movp_fields where layer = 'project'")
-    expect(sql).toContain("delete from public.movp_collections where layer = 'project'")
-    expect(sql).toContain("name not in ('deal')")
-    // The guard clause is structural: platform rows can never match the predicate.
-    expect(sql).not.toContain("layer = 'platform'")
-  })
 })
 ```
 
@@ -419,8 +407,7 @@ Append to `packages/codegen/src/emit-sql.ts` (reuses existing private helpers `q
 // --- C6c: project-scoped emitters. Project codegen owns layer='project' rows ONLY. ---
 
 function assertProjectLayer(c: CollectionDef): void {
-  // Emitting a project migration for a platform collection would let the prune below
-  // delete a platform-owned row. Reject it hard at the emit boundary.
+  // Reject platform ownership on the project emit path.
   if (c.layer !== 'project') throw new Error(`platform_row_delete_forbidden: collection "${c.name}" is layer="${c.layer}"`)
 }
 
@@ -458,20 +445,6 @@ export function emitProjectDeltaSql(
   return `${HEADER}\n${collections.join('\n')}\n${eventCatalogSeedSql(events)}`
 }
 
-export function emitProjectMetadataPrune(schema: MovpSchema): string {
-  for (const c of schema.projectCollections) assertProjectLayer(c)
-  const collectionNames = schema.projectCollections.map((c) => q(c.name)).sort()
-  const fieldKeys = schema.projectCollections
-    .flatMap((c) => Object.keys(c.fields).map((f) => `(${q(c.name)}, ${q(f)})`))
-    .sort()
-  const collectionList = collectionNames.length ? collectionNames.join(', ') : "''"
-  const fieldList = fieldKeys.length ? fieldKeys.join(', ') : "(null, null)"
-  // The `where layer = 'project'` clause is load-bearing: it makes it structurally
-  // impossible to delete a platform-owned row, even if a key were miscomputed.
-  return `
-delete from public.movp_fields where layer = 'project' and (collection_name, name) not in (${fieldList});
-delete from public.movp_collections where layer = 'project' and name not in (${collectionList});`
-}
 ```
 
 Add to `packages/codegen/src/index.ts`:
@@ -479,7 +452,6 @@ Add to `packages/codegen/src/index.ts`:
 ```ts
 export {
   emitProjectDeltaSql,
-  emitProjectMetadataPrune,
   emitProjectMigration,
 } from './emit-sql.ts'
 ```
@@ -493,10 +465,10 @@ Expected: PASS — 3 new tests + the existing 33 generate.test.ts cases still gr
 
 ```bash
 git add packages/codegen/src/emit-sql.ts packages/codegen/test/emit-project-sql.test.ts packages/codegen/src/index.ts
-git commit -m "feat(codegen): C6c.2 project-scoped emitters with layer=project + prune guard"
+git commit -m "feat(codegen): C6c.2 project-scoped emitters with layer=project guard"
 ```
 
-**Gate:** `pnpm --filter @movp/codegen exec vitest run test/emit-project-sql.test.ts test/generate.test.ts` PASS. A platform-layer collection on the project path throws `platform_row_delete_forbidden`; the prune's delete predicate always carries `layer = 'project'`.
+**Gate:** `pnpm --filter @movp/codegen exec vitest run test/emit-project-sql.test.ts test/generate.test.ts` PASS. A platform-layer collection on the project path throws `platform_row_delete_forbidden`.
 
 ---
 
@@ -1724,7 +1696,7 @@ git commit -m "test(codegen): C6c.8 live DB-reset metadata consistency gate (F7)
 
 ## Self-Review
 
-**Spec coverage:** Immutable deltas / compare-before-write / no-delete (Task 3); project-local `movp.deltas.json` (Task 1); `new_generated_delta_required` + zero writes (Task 3, 7); `movp new-delta` one additive migration (Task 4); `layer='project'`-only emit + prune + `platform_row_delete_forbidden` (Task 2); manifest exact shape + `schemaFingerprint` from 06b (Task 5); consistency comparator with missing/altered/stale stable ids (Task 6) AND a live DB-reset gate proving both directions (Task 8, F7 — the signal 06f consumes); acceptance slice (Task 7). Locked-resolution conformance: `generate({schema})` schema is REQUIRED with no default (F4, Task 3, pinned by a `@ts-expect-error` test); `saveDeltaRegistry`/manifest writes use the untrusted-I/O safe-write pattern with least-privilege mode (F6, Task 1/5). Forward-only guard: the monorepo `scripts/check-forward-only-migrations.mjs` is reused by scaffolds (06d ships it); C6c's byte-stability gates (Tasks 3/7) are the codegen-side enforcement.
+**Spec coverage:** Immutable deltas / compare-before-write / no-delete (Task 3); project-local `movp.deltas.json` (Task 1); `new_generated_delta_required` + zero writes (Task 3, 7); `movp new-delta` one additive migration (Task 4); `layer='project'`-only emit + `platform_row_delete_forbidden` (Task 2); manifest exact shape + `schemaFingerprint` from 06b (Task 5); consistency comparator with missing/altered/stale stable ids (Task 6) AND a live DB-reset gate proving both directions (Task 8, F7 — the signal 06f consumes); acceptance slice (Task 7). V1 removal/pruning is explicitly deferred: collection/event removal throws `project_schema_removal_unsupported`, while field mutation/removal must be restored after immutable-file refusal. Locked-resolution conformance: `generate({schema})` schema is REQUIRED with no default (F4, Task 3, pinned by a `@ts-expect-error` test); `saveDeltaRegistry`/manifest writes use the untrusted-I/O safe-write pattern with least-privilege mode (F6, Task 1/5). Forward-only guard: the monorepo `scripts/check-forward-only-migrations.mjs` is reused by scaffolds (06d ships it); C6c's byte-stability gates (Tasks 3/7) are the codegen-side enforcement.
 
 **Type consistency:** `DeltaRegistry`/`DeltaRegistryEntry`, `SchemaManifest`/`ManifestCollection`/`ManifestField`, `MetadataDbState`/`MetadataConsistencyCode` used identically across tasks. `generate` project branch keyed on `deltasRegistryPath`; `emitProjectMigration`/`emitProjectDeltaSql` names match between Task 2 and Task 3.
 

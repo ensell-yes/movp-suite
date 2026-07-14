@@ -66,7 +66,7 @@ monorepo becomes their first consumer (dogfooding) and must stay 100% green thro
   the **project layer owns only its extension collections**. Project codegen emits DDL/metadata for
   **extensions only**, never re-emitting or deleting platform objects. To make ownership
   enforceable, `movp_collections`/`movp_fields` gain a **`layer` marker** (`platform` | `project`)
-  so codegen can distinguish the two tiers at the row level (consumed by C6c's stale-row rule).
+  so codegen and consistency checks can distinguish the two tiers at the row level.
   (Current `defineSchema` produces a single aggregate, `schema.ts:50`, and codegen emits every
   supplied collection, `generate.ts:139` — this part adds the platform/extension split + marker.)
 - Gates: (1) a **committed minimal consumer fixture** (installs `@movp/platform` + a tiny
@@ -112,17 +112,17 @@ monorepo becomes their first consumer (dogfooding) and must stay 100% green thro
 - **Versioned manifest** `movp.schema.json`: `{manifestVersion, generatorVersion, schemaFingerprint,
   collections:[{name, internal, label, workspaceScoped, layer,
   fields:[{name, type, label, cardinality, reporting_role, searchable, embeddable}]}]}`,
-  deterministic. `schemaFingerprint` is the **C6b canonical-projection hash**, serialized here (not
-  defined here) so runtime and manifest agree by construction.
+  deterministic. `schemaFingerprint` hashes the DB-exact metadata projection. The cross-runtime
+  guard separately uses `runtimeFingerprint`, which also covers exposure, full field semantics,
+  and events.
 - **Consistency contract (ownership-scoped).** Define a named **`metadataProjection`** = exactly the
   DB-compared columns: `movp_collections` (name, label, label_plural, workspace_scoped, layer) and
   `movp_fields` (collection_name, name, type, label, cardinality, reporting_role, searchable,
   embeddable, layer) — `emit-sql.ts:7,11`. `internal` is **manifest-only runtime metadata** (not a
-  DB column, not compared). Because codegen upserts metadata without deleting stale rows
-  (`emit-sql.ts:9`), the emitter MUST **delete only `layer='project'` rows** absent from the current
-  project schema — **platform rows are never touched** (per C6a). Removing a *project* field/
-  collection is an **explicit logical deprecation or a rejected breaking change**, never a silent
-  drop; removing a *platform* field/collection is rejected (it belongs to a platform release).
+  DB column, not compared). V1 project migrations are **additive collections/events only**:
+  removing a collection/event fails with `project_schema_removal_unsupported`; field mutation or
+  removal fails frozen-file comparison with recovery guidance. Automatic metadata pruning is
+  deferred until immutable historical definitions are available. Platform rows are never touched.
 - Gates: scaffold → `db reset` → add a collection → regenerate → baseline + **every prior delta**
   byte-identical, exactly one additive migration added, none removed; manifest snapshot; a `db reset`
   consistency assertion where missing / altered / EXTRA(stale) rows each fail with a **stable error id**.
@@ -168,7 +168,7 @@ monorepo becomes their first consumer (dogfooding) and must stay 100% green thro
 |---|---|
 | C6a | Committed consumer fixture `db reset` green, no source-repo paths; reordered/missing/digest-mismatch platform artifact rejected; fixture extension emits only its own DDL, platform metadata (`layer='platform'`) byte-intact after removing an extension field |
 | C6b | Monorepo green with injected schema; novel-public + internal:true fixture → only public reaches generic CLI/GraphQL/MCP; `movp verify-schema-runtime` spawns Deno and fails a Deno-only schema change with `schema_runtime_mismatch` before startup (pure fingerprint, no manifest) |
-| C6c | Baseline + every delta byte-identical on regenerate; unowned extension change → `new_generated_delta_required` + **zero writes**, `movp new-delta` → exactly one additive migration; manifest snapshot; `metadataProjection` consistency (incl. `label`; `layer='project'`-only stale-row delete) with stable error ids for missing/altered/extra rows |
+| C6c | Baseline + every delta byte-identical on regenerate; unowned extension change → `new_generated_delta_required` + **zero writes**, `movp new-delta` → exactly one additive migration; unsupported removals fail loudly; manifest snapshot; `metadataProjection` consistency with stable error ids for missing/altered/extra rows |
 | C6d | Scaffold CRM-lite → Verdaccio install (no workspace links) → `db reset` → start real GraphQL + MCP edge fns → authenticated HTTP GraphQL + streamable-MCP + CLI create/list green; copier rejects unsafe inputs |
 | C6e | CI matrix over all 4 templates green (pack once) |
 | C6f | Docs build in CI; manifest/DB consistency gate |
@@ -177,8 +177,8 @@ monorepo becomes their first consumer (dogfooding) and must stay 100% green thro
 
 - **The `layer` marker is itself a platform migration** (C6a): adding `layer` to
   `movp_collections`/`movp_fields` is a new forward-only platform migration that backfills existing
-  rows to `layer='platform'`; sequence it into the platform release stream before the C6c stale-row
-  rule can rely on it.
+  rows to `layer='platform'`; sequence it into the platform release stream before C6c ownership
+  checks can rely on it.
 - **Deno `npm:@movp/*` resolution** needs an actual edge-runtime smoke (not typecheck): some deps
   (Node built-ins) may not resolve under Deno `npm:` compat — validate early in C6b.
 - **Version bump blast radius.** `0.0.0 → 0.1.0` across publishable packages + `check-release-preflight`;
