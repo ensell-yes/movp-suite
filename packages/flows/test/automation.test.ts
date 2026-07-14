@@ -1,7 +1,19 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { dispatchWorkflowAction } from '../src/actions.ts'
-import { runAutomationWorker, type WorkflowActionDispatcher } from '../src/automation.ts'
+import { schema } from '@movp/core-schema'
+import { dispatchWorkflowAction as dispatchWorkflowActionWithSchema } from '../src/actions.ts'
+import { runAutomationWorker as runAutomationWorkerWithSchema, type WorkflowActionDispatcher } from '../src/automation.ts'
+
+const dispatchWorkflowAction = (
+  db: SupabaseClient,
+  input: Parameters<typeof dispatchWorkflowActionWithSchema>[1],
+) => dispatchWorkflowActionWithSchema(db, input, { schema })
+
+const runAutomationWorker = (
+  db: SupabaseClient,
+  limit = 10,
+  opts: { dispatch?: WorkflowActionDispatcher } = {},
+) => runAutomationWorkerWithSchema(db, limit, { schema, ...opts })
 
 type Row = Record<string, unknown>
 

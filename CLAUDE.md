@@ -64,6 +64,19 @@
 - Agent-facing auth codes are `missing_token`, `invalid_token`, `expired_token`, and
   `invalid_claims`. A revoked PAT maps to `invalid_token` at every public boundary.
 
+## Schema Productization
+
+- `defineSchema({ extends })` is the ownership boundary: inherited collections/events are
+  `platform`, while locally declared collections/events are `project`. Downstream codegen emits
+  only `projectCollections` and `projectEvents`; platform objects come exclusively from
+  `@movp/platform`.
+- Runtime packages receive a `MovpSchema`; they do not import the platform schema internally.
+  Monorepo and Edge Function entrypoints import `@movp/core-schema` and inject it into CLI, domain,
+  GraphQL, MCP, and flows. Preserve `packages/flows/test/schema-injection.test.ts` and the real-schema
+  surface gate when adding a new collection or runtime consumer.
+- `@movp/platform` validates the artifact root and migrations directory with `lstat` before any
+  enumeration. Never move a `readdir` ahead of those guards or follow a symlinked migration root.
+
 ## Task/CMS Agent Contracts
 
 - Consumer contracts live in `docs/agents/task-cms-{data-contract,interface-contract,scaffolding}.md` and

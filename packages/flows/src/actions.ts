@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { schema } from '@movp/core-schema'
+import type { MovpSchema } from '@movp/core-schema'
 import { createDomain } from '@movp/domain'
 import { enqueueJob } from './jobs.ts'
 import type { ActionResult, AutomationRuleRow, MovpInternalEvent } from './automation.ts'
@@ -143,6 +143,7 @@ async function enqueueSubscriptionWebhook(
 
 async function createTaskForWorkspace(
   db: SupabaseClient,
+  schema: MovpSchema,
   workspaceId: string,
   event: MovpInternalEvent,
   cfg: Record<string, unknown>,
@@ -241,6 +242,7 @@ export async function dispatchWorkflowAction(
     rule: AutomationRuleRow
     dedupeKey: string
   },
+  opts: { schema: MovpSchema },
 ): Promise<ActionResult> {
   const cfg = resolveActionConfig(input.rule.action_config as Record<string, unknown>, input.event)
   if (typeof cfg.workspaceId === 'string' && cfg.workspaceId !== input.workspaceId) {
@@ -252,7 +254,7 @@ export async function dispatchWorkflowAction(
     case 'deliver_webhook':
       return enqueueSubscriptionWebhook(db, input.workspaceId, cfg.subscriptionId, input.event, input.dedupeKey)
     case 'create_task':
-      return createTaskForWorkspace(db, input.workspaceId, input.event, cfg, input.dedupeKey)
+      return createTaskForWorkspace(db, opts.schema, input.workspaceId, input.event, cfg, input.dedupeKey)
     case 'advance_deliverable':
       return advanceDeliverableForWorkspace(db, input.workspaceId, cfg.deliverableId)
     case 'recompute_segment':
