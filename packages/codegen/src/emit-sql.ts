@@ -444,3 +444,58 @@ export function emitDeltaSql(
   }
   return `${HEADER}\n${collections.join('\n')}\n${eventCatalogSeedSql(events)}`
 }
+
+function assertProjectLayer(collection: CollectionDef): void {
+  if (collection.layer !== 'project') {
+    throw new Error(
+      `platform_row_delete_forbidden: collection "${collection.name}" is layer="${collection.layer}"`,
+    )
+  }
+}
+
+export function emitProjectMigration(
+  schema: MovpSchema,
+  opts: { excludeCollections?: readonly string[]; excludeEvents?: readonly string[] } = {},
+): string {
+  const excludedCollections = new Set(opts.excludeCollections ?? [])
+  const excludedEvents = new Set(opts.excludeEvents ?? [])
+  const collections = schema.projectCollections.filter(
+    (collection) => !excludedCollections.has(collection.name),
+  )
+  for (const collection of collections) assertProjectLayer(collection)
+  const events = schema.events.filter((event) => !excludedEvents.has(event.key))
+  return `${HEADER}\n${collections.map(emitCollectionSql).join('\n')}\n${eventCatalogSeedSql(events)}`
+}
+
+export function emitProjectDeltaSql(
+  schema: MovpSchema,
+  owned: { collections?: readonly string[]; events?: readonly string[] },
+): string {
+  const collections = (owned.collections ?? []).map((name) => {
+    const collection = schema.projectCollections.find((entry) => entry.name === name)
+    if (!collection) throw new Error(`delta collection not registered: ${name}`)
+    assertProjectLayer(collection)
+    return emitCollectionSql(collection)
+  })
+  const eventKeys = new Set(owned.events ?? [])
+  const events = schema.events.filter((event) => eventKeys.has(event.key))
+  for (const key of owned.events ?? []) {
+    if (!events.some((event) => event.key === key)) throw new Error(`delta event not registered: ${key}`)
+  }
+  return `${HEADER}\n${collections.join('\n')}\n${eventCatalogSeedSql(events)}`
+}
+
+export function emitProjectMetadataPrune(schema: MovpSchema): string {
+  for (const collection of schema.projectCollections) assertProjectLayer(collection)
+  const collectionNames = schema.projectCollections.map((collection) => q(collection.name)).sort()
+  const fieldKeys = schema.projectCollections
+    .flatMap((collection) => Object.keys(collection.fields).map(
+      (field) => `(${q(collection.name)}, ${q(field)})`,
+    ))
+    .sort()
+  const collectionList = collectionNames.length > 0 ? collectionNames.join(', ') : "''"
+  const fieldList = fieldKeys.length > 0 ? fieldKeys.join(', ') : '(null, null)'
+  return `
+delete from public.movp_fields where layer = 'project' and (collection_name, name) not in (${fieldList});
+delete from public.movp_collections where layer = 'project' and name not in (${collectionList});`
+}
