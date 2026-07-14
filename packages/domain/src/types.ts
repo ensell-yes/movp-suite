@@ -1,9 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type {
   AssetRow,
-  AutomationRuleCreate,
   AutomationRuleRow,
-  AutomationRuleUpdate,
   CommentRow,
   ContentApprovalRow,
   ContentCollectionRow,
@@ -12,50 +10,9 @@ import type {
   ContentScheduleRow,
   ContentSeoRow,
   ContentTypeRow,
-  CampaignCalendarEventCreate,
-  CampaignCalendarEventRow,
-  CampaignCalendarEventUpdate,
-  CampaignChannelCreate,
-  CampaignChannelRow,
-  CampaignChannelUpdate,
   CampaignCreate,
-  CampaignDeliverableCreate,
-  CampaignDeliverableRow,
-  CampaignDeliverableUpdate,
-  CampaignMetricCreate,
-  CampaignMetricRow,
-  CampaignMetricUpdate,
   CampaignRow,
-  CampaignSegmentCreate,
-  CampaignSegmentRow,
-  CampaignSegmentUpdate,
-  EventTypeCreate,
   EventTypeRow,
-  EventTypeUpdate,
-  ExternalRecordCreate,
-  ExternalRecordRow,
-  ExternalRecordUpdate,
-  PlatformEventCreate,
-  PlatformEventRow,
-  PlatformEventUpdate,
-  SegmentCreate,
-  SegmentMembershipCreate,
-  SegmentMembershipRow,
-  SegmentMembershipUpdate,
-  SegmentRecomputeRunCreate,
-  SegmentRecomputeRunRow,
-  SegmentRecomputeRunUpdate,
-  SegmentRow,
-  SegmentRuleCreate,
-  SegmentRuleRow,
-  SegmentRuleUpdate,
-  SegmentSnapshotCreate,
-  SegmentSnapshotMemberCreate,
-  SegmentSnapshotMemberRow,
-  SegmentSnapshotMemberUpdate,
-  SegmentSnapshotRow,
-  SegmentSnapshotUpdate,
-  SegmentUpdate,
   CampaignUpdate,
   MarketingPlanCreate,
   MarketingPlanRow,
@@ -74,15 +31,8 @@ import type {
   TaskDependencyRow,
   TaskObserverRow,
   TaskRow,
-  TaskStatusOptionCreate,
   TaskStatusOptionRow,
-  TaskStatusOptionUpdate,
-  WebhookSubscriptionCreate,
   WebhookSubscriptionRow,
-  WebhookSubscriptionUpdate,
-  WorkflowRunCreate,
-  WorkflowRunRow,
-  WorkflowRunUpdate,
 } from './generated/types.ts'
 
 export interface DomainCtx {
@@ -420,28 +370,7 @@ export interface ReportingService {
 }
 
 export interface Domain {
-  event_type: CollectionService<EventTypeRow, EventTypeCreate, EventTypeUpdate>
-  external_record: CollectionService<ExternalRecordRow, ExternalRecordCreate, ExternalRecordUpdate>
-  note: CollectionService<NoteRow, NoteCreate, NoteUpdate>
-  tag: CollectionService<TagRow, TagCreate, TagUpdate>
-  marketing_plan: CollectionService<MarketingPlanRow, MarketingPlanCreate, MarketingPlanUpdate>
-  task_status_option: CollectionService<TaskStatusOptionRow, TaskStatusOptionCreate, TaskStatusOptionUpdate>
-  task_priority_option: CollectionService<TaskPriorityOptionRow, TaskPriorityOptionCreate, TaskPriorityOptionUpdate>
-  campaign_channel: CollectionService<CampaignChannelRow, CampaignChannelCreate, CampaignChannelUpdate>
-  campaign_deliverable: CollectionService<CampaignDeliverableRow, CampaignDeliverableCreate, CampaignDeliverableUpdate>
-  campaign_calendar_event: CollectionService<CampaignCalendarEventRow, CampaignCalendarEventCreate, CampaignCalendarEventUpdate>
-  campaign_metric: CollectionService<CampaignMetricRow, CampaignMetricCreate, CampaignMetricUpdate>
-  campaign_segment: CollectionService<CampaignSegmentRow, CampaignSegmentCreate, CampaignSegmentUpdate>
-  platform_event: CollectionService<PlatformEventRow, PlatformEventCreate, PlatformEventUpdate>
-  segment: CollectionService<SegmentRow, SegmentCreate, SegmentUpdate>
-  segment_rule: CollectionService<SegmentRuleRow, SegmentRuleCreate, SegmentRuleUpdate>
-  segment_membership: CollectionService<SegmentMembershipRow, SegmentMembershipCreate, SegmentMembershipUpdate>
-  segment_snapshot: CollectionService<SegmentSnapshotRow, SegmentSnapshotCreate, SegmentSnapshotUpdate>
-  segment_snapshot_member: CollectionService<SegmentSnapshotMemberRow, SegmentSnapshotMemberCreate, SegmentSnapshotMemberUpdate>
-  segment_recompute_run: CollectionService<SegmentRecomputeRunRow, SegmentRecomputeRunCreate, SegmentRecomputeRunUpdate>
-  automation_rule: CollectionService<AutomationRuleRow, AutomationRuleCreate, AutomationRuleUpdate>
-  webhook_subscription: CollectionService<WebhookSubscriptionRow, WebhookSubscriptionCreate, WebhookSubscriptionUpdate>
-  workflow_run: CollectionService<WorkflowRunRow, WorkflowRunCreate, WorkflowRunUpdate>
+  collection(name: string): CollectionService<{ id: string } & Record<string, unknown>, Record<string, unknown>, Record<string, unknown>>
   task: TaskService
   content: ContentService
   search(a: SearchArgs): Promise<SearchHit[]>

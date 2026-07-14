@@ -1,4 +1,5 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
+import { schema } from '@movp/core-schema'
 import { describe, expect, it } from 'vitest'
 import { createDomain, type EmbeddingProvider } from '../src/index.ts'
 
@@ -83,39 +84,39 @@ describe('domain integration', () => {
     const db = userClient(accessToken)
     const adminDb = serviceClient()
     const embedder = new FakeEmbedder()
-    const domain = createDomain({ db, userId }, { embedder })
+    const domain = createDomain({ db, userId }, { schema, embedder })
 
-    const note = await domain.note.create({
+    const note = await domain.collection('note').create({
       workspace_id: workspaceId,
       title: 'E2E note',
       body: 'semantic lighthouse phrase for domain verification',
     })
     expect(note.workspace_id).toBe(workspaceId)
-    expect((await domain.note.get(note.id))?.title).toBe('E2E note')
+    expect((await domain.collection('note').get(note.id))?.title).toBe('E2E note')
 
-    const externalRecord = await domain.external_record.create({
+    const externalRecord = await domain.collection('external_record').create({
       workspace_id: workspaceId,
       source: 'hubspot',
       external_id: 'domain-contact-1',
       payload: { stage: 'lead' },
     })
-    expect((await domain.external_record.get(externalRecord.id))?.payload).toEqual({ stage: 'lead' })
+    expect((await domain.collection('external_record').get(externalRecord.id))?.payload).toEqual({ stage: 'lead' })
 
-    const updated = await domain.note.update(note.id, { status: 'published' })
+    const updated = await domain.collection('note').update(note.id, { status: 'published' })
     expect(updated.status).toBe('published')
 
-    const second = await domain.note.create({ workspace_id: workspaceId, title: 'Second note', body: 'ordinary text' })
-    const firstPage = await domain.note.list({ workspaceId: workspaceId, first: 1 })
+    const second = await domain.collection('note').create({ workspace_id: workspaceId, title: 'Second note', body: 'ordinary text' })
+    const firstPage = await domain.collection('note').list({ workspaceId: workspaceId, first: 1 })
     expect(firstPage.items).toHaveLength(1)
     expect(firstPage.nextCursor).toEqual(expect.any(String))
-    const secondPage = await domain.note.list({ workspaceId: workspaceId, first: 2, after: firstPage.nextCursor })
+    const secondPage = await domain.collection('note').list({ workspaceId: workspaceId, first: 2, after: firstPage.nextCursor })
     const listedIds = [...firstPage.items, ...secondPage.items].map((row) => row.id)
     expect(listedIds).toEqual(expect.arrayContaining([note.id, second.id]))
 
-    await expect(domain.note.create({ workspace_id: otherWorkspaceId, title: 'Denied by RLS' })).rejects.toThrow(
+    await expect(domain.collection('note').create({ workspace_id: otherWorkspaceId, title: 'Denied by RLS' })).rejects.toThrow(
       /domain\.note\.create failed/,
     )
-    await expect(domain.note.list({ workspaceId: otherWorkspaceId, first: 5 })).resolves.toMatchObject({ items: [] })
+    await expect(domain.collection('note').list({ workspaceId: otherWorkspaceId, first: 5 })).resolves.toMatchObject({ items: [] })
 
     const fts = await domain.search({ workspaceId, query: 'lighthouse', mode: 'fts', collection: 'note' })
     expect(fts.some((hit) => hit.id === note.id)).toBe(true)
@@ -139,7 +140,7 @@ describe('domain integration', () => {
     const semantic = await domain.search({ workspaceId, query: 'semantic lighthouse', mode: 'semantic', collection: 'note' })
     expect(semantic[0]).toMatchObject({ id: note.id, title: 'E2E note' })
 
-    const tag = await domain.tag.create({ workspace_id: workspaceId, name: 'Important' })
+    const tag = await domain.collection('tag').create({ workspace_id: workspaceId, name: 'Important' })
     await domain.graph.link({
       workspaceId,
       srcType: 'note',
@@ -151,7 +152,7 @@ describe('domain integration', () => {
     const traversal = await domain.graph.traverse({ workspaceId, srcType: 'note', srcId: note.id, rel: 'tags', depth: 2 })
     expect(traversal).toContainEqual(expect.objectContaining({ type: 'tag', id: tag.id, depth: 1 }))
 
-    await domain.note.delete(note.id)
-    expect(await domain.note.get(note.id)).toBeNull()
+    await domain.collection('note').delete(note.id)
+    expect(await domain.collection('note').get(note.id)).toBeNull()
   })
 })

@@ -1,4 +1,5 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
+import { schema } from '@movp/core-schema'
 import { describe, expect, it } from 'vitest'
 import { createDomain } from '../src/index.ts'
 
@@ -95,8 +96,8 @@ describe('task integration', () => {
     await addMember(ws1, assignee.id)
     const cfg = await seedTaskConfig(ws1)
 
-    const ownerDomain = createDomain({ db: userClient(owner.token), userId: owner.id })
-    const assigneeDomain = createDomain({ db: userClient(assignee.token), userId: assignee.id })
+    const ownerDomain = createDomain({ db: userClient(owner.token), userId: owner.id }, { schema })
+    const assigneeDomain = createDomain({ db: userClient(assignee.token), userId: assignee.id }, { schema })
     const adminDb = serviceClient()
 
     const task = await ownerDomain.task.create({ workspaceId: ws1, title: 'Ship it', description: 'first body' })

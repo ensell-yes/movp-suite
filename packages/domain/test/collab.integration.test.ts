@@ -1,4 +1,5 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
+import { schema } from '@movp/core-schema'
 import { describe, expect, it } from 'vitest'
 import { createDomain, resolveShareLink } from '../src/index.ts'
 
@@ -79,11 +80,11 @@ describe('collab integration', () => {
     await addMember(ws1, author.id)
     await addMember(ws1, mentioned.id)
 
-    const authorDomain = createDomain({ db: userClient(author.token), userId: author.id })
-    const mentionedDomain = createDomain({ db: userClient(mentioned.token), userId: mentioned.id })
+    const authorDomain = createDomain({ db: userClient(author.token), userId: author.id }, { schema })
+    const mentionedDomain = createDomain({ db: userClient(mentioned.token), userId: mentioned.id }, { schema })
     const adminDb = serviceClient()
 
-    const note = await authorDomain.note.create({ workspace_id: ws1, title: 'Collab note', body: 'hello' })
+    const note = await authorDomain.collection('note').create({ workspace_id: ws1, title: 'Collab note', body: 'hello' })
 
     const comment = await authorDomain.collab.comment.create({
       entityType: 'note',

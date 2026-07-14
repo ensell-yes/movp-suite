@@ -15,9 +15,7 @@ export interface McpCtx {
 type AnyService = CollectionService<Record<string, unknown>, Record<string, unknown>, Record<string, unknown>>
 
 function service(domain: Domain, name: string): AnyService {
-  const svc = (domain as unknown as Record<string, AnyService>)[name]
-  if (!svc || typeof svc.create !== 'function') throw new Error(`no domain service for collection: ${name}`)
-  return svc
+  return domain.collection(name) as unknown as AnyService
 }
 
 function createShape(c: CollectionDef): Record<string, z.ZodTypeAny> {
@@ -82,7 +80,7 @@ export function buildMcpServer(schema: MovpSchema, ctx: McpCtx): McpServer {
     userId: ctx.userId,
     accessToken: ctx.accessToken,
     assetsFnUrl: ctx.assetsFnUrl,
-  }, { embedder: ctx.embedder })
+  }, { schema, embedder: ctx.embedder })
 
   for (const c of schema.collections) {
     if (c.internal) continue
@@ -757,7 +755,7 @@ export function buildMcpServer(schema: MovpSchema, ctx: McpCtx): McpServer {
       description: 'List workflow run audit rows in a workspace',
       inputSchema: { workspaceId: z.string(), first: z.number().optional(), after: z.string().optional() },
     },
-    async ({ workspaceId, first, after }) => text(await domain.workflow_run.list({ workspaceId, first, after: after ?? null })),
+    async ({ workspaceId, first, after }) => text(await domain.collection('workflow_run').list({ workspaceId, first, after: after ?? null })),
   )
 
   server.registerTool(

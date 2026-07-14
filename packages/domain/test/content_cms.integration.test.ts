@@ -1,4 +1,5 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
+import { schema } from '@movp/core-schema'
 import { describe, expect, it } from 'vitest'
 import { createDomain } from '../src/index.ts'
 
@@ -76,7 +77,10 @@ describe('content CMS integration', () => {
     const owner = await makeUser()
     await addMember(workspaceId, owner.id)
     const db = userClient(owner.token)
-    const domain = createDomain({ db, userId: owner.id, accessToken: owner.token, assetsFnUrl: 'http://localhost/assets' })
+    const domain = createDomain(
+      { db, userId: owner.id, accessToken: owner.token, assetsFnUrl: 'http://localhost/assets' },
+      { schema },
+    )
     const adminDb = serviceClient()
 
     const type = await domain.content.createType({

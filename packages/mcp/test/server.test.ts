@@ -45,6 +45,7 @@ function crud() {
 
 vi.mock('@movp/domain', () => ({
   createDomain: vi.fn(() => ({
+    collection: vi.fn(() => crud()),
     event_type: crud(),
     external_record: crud(),
     note: crud(),

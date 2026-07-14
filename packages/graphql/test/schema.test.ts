@@ -19,7 +19,11 @@ vi.mock('@movp/domain', () => {
   }
   const tag = { create: vi.fn(), get: vi.fn(), list: vi.fn(), update: vi.fn(), delete: vi.fn() }
   return {
-    createDomain: () => ({ note, tag, search: vi.fn(async () => []), graph: { link: vi.fn(), traverse: vi.fn() } }),
+    createDomain: () => ({
+      collection: (name: string) => name === 'note' ? note : tag,
+      search: vi.fn(async () => []),
+      graph: { link: vi.fn(), traverse: vi.fn() },
+    }),
   }
 })
 

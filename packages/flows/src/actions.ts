@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { schema } from '@movp/core-schema'
 import { createDomain } from '@movp/domain'
 import { enqueueJob } from './jobs.ts'
 import type { ActionResult, AutomationRuleRow, MovpInternalEvent } from './automation.ts'
@@ -150,7 +151,10 @@ async function createTaskForWorkspace(
   const title = stringField(cfg.title)
   if (!title) return { ok: false, errorCode: 'action_config_invalid' }
   try {
-    await createDomain({ db, userId: uuidField(cfg.actorId) ?? uuidField(event.payload.actor_id) ?? SYSTEM_ACTOR_ID }).task.create({
+    await createDomain(
+      { db, userId: uuidField(cfg.actorId) ?? uuidField(event.payload.actor_id) ?? SYSTEM_ACTOR_ID },
+      { schema },
+    ).task.create({
       workspaceId,
       title,
       description: stringField(cfg.description) ?? undefined,

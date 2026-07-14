@@ -1,74 +1,5 @@
-import type {
-  AutomationRuleCreate,
-  AutomationRuleRow,
-  AutomationRuleUpdate,
-  CampaignCalendarEventCreate,
-  CampaignCalendarEventRow,
-  CampaignCalendarEventUpdate,
-  CampaignChannelCreate,
-  CampaignChannelRow,
-  CampaignChannelUpdate,
-  CampaignCreate,
-  CampaignDeliverableCreate,
-  CampaignDeliverableRow,
-  CampaignDeliverableUpdate,
-  CampaignMetricCreate,
-  CampaignMetricRow,
-  CampaignMetricUpdate,
-  CampaignRow,
-  CampaignSegmentCreate,
-  CampaignSegmentRow,
-  CampaignSegmentUpdate,
-  CampaignUpdate,
-  EventTypeCreate,
-  EventTypeRow,
-  EventTypeUpdate,
-  ExternalRecordCreate,
-  ExternalRecordRow,
-  ExternalRecordUpdate,
-  PlatformEventCreate,
-  PlatformEventRow,
-  PlatformEventUpdate,
-  SegmentCreate,
-  SegmentMembershipCreate,
-  SegmentMembershipRow,
-  SegmentMembershipUpdate,
-  SegmentRecomputeRunCreate,
-  SegmentRecomputeRunRow,
-  SegmentRecomputeRunUpdate,
-  SegmentRow,
-  SegmentRuleCreate,
-  SegmentRuleRow,
-  SegmentRuleUpdate,
-  SegmentSnapshotCreate,
-  SegmentSnapshotMemberCreate,
-  SegmentSnapshotMemberRow,
-  SegmentSnapshotMemberUpdate,
-  SegmentSnapshotRow,
-  SegmentSnapshotUpdate,
-  SegmentUpdate,
-  MarketingPlanCreate,
-  MarketingPlanRow,
-  MarketingPlanUpdate,
-  NoteCreate,
-  NoteRow,
-  NoteUpdate,
-  TagCreate,
-  TagRow,
-  TagUpdate,
-  TaskPriorityOptionCreate,
-  TaskPriorityOptionRow,
-  TaskPriorityOptionUpdate,
-  TaskStatusOptionCreate,
-  TaskStatusOptionRow,
-  TaskStatusOptionUpdate,
-  WebhookSubscriptionCreate,
-  WebhookSubscriptionRow,
-  WebhookSubscriptionUpdate,
-  WorkflowRunCreate,
-  WorkflowRunRow,
-  WorkflowRunUpdate,
-} from './generated/types.ts'
+import type { MovpSchema } from '@movp/core-schema'
+import type { CampaignCreate, CampaignRow, CampaignUpdate } from './generated/types.ts'
 import { makeAdminService } from './admin.ts'
 import { makeCampaignService } from './campaign.ts'
 import { makeCollabService } from './collab.ts'
@@ -79,39 +10,43 @@ import { makePatService } from './pat.ts'
 import { makeReportingService } from './reporting.ts'
 import { runSearch } from './search.ts'
 import { makeTaskService } from './task.ts'
-import type { Domain, DomainCtx, EmbeddingProvider } from './types.ts'
+import type { CollectionService, Domain, DomainCtx, EmbeddingProvider } from './types.ts'
 import { makeWorkflowService } from './workflows.ts'
 
-export function createDomain(ctx: DomainCtx, opts: { embedder?: EmbeddingProvider } = {}): Domain {
+type GenericRow = { id: string } & Record<string, unknown>
+type GenericService = CollectionService<GenericRow, Record<string, unknown>, Record<string, unknown>>
+
+export function createDomain(ctx: DomainCtx, opts: { schema: MovpSchema; embedder?: EmbeddingProvider }): Domain {
+  const campaign = Object.assign(
+    makeCollectionService<CampaignRow, CampaignCreate, CampaignUpdate>(ctx, { table: 'campaign' }),
+    makeCampaignService(ctx),
+  )
+  const generic = new Map<string, GenericService>()
+
+  for (const collection of opts.schema.collections) {
+    if (collection.internal === true || collection.name === 'campaign') continue
+    generic.set(
+      collection.name,
+      makeCollectionService<GenericRow, Record<string, unknown>, Record<string, unknown>>(ctx, {
+        table: collection.name,
+        workspaceScoped: collection.workspaceScoped,
+      }),
+    )
+  }
+
   return {
-    event_type: makeCollectionService<EventTypeRow, EventTypeCreate, EventTypeUpdate>(ctx, { table: 'event_type', workspaceScoped: false }),
-    external_record: makeCollectionService<ExternalRecordRow, ExternalRecordCreate, ExternalRecordUpdate>(ctx, { table: 'external_record' }),
-    note: makeCollectionService<NoteRow, NoteCreate, NoteUpdate>(ctx, { table: 'note' }),
-    tag: makeCollectionService<TagRow, TagCreate, TagUpdate>(ctx, { table: 'tag' }),
-    marketing_plan: makeCollectionService<MarketingPlanRow, MarketingPlanCreate, MarketingPlanUpdate>(ctx, { table: 'marketing_plan' }),
-    task_status_option: makeCollectionService<TaskStatusOptionRow, TaskStatusOptionCreate, TaskStatusOptionUpdate>(ctx, { table: 'task_status_option' }),
-    task_priority_option: makeCollectionService<TaskPriorityOptionRow, TaskPriorityOptionCreate, TaskPriorityOptionUpdate>(ctx, { table: 'task_priority_option' }),
-    campaign_channel: makeCollectionService<CampaignChannelRow, CampaignChannelCreate, CampaignChannelUpdate>(ctx, { table: 'campaign_channel' }),
-    campaign_deliverable: makeCollectionService<CampaignDeliverableRow, CampaignDeliverableCreate, CampaignDeliverableUpdate>(ctx, { table: 'campaign_deliverable' }),
-    campaign_calendar_event: makeCollectionService<CampaignCalendarEventRow, CampaignCalendarEventCreate, CampaignCalendarEventUpdate>(ctx, { table: 'campaign_calendar_event' }),
-    campaign_metric: makeCollectionService<CampaignMetricRow, CampaignMetricCreate, CampaignMetricUpdate>(ctx, { table: 'campaign_metric' }),
-    campaign_segment: makeCollectionService<CampaignSegmentRow, CampaignSegmentCreate, CampaignSegmentUpdate>(ctx, { table: 'campaign_segment' }),
-    platform_event: makeCollectionService<PlatformEventRow, PlatformEventCreate, PlatformEventUpdate>(ctx, { table: 'platform_event' }),
-    segment: makeCollectionService<SegmentRow, SegmentCreate, SegmentUpdate>(ctx, { table: 'segment' }),
-    segment_rule: makeCollectionService<SegmentRuleRow, SegmentRuleCreate, SegmentRuleUpdate>(ctx, { table: 'segment_rule' }),
-    segment_membership: makeCollectionService<SegmentMembershipRow, SegmentMembershipCreate, SegmentMembershipUpdate>(ctx, { table: 'segment_membership' }),
-    segment_snapshot: makeCollectionService<SegmentSnapshotRow, SegmentSnapshotCreate, SegmentSnapshotUpdate>(ctx, { table: 'segment_snapshot' }),
-    segment_snapshot_member: makeCollectionService<SegmentSnapshotMemberRow, SegmentSnapshotMemberCreate, SegmentSnapshotMemberUpdate>(ctx, { table: 'segment_snapshot_member' }),
-    segment_recompute_run: makeCollectionService<SegmentRecomputeRunRow, SegmentRecomputeRunCreate, SegmentRecomputeRunUpdate>(ctx, { table: 'segment_recompute_run' }),
-    automation_rule: makeCollectionService<AutomationRuleRow, AutomationRuleCreate, AutomationRuleUpdate>(ctx, { table: 'automation_rule' }),
-    webhook_subscription: makeCollectionService<WebhookSubscriptionRow, WebhookSubscriptionCreate, WebhookSubscriptionUpdate>(ctx, { table: 'webhook_subscription' }),
-    workflow_run: makeCollectionService<WorkflowRunRow, WorkflowRunCreate, WorkflowRunUpdate>(ctx, { table: 'workflow_run' }),
+    collection(name: string): GenericService {
+      if (name === 'campaign') return campaign as unknown as GenericService
+      const service = generic.get(name)
+      if (!service) throw new Error(`no domain service for collection: ${name}`)
+      return service
+    },
     task: makeTaskService(ctx),
     content: makeContentService(ctx),
     search: (args) => runSearch(ctx, opts.embedder, args),
     graph: makeGraphService(ctx),
     collab: makeCollabService(ctx),
-    campaign: Object.assign(makeCollectionService<CampaignRow, CampaignCreate, CampaignUpdate>(ctx, { table: 'campaign' }), makeCampaignService(ctx)),
+    campaign,
     workflows: makeWorkflowService(ctx),
     admin: makeAdminService(ctx),
     pat: makePatService(ctx),
