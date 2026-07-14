@@ -1,0 +1,5 @@
+{
+  "imports": {
+    "@movp/core-schema": "../../../../core-schema/src/index.ts"
+  }
+}

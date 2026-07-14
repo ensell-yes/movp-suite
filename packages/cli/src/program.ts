@@ -833,6 +833,27 @@ export function buildProgram(schema: MovpSchema, opts: BuildProgramOpts = {}): C
     await runCodegen()
   })
 
+  program
+    .command('verify-schema-runtime')
+    .description('Fail before serve or deploy if Node and Deno schema fingerprints diverge')
+    .requiredOption('--config <path>', 'path to movp.config.mjs')
+    .requiredOption('--deno-config <path>', 'path to deno.json')
+    .requiredOption('--edge-schema <specifier>', 'Edge schema module specifier')
+    .action(async (o: { config: string; denoConfig: string; edgeSchema: string }) => {
+      const { runVerifySchemaRuntime } = await import('./verify-schema-runtime.ts')
+      const result = await runVerifySchemaRuntime({
+        configPath: o.config,
+        denoConfigPath: o.denoConfig,
+        edgeSchemaSpecifier: o.edgeSchema,
+      })
+      if (!result.ok) {
+        throw new Error(
+          `schema_runtime_mismatch: node=${result.nodeFingerprint} deno=${result.denoFingerprint}`,
+        )
+      }
+      out(JSON.stringify({ ok: true, fingerprint: result.nodeFingerprint }))
+    })
+
   program.command('migrate').description('Codegen then apply via supabase db push').action(async () => {
     await runCodegen()
     await runMigratePush()

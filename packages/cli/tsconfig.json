@@ -4,6 +4,9 @@
     "src",
     "test"
   ],
+  "exclude": [
+    "src/verify-schema-runtime.deno.ts"
+  ],
   "compilerOptions": {
     "types": [
       "node"
