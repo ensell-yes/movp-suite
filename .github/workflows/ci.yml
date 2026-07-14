@@ -55,6 +55,13 @@ jobs:
       - run: pnpm --filter @movp/platform test
       - run: bash fixtures/platform-consumer/gate.sh
       - run: pnpm --filter @movp/cli test:built-runtime
+      - name: Check schema-aware Edge Function graphs
+        run: |
+          deno check --no-lock --config supabase/functions/flows/deno.json supabase/functions/flows/index.ts
+          deno check --no-lock --config supabase/functions/graphql/deno.json supabase/functions/graphql/index.ts
+          deno check --no-lock --config supabase/functions/index-embeddings/deno.json supabase/functions/index-embeddings/index.ts
+          deno check --no-lock --config supabase/functions/mcp/deno.json supabase/functions/mcp/index.ts
+          deno check --no-lock --config supabase/functions/segment-recompute/deno.json supabase/functions/segment-recompute/index.ts
 
   c6-surface-wiring:
     runs-on: ubuntu-latest

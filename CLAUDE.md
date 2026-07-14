@@ -87,6 +87,9 @@
 - The schema-derived domain registry, flow injection, and complete surface inventory are pure unit gates.
   Keep them in the independent `c6-surface-wiring` CI job; use `packages/domain/vitest.unit.config.ts`
   rather than coupling these gates to a running Supabase stack or a preceding artifact job.
+- Every Edge Function that imports `@movp/domain`, `@movp/flows`, or a schema-aware runtime must map
+  `@movp/core-schema` in its own `deno.json`. Keep all five entrypoints in the `deno check` graph gate;
+  Node typecheck cannot detect a missing Deno import-map entry.
 - `@movp/platform` validates the artifact root and migrations directory with `lstat` before any
   enumeration. Never move a `readdir` ahead of those guards or follow a symlinked migration root.
 
