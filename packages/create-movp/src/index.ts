@@ -12,3 +12,5 @@ export {
   TOKEN_PATTERN,
   type CopyOptions,
 } from './copier.ts'
+
+export { scaffold, type ScaffoldOptions } from './scaffold.ts'

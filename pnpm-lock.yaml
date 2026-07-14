@@ -110,6 +110,16 @@ importers:
         version: 3.2.6(@types/debug@4.1.13)(@types/node@26.0.1)(msw@2.14.6(@types/node@26.0.1)(typescript@5.9.3))(tsx@4.22.4)(yaml@2.9.0)
 
   packages/create-movp:
+    dependencies:
+      '@movp/codegen':
+        specifier: ^0.1.0
+        version: link:../codegen
+      '@movp/core-schema':
+        specifier: ^0.1.0
+        version: link:../core-schema
+      '@movp/platform':
+        specifier: ^0.1.0
+        version: link:../platform
     devDependencies:
       '@types/node':
         specifier: ^26.0.1

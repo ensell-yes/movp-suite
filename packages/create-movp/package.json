@@ -18,6 +18,11 @@
     "tsup": "^8.5.1",
     "@types/node": "^26.0.1"
   },
+  "dependencies": {
+    "@movp/codegen": "^0.1.0",
+    "@movp/core-schema": "^0.1.0",
+    "@movp/platform": "^0.1.0"
+  },
   "publishConfig": {
     "main": "./dist/index.js",
     "types": "./dist/index.d.ts",
