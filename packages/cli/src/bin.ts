@@ -1,9 +1,10 @@
 #!/usr/bin/env -S npx tsx
 import { emit, REDACTION_VERSION } from '@movp/obs'
 import { AdminDomainError } from '@movp/domain'
+import { schema } from '@movp/core-schema'
 import { buildProgram } from './program.ts'
 
-buildProgram()
+buildProgram(schema)
   .parseAsync(process.argv)
   .catch((err: unknown) => {
     emit({

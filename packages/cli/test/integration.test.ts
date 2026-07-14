@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { schema } from '@movp/core-schema'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -44,7 +45,7 @@ describe('CLI PAT lifecycle', () => {
   it('init -> login -> list -> hybrid -> revoke -> auth-fail (fails closed)', async () => {
     const out: string[] = []
     const run = (argv: string[], loginToken = '') => {
-      const cmd = buildProgram({ out: (line) => out.push(line), readLoginToken: async () => loginToken })
+      const cmd = buildProgram(schema, { out: (line) => out.push(line), readLoginToken: async () => loginToken })
       cmd.exitOverride()
       return cmd.parseAsync(['node', 'movp', ...argv])
     }

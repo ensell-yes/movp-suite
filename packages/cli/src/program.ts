@@ -1,7 +1,6 @@
 import { Command, InvalidArgumentError, Option } from 'commander'
-import type { CollectionDef, FieldDef } from '@movp/core-schema'
-import { schema } from '@movp/core-schema'
-import { createDomain, type CollectionService, type Domain } from '@movp/domain'
+import type { CollectionDef, FieldDef, MovpSchema } from '@movp/core-schema'
+import { createDomain as createDomainWithSchema, type CollectionService, type Domain } from '@movp/domain'
 import { resolveCliCtx, exchangePat, type CliCtx } from './client.ts'
 import { writeCliConfig, loadCliConfig } from './config.ts'
 import { selectSecureStore } from './secure-store.ts'
@@ -24,9 +23,7 @@ export interface BuildProgramOpts {
 type AnyService = CollectionService<Record<string, unknown>, Record<string, unknown>, Record<string, unknown>>
 
 function service(domain: Domain, name: string): AnyService {
-  const svc = (domain as unknown as Record<string, AnyService>)[name]
-  if (!svc || typeof svc.create !== 'function') throw new Error(`no domain service for collection: ${name}`)
-  return svc
+  return domain.collection(name) as unknown as AnyService
 }
 
 function parseJsonFlag(value: string | undefined, fallback: unknown): unknown {
@@ -56,17 +53,18 @@ async function readTokenFromStdin(): Promise<string> {
   return Buffer.concat(chunks).toString('utf8').trim()
 }
 
-export function buildProgram(opts: BuildProgramOpts = {}): Command {
+export function buildProgram(schema: MovpSchema, opts: BuildProgramOpts = {}): Command {
   const out = opts.out ?? ((l: string) => console.log(l))
   const resolveCtx = opts.resolveCtx ?? (() => resolveCliCtx())
   const readLoginToken = opts.readLoginToken ?? readTokenFromStdin
+  const createDomain = (ctx: CliCtx): Domain => createDomainWithSchema(ctx, { schema })
 
   const runCodegen =
     opts.runCodegen ??
     (async () => {
-      const [mod, coreSchema] = await Promise.all([import('@movp/codegen'), import('@movp/core-schema')])
+      const mod = await import('@movp/codegen')
       if (!mod.generate) throw new Error('@movp/codegen.generate() not found')
-      await mod.generate({ schema: coreSchema.schema })
+      await mod.generate({ schema })
     })
 
   const runMigratePush =
@@ -663,7 +661,7 @@ export function buildProgram(opts: BuildProgramOpts = {}): Command {
     .option('--after <cursor>', 'page cursor')
     .action(async (o: { workspace: string; first?: number; after?: string }) => {
       const domain = createDomain(await resolveCtx())
-      out(JSON.stringify(await domain.workflow_run.list({ workspaceId: o.workspace, first: o.first, after: o.after ?? null })))
+      out(JSON.stringify(await domain.collection('workflow_run').list({ workspaceId: o.workspace, first: o.first, after: o.after ?? null })))
     })
 
   const workflowWebhookCmd = workflowsCmd.command('webhooks').description('Workflow webhook subscriptions')

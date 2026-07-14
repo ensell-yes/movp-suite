@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { schema } from '@movp/core-schema'
 import { createDomain } from '@movp/domain'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -47,8 +48,23 @@ function crud() {
   }
 }
 
+function collection(name: string) {
+  if (name === 'note') {
+    return {
+      create: noteCreate,
+      get: vi.fn(async () => created),
+      list: noteList,
+      update: vi.fn(),
+      delete: vi.fn(),
+    }
+  }
+  if (name === 'workflow_run') return { ...crud(), list: workflowRunList }
+  return crud()
+}
+
 vi.mock('@movp/domain', () => ({
   createDomain: vi.fn(() => ({
+    collection,
     event_type: crud(),
     note: {
       create: noteCreate,
@@ -141,10 +157,10 @@ vi.mock('@movp/domain', () => ({
   })),
 }))
 
-function program(opts: Partial<Parameters<typeof buildProgram>[0]> = {}) {
+function program(opts: Partial<NonNullable<Parameters<typeof buildProgram>[1]>> = {}) {
   const out: string[] = []
   const err: string[] = []
-  const cmd = buildProgram({
+  const cmd = buildProgram(schema, {
     resolveCtx: () => ({ db: {} as never, userId: 'u' }),
     out: (line) => out.push(line),
     ...opts,
@@ -500,10 +516,13 @@ describe('movp CLI', () => {
     ])
     expect(contentIssueAsset).toHaveBeenCalledWith({ workspaceId: 'w', filename: 'x.png', mime: 'image/png', sizeBytes: 10 })
     expect(out[0]).toContain('r2/put')
-    expect(vi.mocked(createDomain)).toHaveBeenCalledWith(expect.objectContaining({
-      accessToken: 'test',
-      assetsFnUrl: 'http://localhost:54321/functions/v1/content-assets',
-    }))
+    expect(vi.mocked(createDomain)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        accessToken: 'test',
+        assetsFnUrl: 'http://localhost:54321/functions/v1/content-assets',
+      }),
+      { schema },
+    )
   })
 
   it('surfaces the custom content group but no generic CRUD group for internal CMS collections', () => {
