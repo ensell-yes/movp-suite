@@ -39,7 +39,7 @@ jobs:
 
   c6-productization:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v5
       - uses: pnpm/action-setup@v6
@@ -63,6 +63,7 @@ jobs:
           deno check --no-lock --config supabase/functions/index-embeddings/deno.json supabase/functions/index-embeddings/index.ts
           deno check --no-lock --config supabase/functions/mcp/deno.json supabase/functions/mcp/index.ts
           deno check --no-lock --config supabase/functions/segment-recompute/deno.json supabase/functions/segment-recompute/index.ts
+      - run: bash fixtures/verdaccio-crm-lite/gate.sh
 
   c6-surface-wiring:
     runs-on: ubuntu-latest

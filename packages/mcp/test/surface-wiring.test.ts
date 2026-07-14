@@ -15,6 +15,12 @@ function pascal(name: string): string {
     .join('')
 }
 
+function plural(name: string): string {
+  if (/[bcdfghjklmnpqrstvwxyz]y$/i.test(name)) return `${name.slice(0, -1)}ies`
+  if (/(s|x|z|ch|sh)$/i.test(name)) return `${name}es`
+  return `${name}s`
+}
+
 function surfaceDiff(
   actual: ReadonlySet<string>,
   expected: ReadonlySet<string>,
@@ -218,7 +224,7 @@ const expectedMcpTools = new Set([
 ])
 const expectedGraphqlQueries = new Set([
   ...customGraphqlQueries,
-  ...publicCollections.flatMap((collection) => [collection.name, `${collection.name}s`]),
+  ...publicCollections.flatMap((collection) => [collection.name, plural(collection.name)]),
 ])
 const expectedGraphqlMutations = new Set([
   ...customGraphqlMutations,

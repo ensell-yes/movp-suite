@@ -850,12 +850,19 @@ export function buildProgram(schema: MovpSchema, opts: BuildProgramOpts = {}): C
     .requiredOption('--config <path>', 'path to movp.config.mjs')
     .requiredOption('--deno-config <path>', 'path to deno.json')
     .requiredOption('--edge-schema <specifier>', 'Edge schema module specifier')
-    .action(async (o: { config: string; denoConfig: string; edgeSchema: string }) => {
+    .option('--deno-minimum-dependency-age <age>', 'Deno npm minimum dependency age override')
+    .action(async (o: {
+      config: string
+      denoConfig: string
+      edgeSchema: string
+      denoMinimumDependencyAge?: string
+    }) => {
       const { runVerifySchemaRuntime } = await import('./verify-schema-runtime.ts')
       const result = await runVerifySchemaRuntime({
         configPath: o.config,
         denoConfigPath: o.denoConfig,
         edgeSchemaSpecifier: o.edgeSchema,
+        denoMinimumDependencyAge: o.denoMinimumDependencyAge,
       })
       if (!result.ok) {
         throw new Error(

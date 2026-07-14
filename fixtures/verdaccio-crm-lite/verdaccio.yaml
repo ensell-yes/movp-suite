@@ -1,0 +1,18 @@
+storage: __STORAGE__
+uplinks:
+  npmjs:
+    url: https://registry.npmjs.org/
+packages:
+  '@movp/*':
+    access: $all
+    publish: $all
+  'create-movp':
+    access: $all
+    publish: $all
+  '**':
+    access: $all
+    proxy: npmjs
+log:
+  type: stdout
+  format: pretty
+  level: warn

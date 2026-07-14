@@ -3,9 +3,14 @@ import { createInterface } from 'node:readline/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { scaffold } from './scaffold.ts'
-
-const TEMPLATES = ['crm-lite'] as const
-type TemplateName = (typeof TEMPLATES)[number]
+import {
+  DEFAULT_WORKSPACE_ID,
+  MAX_CREATE_INPUT_BYTES,
+  parseCreateCliArgs,
+  parseCreateInput,
+  TEMPLATES,
+  type TemplateName,
+} from './cli-args.ts'
 
 function bundledTemplateDir(name: TemplateName): string {
   // Templates ship INSIDE the create-movp tarball (package.json "files": ["dist","templates"]).
@@ -22,28 +27,60 @@ function bundledPlatformDir(): string {
   return join(dirname(pkgJsonPath), 'dist')
 }
 
-async function main(): Promise<void> {
-  const rl = createInterface({ input: process.stdin, output: process.stdout })
-  try {
-    const template = (await rl.question(`Template (${TEMPLATES.join(', ')}) [crm-lite]: `)).trim() || 'crm-lite'
-    if (!TEMPLATES.includes(template as TemplateName)) throw new Error(`unknown template: ${template}`)
-    const projectName = (await rl.question('Project name: ')).trim()
-    const workspaceId =
-      (await rl.question('Workspace UUID [33333333-3333-3333-3333-333333333333]: ')).trim() ||
-      '33333333-3333-3333-3333-333333333333'
-
-    const { targetDir, bootstrap } = await scaffold({
-      templateDir: bundledTemplateDir(template as TemplateName),
-      parentDir: process.cwd(),
-      projectName,
-      workspaceId,
-      platformArtifactDir: bundledPlatformDir(),
-    })
-    console.log(`\nScaffolded ${projectName} at ${targetDir}\n\nNext steps:`)
-    for (const step of bootstrap) console.log(`  ${step}`)
-  } finally {
-    rl.close()
+async function readPipedInput(): Promise<string> {
+  const chunks: Buffer[] = []
+  let bytes = 0
+  for await (const chunk of process.stdin) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+    bytes += buffer.byteLength
+    if (bytes > MAX_CREATE_INPUT_BYTES) {
+      throw new Error(`create_input_too_large: max ${MAX_CREATE_INPUT_BYTES} bytes`)
+    }
+    chunks.push(buffer)
   }
+  return Buffer.concat(chunks).toString('utf8')
+}
+
+async function main(): Promise<void> {
+  const parsed = parseCreateCliArgs(process.argv.slice(2))
+  let template: TemplateName = parsed.template
+  let projectName = parsed.projectName
+  let workspaceId = parsed.workspaceId
+
+  if (projectName === undefined) {
+    if (!process.stdin.isTTY) {
+      const piped = parseCreateInput(await readPipedInput())
+      template = piped.template
+      projectName = piped.projectName
+      workspaceId = piped.workspaceId
+    } else {
+      const rl = createInterface({ input: process.stdin, output: process.stdout })
+      try {
+        const answer = (await rl.question(`Template (${TEMPLATES.join(', ')}) [crm-lite]: `)).trim()
+        if (answer !== '' && !TEMPLATES.includes(answer as TemplateName)) {
+          throw new Error(`unknown_template: ${answer}`)
+        }
+        template = answer === '' ? 'crm-lite' : answer as TemplateName
+        projectName = (await rl.question('Project name: ')).trim()
+        workspaceId =
+          (await rl.question(`Workspace UUID [${DEFAULT_WORKSPACE_ID}]: `)).trim() ||
+          DEFAULT_WORKSPACE_ID
+      } finally {
+        rl.close()
+      }
+    }
+  }
+  if (projectName === undefined) throw new Error('missing_project_name')
+
+  const { targetDir, bootstrap } = await scaffold({
+    templateDir: bundledTemplateDir(template),
+    parentDir: process.cwd(),
+    projectName,
+    workspaceId,
+    platformArtifactDir: bundledPlatformDir(),
+  })
+  console.log(`\nScaffolded ${projectName} at ${targetDir}\n\nNext steps:`)
+  for (const step of bootstrap) console.log(`  ${step}`)
 }
 
 main().catch((err: unknown) => {

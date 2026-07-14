@@ -1,15 +1,19 @@
--- CRM-lite demo seed. Workspace + membership are created by the Verdaccio gate (it mints a real
--- gotrue user and inserts membership); this file seeds the CRM domain rows only, idempotently.
+-- CRM-lite demo seed. The workspace must precede project rows that reference it. The Verdaccio gate
+-- adds membership only after it mints a real GoTrue user.
+insert into public.workspace (id, name) values
+  ('__WORKSPACE_ID__', 'CRM Lite')
+on conflict (id) do nothing;
+
 insert into public.company (id, workspace_id, name, domain, tier) values
   ('c0000000-0000-0000-0000-000000000001', '__WORKSPACE_ID__', 'Acme Corp', 'acme.test', 'enterprise'),
   ('c0000000-0000-0000-0000-000000000002', '__WORKSPACE_ID__', 'Globex', 'globex.test', 'mid_market')
 on conflict (id) do nothing;
 
-insert into public.contact (id, workspace_id, full_name, email, title, company) values
+insert into public.contact (id, workspace_id, full_name, email, title, company_id) values
   ('a0000000-0000-0000-0000-000000000001', '__WORKSPACE_ID__', 'Ada Lovelace', 'ada@acme.test', 'CTO', 'c0000000-0000-0000-0000-000000000001')
 on conflict (id) do nothing;
 
-insert into public.deal (id, workspace_id, name, amount, stage, company, primary_contact) values
+insert into public.deal (id, workspace_id, name, amount, stage, company_id, primary_contact_id) values
   ('d0000000-0000-0000-0000-000000000001', '__WORKSPACE_ID__', 'Acme platform rollout', 50000, 'proposal',
    'c0000000-0000-0000-0000-000000000001', 'a0000000-0000-0000-0000-000000000001')
 on conflict (id) do nothing;

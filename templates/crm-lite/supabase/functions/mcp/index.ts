@@ -1,6 +1,7 @@
 import { WebStandardStreamableHTTPServerTransport } from 'npm:@modelcontextprotocol/sdk@1.26.0/server/webStandardStreamableHttp.js'
 import { buildMcpServer } from '@movp/mcp'
-// The scaffold exposes its composed project schema.\nimport { schema } from '../_shared/schema.ts'
+// The scaffold exposes its composed project schema.
+import { schema } from '../_shared/schema.ts'
 import { resolvePrincipal } from '@movp/auth'
 import { emit, REDACTION_VERSION } from '@movp/obs'
 import { GteSmallProvider } from '@movp/search/gte-small'

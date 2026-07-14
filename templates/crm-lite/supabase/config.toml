@@ -10,22 +10,6 @@ verify_jwt = false
 [functions.mcp]
 verify_jwt = false
 
-[functions.index-embeddings]
-verify_jwt = false
-
-[functions.flows]
-verify_jwt = false
-
-# The ingest API-key path carries NO Authorization header, so the gateway JWT check would 401
-# it before our code runs; the function does its OWN fail-closed auth for BOTH paths.
-[functions.ingest]
-verify_jwt = false
-
-# The CLI exchanges a movp_pat_ token for a session here with NO session JWT; the function does
-# its OWN fail-closed PAT auth (verify_jwt would 401 the PAT before our code runs).
-[functions.auth-exchange]
-verify_jwt = false
-
 [api]
 enabled = true
 # Port to use for the API URL.
@@ -170,7 +154,7 @@ max_catalogs = 2
 
 # Store vector embeddings in S3 for large and durable datasets
 [storage.vector]
-enabled = true
+enabled = false
 max_buckets = 10
 max_indexes = 5
 
@@ -420,7 +404,7 @@ deno_version = 2
 # secret_key = "env(SECRET_VALUE)"
 
 [analytics]
-enabled = true
+enabled = false
 port = 64527
 # Configure one of the supported backends: `postgres`, `bigquery`.
 backend = "postgres"

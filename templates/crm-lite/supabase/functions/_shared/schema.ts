@@ -1,5 +1,17 @@
 import { defineCollection, defineSchema, f, schema as platformSchema } from '@movp/core-schema'
 
+const company = defineCollection({
+  name: 'company',
+  label: 'Company',
+  labelPlural: 'Companies',
+  workspaceScoped: true,
+  fields: {
+    name: f.text({ label: 'Name', required: true, searchable: true }),
+    domain: f.text({ label: 'Domain' }),
+    tier: f.enum(['smb', 'mid_market', 'enterprise'], { label: 'Tier', reporting: { role: 'dimension' } }),
+  },
+})
+
 const contact = defineCollection({
   name: 'contact',
   label: 'Contact',
@@ -10,18 +22,6 @@ const contact = defineCollection({
     email: f.text({ label: 'Email', searchable: true }),
     title: f.text({ label: 'Title' }),
     company: f.relation('company', { label: 'Company', cardinality: 'many-to-one', graph: true }),
-  },
-})
-
-const company = defineCollection({
-  name: 'company',
-  label: 'Company',
-  labelPlural: 'Companies',
-  workspaceScoped: true,
-  fields: {
-    name: f.text({ label: 'Name', required: true, searchable: true }),
-    domain: f.text({ label: 'Domain' }),
-    tier: f.enum(['smb', 'mid_market', 'enterprise'], { label: 'Tier', reporting: { role: 'dimension' } }),
   },
 })
 
@@ -43,4 +43,4 @@ const deal = defineCollection({
 
 // Project schema = platform schema + these three extensions. defineSchema({ extends }) stamps the
 // three as layer:'project' and every inherited collection as layer:'platform' (06a).
-export const schema = defineSchema({ extends: platformSchema, collections: [contact, company, deal] })
+export const schema = defineSchema({ extends: platformSchema, collections: [company, contact, deal] })

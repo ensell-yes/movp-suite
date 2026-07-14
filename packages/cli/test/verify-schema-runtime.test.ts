@@ -1,5 +1,6 @@
 import { spawnSync } from 'node:child_process'
-import { fileURLToPath } from 'node:url'
+import { resolve } from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { defineSchema, runtimeFingerprint, type MovpSchema } from '@movp/core-schema'
 import { describe, expect, it } from 'vitest'
 import { runVerifySchemaRuntime } from '../src/verify-schema-runtime.ts'
@@ -56,6 +57,24 @@ describe('runVerifySchemaRuntime (C6b.5)', () => {
     })).rejects.toThrow(/^verify_schema_runtime_spawn_failed: deno exited 1$/)
   })
 
+  it('forwards a minimum dependency age only when explicitly requested', async () => {
+    const calls: string[][] = []
+    const spawnDeno = (args: string[]) => {
+      calls.push(args)
+      return { status: 0, stdout: `${nodeFingerprint}\n`, stderr: '' }
+    }
+    await runVerifySchemaRuntime({ ...baseOpts, spawnDeno })
+    await runVerifySchemaRuntime({
+      ...baseOpts,
+      denoMinimumDependencyAge: '0',
+      spawnDeno,
+    })
+    expect(calls[0]).not.toContain('--minimum-dependency-age')
+    expect(calls[1]).toContain('--minimum-dependency-age')
+    expect(calls[1][calls[1].indexOf('--minimum-dependency-age') + 1]).toBe('0')
+    expect(calls[1].at(-1)).toBe(pathToFileURL(resolve('./schema.ts')).href)
+  })
+
   it('reports spawn and allowlisted Deno diagnostics without leaking arbitrary stderr', async () => {
     await expect(runVerifySchemaRuntime({
       ...baseOpts,
@@ -64,7 +83,9 @@ describe('runVerifySchemaRuntime (C6b.5)', () => {
     await expect(runVerifySchemaRuntime({
       ...baseOpts,
       spawnDeno: () => ({
-        status: 3, stdout: '', stderr: 'verify_schema_runtime_edge_import_failed',
+        status: 3,
+        stdout: '',
+        stderr: 'Download http://registry.invalid/pkg\nverify_schema_runtime_edge_import_failed\n',
       }),
     })).rejects.toThrow(/deno exited 3 \(verify_schema_runtime_edge_import_failed\)$/)
     await expect(runVerifySchemaRuntime({

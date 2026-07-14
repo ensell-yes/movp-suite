@@ -8,6 +8,7 @@ const publishable = [
   'cli',
   'codegen',
   'core-schema',
+  'create-movp',
   'domain',
   'flows',
   'graphql',
@@ -120,6 +121,35 @@ for (const dirName of publishable) {
       }
       if (!collect(packedManifest.exports).includes('./dist/migrations/*')) {
         throw new Error('package artifact check failed: @movp/platform migration subpath export is absent')
+      }
+    }
+    if (dirName === 'create-movp') {
+      const bin = packedManifest.bin
+      if (typeof bin !== 'object' || bin === null || typeof bin['create-movp'] !== 'string') {
+        throw new Error('package artifact check failed: create-movp has no create-movp bin')
+      }
+      if (!bin['create-movp'].startsWith('./dist/')) {
+        throw new Error('package artifact check failed: create-movp bin does not point at dist')
+      }
+      if (!listing.includes('package/dist/cli.js')) {
+        throw new Error('package artifact check failed: create-movp bin artifact is absent')
+      }
+      if (!Array.isArray(packedManifest.files) || !packedManifest.files.includes('templates')) {
+        throw new Error('package artifact check failed: create-movp files[] does not whitelist templates')
+      }
+    }
+    if (dirName === 'search') {
+      const gteSmallExport = packedManifest.exports?.['./gte-small']
+      if (
+        typeof gteSmallExport !== 'object' ||
+        gteSmallExport === null ||
+        gteSmallExport.types !== './dist/gte-small.d.ts' ||
+        gteSmallExport.import !== './dist/gte-small.js'
+      ) {
+        throw new Error('package artifact check failed: @movp/search gte-small export is absent')
+      }
+      if (!listing.includes('package/dist/gte-small.js') || !listing.includes('package/dist/gte-small.d.ts')) {
+        throw new Error('package artifact check failed: @movp/search gte-small artifact is absent')
       }
     }
   } finally {

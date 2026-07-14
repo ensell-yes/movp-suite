@@ -41,6 +41,8 @@ function pascal(s: string): string {
 }
 
 function plural(s: string): string {
+  if (/[bcdfghjklmnpqrstvwxyz]y$/i.test(s)) return `${s.slice(0, -1)}ies`
+  if (/(s|x|z|ch|sh)$/i.test(s)) return `${s}es`
   return `${s}s`
 }
 
