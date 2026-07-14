@@ -4,9 +4,10 @@
 Execute one task top-to-bottom: write the failing test, run it and see the stated FAIL, write the
 minimal implementation, re-run to the stated PASS, then commit. Do not skip the machine-checkable
 gate that closes each task. This plan is written for a context-poor executor: every code sample is
-copy-paste-correct against the worktree `docs/stage-c6-templates-scaffolding` at the current tree,
-and the seam plans 06a/06b/06c are PREREQUISITES already merged — consume their `Produces` exactly,
-invent no cross-part API.
+copy-paste-correct against `main` **as C6a–C6c actually SHIPPED** (PR #16, `1fde559`) — the plan was
+reconciled against the merged code, not against the pre-execution 06a/06b/06c drafts, so where an old
+draft and this plan disagree, THIS plan (and the code it cites by file:line) wins. Consume the shipped
+signatures in "Global Constraints" exactly; invent no cross-part API.
 
 ## Goal
 
@@ -23,12 +24,17 @@ Ship the last runnable piece of the C6 productization seam:
    extension collections (via `defineSchema({ extends })`), a seeded segment + automation (platform
    collections showcasing C5), a few Astro pages, a SQL seed, and a README — the exact "Scaffold
    layout produced by `create-movp`" from INTERFACES.
-4. A **Verdaccio harness**: pack + publish `@movp/*` + `@movp/platform` + `create-movp` to a local
+4. **Close the codegen data-loss trap the scaffold creates** (INTERFACES round-12 F1, HIGH): the CLI's
+   default `runCodegen` is PLATFORM codegen, so `movp codegen` inside a scaffolded project silently runs
+   the wrong generator. It must REFUSE with `project_codegen_use_project_bin` and name the project's own
+   `npm run codegen`.
+5. A **Verdaccio harness**: pack + publish `@movp/*` + `@movp/platform` + `create-movp` to a local
    registry, scaffold CRM-lite into a temp dir, `npm install` with **no workspace links**, run
    codegen → `supabase db reset` → **start the scaffold's real GraphQL + MCP edge functions** →
    authenticated HTTP GraphQL query + streamable-MCP `tools/call` over HTTP + CLI create/list green;
-   assert no `file:`/workspace links; assert the copier rejects every unsafe input; run
-   `movp verify-schema-runtime` (06b) green.
+   assert no `file:`/workspace links; assert the copier rejects every unsafe input; assert `movp codegen`
+   refuses and destroys nothing; assert the DB's platform metadata matches the verified manifest's
+   `metadata` counts; run `movp verify-schema-runtime` (06b) green.
 
 ## Architecture
 
@@ -61,39 +67,83 @@ Ship the last runnable piece of the C6 productization seam:
   print bootstrap steps (codegen is deferred to the printed post-install `npm run codegen`, INTERFACES
   F2 — never run inline). `src/cli.ts` (the `create-movp` bin) does the prompting
   and calls `scaffold`. The copier and scaffolder are unit-tested in isolation; the CLI is exercised
-  end-to-end by the Verdaccio gate (Task 5).
+  end-to-end by the Verdaccio gate (Task 6).
 - **CRM-lite template (Task 4, `templates/crm-lite/`).** A private-in-monorepo directory of template
   source. It is NOT a pnpm workspace package (it ships standalone `@movp/* @^0.1.0` pins); it lives
   under `templates/` (already globbed by `pnpm-workspace.yaml`) but carries **no** `package.json` at
   its root that pnpm would try to link — its `package.json` file is named `package.json.template` so
   pnpm never installs it, and the copier renames it on scaffold. (See Task 4 Step 2 for the exact
   rename map.)
-- **Verdaccio gate (Task 5, `fixtures/verdaccio-crm-lite/`).** A `gate.sh` that stands up Verdaccio,
+- **Project-codegen refusal (Task 5, `packages/cli/`).** The scaffold's `bin/movp.mjs` is
+  `buildProgram(projectSchema)`, which inherits the CLI's DEFAULT `runCodegen` — and that default is
+  PLATFORM codegen (`generate({ schema })`, whose `rm` loop is keyed on the platform keep-set). Two
+  commands sit adjacent in the scaffold's docs and one of them silently runs the wrong generator, so the
+  default `runCodegen` REFUSES when `movp.deltas.json` is present in `cwd`. A **refusal, not a
+  mode-detector**: detecting project mode would require the project's baseline FILENAME, creating a
+  second authority for a name `bin/codegen.mjs` already pins — the very bug class being closed.
+- **Verdaccio gate (Task 6, `fixtures/verdaccio-crm-lite/`).** A `gate.sh` that stands up Verdaccio,
   publishes the bundle, scaffolds into `$TMP`, installs, and drives the real edge surfaces using the
-  same env-file edge-serve pattern as `scripts/slice-e2e.sh`.
+  same env-file edge-serve pattern as `scripts/slice-e2e.sh`. It is also where the Task 5 refusal and
+  the manifest-derived platform metadata counts are proven end-to-end against a real installed scaffold.
+- **CI slots into the EXISTING two C6 jobs** (INTERFACES post-execution "CI shape"): stack-free gates
+  join `c6-surface-wiring`, stack-bearing gates join `c6-productization`. Every `supabase/setup-cli` step
+  in `ci.yml` is pinned to `2.109.1` and `scripts/check-supabase-cli-pins.mjs` enforces it — reuse a
+  job's existing toolchain rather than adding a step.
 
 ## Tech Stack
 
 - TypeScript (ESM, `.ts` extension imports, `moduleResolution: bundler`, `strict: true`,
   **NEVER `any`** — `unknown` + narrowing), pnpm 9 workspace, Vitest `^3.2.6`, `tsx` `^4.19.0`.
 - Node `node:fs`/`node:crypto`/`node:readline` (builtins — no new runtime dependency).
-- `verdaccio` `^6` as a **devDependency of the fixture harness only** (Task 5 — this is the one new
+- `verdaccio` `^6` as a **devDependency of the fixture harness only** (Task 6 — this is the one new
   dependency; it is dev-only, hermetic-registry tooling, and MUST be approved before install; see the
-  Task 5 note).
+  Task 6 note).
 - Supabase local stack (Postgres 17, Deno 2 edge runtime), `psql`, Docker.
 
 ## Global Constraints
 
-- **Consume 06a/06b/06c exactly; invent no cross-part API.** Signatures used verbatim:
-  - 06a: `verifyPlatformArtifact(dir: string): void` (throws `platform_artifact_invalid`); the
-    `@movp/platform` artifact layout `migrations/<ordered .sql>` + `manifest.json`
-    `{ platformVersion, files: [{ name, sha256 }] }`; `defineSchema({ extends?, collections, events })`;
-    `MovpSchema.projectCollections` / `platformCollections`; `CollectionDef.layer`.
-  - 06b: `schemaFingerprint(schema): string`; CLI `buildProgram(schema, opts)`; command
+- **Consume 06a/06b/06c exactly; invent no cross-part API.** These are the SHIPPED signatures
+  (C6a–C6c merged as PR #16 `1fde559`; read the code, not the pre-execution plans — INTERFACES
+  "Post-execution reconciliation"):
+  - 06a: **`verifyPlatformArtifact(dir: string): PlatformManifest`** — it RETURNS the manifest (it does
+    NOT return `void`), and throws `platform_artifact_invalid` on any tamper
+    (`packages/platform/src/verify.ts:95`). The `@movp/platform` artifact layout is
+    `migrations/<ordered .sql>` + `manifest.json`
+    `{ platformVersion: string, metadata: { collections: number, fields: number }, files: [{ name, sha256 }] }`.
+    **`metadata` is REQUIRED** — a manifest without it is rejected as
+    `platform_artifact_invalid: manifest.json metadata is missing or malformed`, so every fixture manifest
+    in this plan carries it. `metadata` counts the PLATFORM-layer rows the bundle seeds
+    (`packages/platform/src/build.ts:39-42`); a gate that needs exact counts DERIVES them from the
+    verified manifest instead of hardcoding (`fixtures/platform-consumer/gate.sh:55`).
+    Also 06a: `defineSchema({ extends?, collections, events? })`; `CollectionDef.layer`.
+  - 06a/06c: `MovpSchema` = `{ collections, events, platformCollections, projectCollections,
+    platformEvents, projectEvents }` — the event-layer arrays shipped alongside the collection ones
+    (`packages/core-schema/src/types.ts:63`). **Never hand-build a `MovpSchema` object literal** (see
+    "Fixture discipline" below).
+  - 06b: **two fingerprints, and they are not interchangeable.**
+    **`runtimeFingerprint(schema): string`** is what `movp verify-schema-runtime` compares across Node
+    and Deno (`packages/cli/src/verify-schema-runtime.ts:57` + `verify-schema-runtime.deno.ts:28`); it
+    covers `internal` and `events`. **`schemaFingerprint(schema): string`** is deliberately DB-exact —
+    it hashes `metadataProjection` only and is therefore BLIND to `internal` and to `events`, so it
+    CANNOT back the cross-runtime guard. Both are exported from `@movp/core-schema`. Use
+    `runtimeFingerprint` for anything about Node↔Deno divergence; use `schemaFingerprint` only for
+    DB-shape identity.
+    Also 06b: CLI `buildProgram(schema, opts)`; command
     `movp verify-schema-runtime --config <movp.config.mjs> --deno-config <deno.json> --edge-schema <specifier>`.
   - 06c: `generate({ schema, migrationsDir, migrationName, deltasRegistryPath, manifestPath, generatorVersion? })`
     project mode; the `movp.deltas.json` registry `{ deltas: [{ file, collections, events }] }`; the
-    `movp.schema.json` manifest.
+    `movp.schema.json` manifest. **Project codegen is ADDITIVE-ONLY in v1** — `emitProjectMetadataPrune`
+    was removed, and dropping a project collection or event from the schema throws
+    `project_schema_removal_unsupported`. The scaffold's README states this (Task 4 Step 10).
+  - **Codegen mode is chosen by `deltasRegistryPath`, and the two modes are NOT interchangeable.**
+    `generate({ schema })` (no `deltasRegistryPath`) is PLATFORM mode: it `rm`s every
+    `*_movp_generated.sql` outside the PLATFORM keep-set (`packages/codegen/src/generate.ts:183-188`).
+    A scaffold therefore never runs it — see Task 5, which makes `movp codegen` REFUSE inside a project.
+- **Fixture discipline: never hand-build a `MovpSchema` (or a platform `manifest.json`) literal.** A
+  hand-written `{ collections: [], events: [], … }` object is not production-shaped: it silently goes
+  stale the moment the real type gains a field (it just did — `projectEvents`/`platformEvents`), and that
+  exact fixture pattern is what HID the C6c event-catalog bug. Compose real schemas with
+  `defineSchema({ extends })`; build fixture artifacts with the same fields the real verifier requires.
 - **NEVER `any`.** `unknown` + a runtime type guard, or a real type.
 - **Untrusted-I/O discipline at every copier read** ([[untrusted-io-and-resource-bounds]]): `lstat`
   and reject symlinks BEFORE any `stat`/`read`; bound file size (`MAX_FILE_BYTES`) with `lstat.size`
@@ -111,14 +161,20 @@ Ship the last runnable piece of the C6 productization seam:
   Supabase versions, and **defaults agent connectivity to the hosted MCP** (`/functions/v1/mcp`)
   because `@movp/mcp-bridge` is **private/unpublished** (`packages/mcp-bridge/package.json` has
   `"private": true` and no `publishConfig`). No `file:`/`workspace:` specifier may appear in a
-  scaffolded `package.json` or lockfile — Task 5 greps for both and fails on a hit.
+  scaffolded `package.json` or lockfile — Task 6 greps for both and fails on a hit.
 - **Port isolation.** The CRM-lite scaffold uses a DISTINCT `+200` port block
   (`64521/64522/64520/64523/64524/64529`) so a Verdaccio run never collides with the monorepo stack
   (`6432x`) or the 06a consumer fixture (`6442x`). See root `CLAUDE.md` "Supabase Local Stack Hygiene".
 - **Forward-only migrations.** This plan adds NO monorepo migration. The scaffold's project baseline
   migration is generated at scaffold time (project mode), timestamped AFTER the whole platform stream.
-- **No new runtime dependency.** The only new dependency is `verdaccio` (dev-only, Task 5) — get
+- **No new runtime dependency.** The only new dependency is `verdaccio` (dev-only, Task 6) — get
   approval first (global rule: no new dependencies without approval).
+- **Stable error code (CLI, Task 5):** **`project_codegen_use_project_bin`** — thrown by the CLI's
+  default `runCodegen` when `movp.deltas.json` exists in `process.cwd()`. It is on the INTERFACES
+  cross-part stable-code list, so it also goes in `packages/cli/src/error-code.ts`'s
+  `STABLE_CLI_ERROR_CODES` set (otherwise `movp`'s own obs event reports it as `cli_error`).
+  Reused from 06c: `project_schema_removal_unsupported` (removing a project collection/event; v1 is
+  additive-only).
 - **Stable error codes (this part):** copier — `target_exists`, `invalid_project_name`,
   `template_symlink_rejected` (a symlinked or non-directory tree ROOT, a symlinked entry inside the
   tree, or a symlinked explicit-copy/explicit-read source), `template_not_regular_file` (an
@@ -198,7 +254,7 @@ resolve), and prove no in-repo consumer pins the literal `0.0.0`.
 - **Consumes:** the publishable list is exactly the 11 names already enumerated in
   `scripts/check-package-artifacts.mjs` (`auth, cli, codegen, core-schema, domain, flows, graphql,
   mcp, notifications, obs, search`) PLUS `platform` (added by 06a).
-- **Produces (06d-internal, consumed by Task 5's publish step):** every publishable package + platform
+- **Produces (06d-internal, consumed by Task 6's publish step):** every publishable package + platform
   at `version: "0.1.0"`; `@movp/platform`'s `manifest.json` `platformVersion` becomes `0.1.0` on the
   next `pnpm --filter @movp/platform build` (it reads its own `package.json` version — verified in
   06a Task 3 `build.ts`).
@@ -1784,7 +1840,7 @@ here; the CLI/orchestration lands in Task 3.
 - **Create:** `packages/create-movp/src/copier.ts`
 - **Create:** `packages/create-movp/src/index.ts`
 - **Create:** `scripts/tree-snapshot.mjs` — **THE ONE shared staging-safety snapshot** (INTERFACES F2).
-  Created HERE because this task's copier test is its first consumer; Task 5's `gate.sh` +
+  Created HERE because this task's copier test is its first consumer; Task 6's `gate.sh` +
   staging-safety test and **06e's template fixtures** consume this same file. 06e MUST NOT write a
   second snapshot script.
 - **Create:** `scripts/tree-snapshot.d.mts` (its type declaration — a TS consumer importing an
@@ -1795,7 +1851,7 @@ here; the CLI/orchestration lands in Task 3.
 ### Interfaces
 
 - **Consumes:** none (pure `node:fs`/`node:path`/`node:crypto`).
-- **Produces (LOCKED — consumed by Task 3's scaffolder, Task 5's pack harness, and 06e's gallery
+- **Produces (LOCKED — consumed by Task 3's scaffolder, Task 6's pack harness, and 06e's gallery
   templates + CI matrix. 06d OWNS these primitives; the signatures below are the stable contract 06e
   imports — do not change them when executing 06e):**
   - `scripts/tree-snapshot.mjs` — the SHARED bounded tree snapshot (INTERFACES F2). Two interfaces,
@@ -1823,7 +1879,7 @@ here; the CLI/orchestration lands in Task 3.
   - `function copyTreeGuarded(srcDir: string, destDir: string): { filesCopied: number; bytesCopied: number }` —
     the SAME untrusted-io guards (ROOT-and-every-subdirectory lstat/symlink-reject, excluded-dir skip,
     size bounds, path-only errors) with NO substitution/rename: a verbatim regular-file-only tree copy.
-    Consumed by Task 5's pack-harness staging (INTERFACES F1) so a symlinked template file — or a
+    Consumed by Task 6's pack-harness staging (INTERFACES F1) so a symlinked template file — or a
     symlinked template ROOT — fails the pack and the source worktree is never mutated. Throws the same
     stable copier codes.
   - `function copyFileGuarded(src: string, dest: string): { bytesCopied: number }` — a guarded
@@ -1887,7 +1943,7 @@ next task but declared now):
 
 > **Gotcha (inline at the trigger):** the published `create-movp` tarball must contain the template
 > source, so `files` includes `templates`. The template is NOT materialized into the source worktree —
-> at PACK time (Task 5, INTERFACES F1) `copyTreeGuarded` copies `templates/crm-lite/` into a TEMP
+> at PACK time (Task 6, INTERFACES F1) `copyTreeGuarded` copies `templates/crm-lite/` into a TEMP
 > `create-movp` staging tree (`<staging>/templates/crm-lite/`) through the same untrusted-io guards,
 > and `npm publish` runs from there, so `packages/create-movp/templates` is never written and a
 > symlinked template file fails the pack instead of shipping. In the published tarball `templates/`
@@ -2361,7 +2417,7 @@ describe('copyTreeGuarded (pack-harness staging — INTERFACES F1)', () => {
   // Hermetic: a SYNTHETIC source tree under $TMPDIR, snapshotted with the shared `snapshotTree`
   // (`['.']` = the whole tree). Nothing here reads or writes the real repo, and no `git status` /
   // `git checkout` is involved, so a developer's unrelated WIP can never fail it — or be destroyed
-  // by it (INTERFACES F1). Task 5's staging-safety test makes the same assertion for the full
+  // by it (INTERFACES F1). Task 6's staging-safety test makes the same assertion for the full
   // pack-staging script, also against a synthetic tree.
   it('leaves the SOURCE tree byte-unchanged (writes only into the TEMP destDir)', async () => {
     const src = join(work, 'src-tree')
@@ -2691,7 +2747,7 @@ export function readFileGuarded(src: string): Buffer {
 **8. `packages/create-movp/src/index.ts`:**
 
 ```ts
-// The pack-staging scripts (Task 5, and 06e's CI matrix + gallery validator) import `copyTreeGuarded`,
+// The pack-staging scripts (Task 6, and 06e's CI matrix + gallery validator) import `copyTreeGuarded`,
 // `copyFileGuarded` and `readFileGuarded` from the BUILT dist — this is the public seam, so all three
 // MUST be re-exported here (INTERFACES F1 + round-6 F2).
 export {
@@ -2740,8 +2796,8 @@ file correctly, detects a one-byte change, records a symlink without following i
 return empty — it is the bounded-memory pin); typecheck clean. **No test in this task reads or writes
 anything under the real repo** (INTERFACES F1): every fixture tree is a `mkdtemp` under `$TMPDIR`.
 
-> The matching **no-unguarded-copy grep gate** runs in Task 5, once both consumers of these
-> primitives exist (`src/scaffold.ts` from Task 3 and `stage-create-movp.mjs` from Task 5).
+> The matching **no-unguarded-copy grep gate** runs in Task 6, once both consumers of these
+> primitives exist (`src/scaffold.ts` from Task 3 and `stage-create-movp.mjs` from Task 6).
 
 ---
 
@@ -2763,22 +2819,27 @@ runs, so `tsx` cannot import `movp.config.mjs`/`schema.ts` at scaffold time).
 ### Interfaces
 
 - **Consumes (exact signatures):**
-  - 06a: `import { verifyPlatformArtifact } from '@movp/platform'` — `verifyPlatformArtifact(dir: string): void`.
+  - 06a: `import { verifyPlatformArtifact } from '@movp/platform'` —
+    `verifyPlatformArtifact(dir: string): PlatformManifest`. It RETURNS the verified manifest
+    (`{ platformVersion, metadata: { collections, fields }, files }`); the scaffolder calls it for its
+    THROW (tamper → `platform_artifact_invalid`) and ignores the return, which is why the sample below
+    does not bind it. Task 6's acceptance gate DOES use the return — it derives the expected platform
+    metadata counts from `manifest.metadata` rather than hardcoding them.
   - The scaffolder does NOT consume `@movp/codegen`'s `generate()` and does NOT import the scaffold's
     `movp.config.mjs`/`schema.ts` at scaffold time (INTERFACES F2). Project codegen runs POST-install
     via the scaffold's own `npm run codegen` (`bin/codegen.mjs`, Task 4), using the project's installed
     `tsx` + `@movp/codegen`.
-- **Produces (LOCKED — consumed by Task 5 + 06e):**
+- **Produces (LOCKED — consumed by Task 6 + 06e):**
   - `interface ScaffoldOptions { templateDir: string; parentDir: string; projectName: string; workspaceId: string; platformArtifactDir: string }`
   - `function scaffold(opts: ScaffoldOptions): Promise<{ targetDir: string; bootstrap: string[] }>` —
     the full deterministic scaffold. `bootstrap` is the ordered list of shell steps printed to the
-    user (also the contract Task 5's gate follows).
+    user (also the contract Task 6's gate follows).
 
 ### Steps
 
 **1. Write the failing test** `packages/create-movp/test/scaffold.test.ts` (uses a MINIMAL fake
 template + a MINIMAL fake platform artifact so the unit test needs no real DB or published packages;
-the real CRM-lite + real platform bundle are exercised by Task 5):
+the real CRM-lite + real platform bundle are exercised by Task 6):
 
 ```ts
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -2798,8 +2859,14 @@ function fakePlatformArtifact(dir: string): void {
   const body = '-- platform baseline\n'
   writeFileSync(join(migrations, '20260701000001_init.sql'), body)
   const sha256 = createHash('sha256').update(Buffer.from(body)).digest('hex')
+  // `metadata` is REQUIRED by the shipped verifier: a manifest without it throws
+  // `platform_artifact_invalid: manifest.json metadata is missing or malformed`, and both counts must
+  // be POSITIVE integers (packages/platform/src/verify.ts:66-76). Verified: omitting it fails test 1
+  // for the wrong reason.
   writeFileSync(join(dir, 'manifest.json'), JSON.stringify({
-    platformVersion: '0.1.0', files: [{ name: '20260701000001_init.sql', sha256 }],
+    platformVersion: '0.1.0',
+    metadata: { collections: 1, fields: 2 },
+    files: [{ name: '20260701000001_init.sql', sha256 }],
   }, null, 2))
 }
 
@@ -2807,9 +2874,13 @@ function fakeTemplate(dir: string): void {
   mkdirSync(join(dir, 'supabase', 'migrations'), { recursive: true })
   writeFileSync(join(dir, 'README.md'), '# __PROJECT_NAME__ (ws __WORKSPACE_ID__)\n')
   writeFileSync(join(dir, 'movp.deltas.json'), JSON.stringify({ deltas: [] }, null, 2) + '\n')
-  // movp.config.mjs is COPIED verbatim; the scaffolder never imports it (codegen is post-install, F2).
+  // movp.config.mjs is COPIED verbatim; the scaffolder never imports it (codegen is post-install, F2),
+  // so this fixture only has to EXIST — its contents are inert. It is deliberately NOT a hand-built
+  // `MovpSchema` object literal: a hand-built schema literal is not production-shaped, goes stale
+  // whenever the real type gains a field (it just gained `projectEvents`/`platformEvents`), and is the
+  // exact fixture pattern that hid the C6c event-catalog bug. Real schemas come from `defineSchema`.
   writeFileSync(join(dir, 'movp.config.mjs'),
-    'export const schema = { collections: [], events: [], projectCollections: [], platformCollections: [] }\n')
+    '// inert scaffold fixture — the scaffolder never imports this file (codegen is post-install, F2).\n')
 }
 
 describe('scaffold', () => {
@@ -2836,7 +2907,7 @@ describe('scaffold', () => {
     // F2: codegen did NOT run inline — no manifest and no project baseline migration were emitted.
     expect(existsSync(join(res.targetDir, 'movp.schema.json'))).toBe(false)
     expect(existsSync(join(res.targetDir, 'supabase', 'migrations', '20260715000000_movp_generated.sql'))).toBe(false)
-    // bootstrap sequences install BEFORE codegen (the contract Task 5's gate follows).
+    // bootstrap sequences install BEFORE codegen (the contract Task 6's gate follows).
     const install = res.bootstrap.indexOf('npm install')
     const codegen = res.bootstrap.indexOf('npm run codegen')
     expect(install).toBeGreaterThanOrEqual(0)
@@ -3066,7 +3137,8 @@ README — the exact "Scaffold layout produced by `create-movp`" from INTERFACES
 ### Interfaces
 
 - **Consumes:** 06a `defineSchema({ extends })` + `schema` (platform) from `@movp/core-schema`; 06b
-  `schemaFingerprint`; 06b `buildProgram(schema, opts)` from `@movp/cli`; the generated GraphQL/MCP
+  `runtimeFingerprint` (the cross-runtime guard's fingerprint — NOT `schemaFingerprint`, which is
+  DB-exact and blind to `internal`/`events`); 06b `buildProgram(schema, opts)` from `@movp/cli`; the generated GraphQL/MCP
   builders (`buildSchema`, `buildMcpServer`) unchanged.
 - **Produces (LOCKED — the template-layout contract 06e's gallery templates copy):** the file set
   above; the token set `{ __PROJECT_NAME__, __WORKSPACE_ID__ }`; the project-aware bin pattern
@@ -3132,7 +3204,9 @@ export const schema = defineSchema({ extends: platformSchema, collections: [cont
 ```js
 // Node tooling (codegen, the movp CLI, verify-schema-runtime) reads the schema here; Deno edge
 // functions import the SAME ../_shared/schema.ts directly. Both compute the identical
-// schemaFingerprint (06b), which `movp verify-schema-runtime` asserts before serve/deploy.
+// runtimeFingerprint (06b) — the fingerprint `movp verify-schema-runtime` compares before serve/deploy
+// (packages/cli/src/verify-schema-runtime.ts:57). It is NOT schemaFingerprint: that one is DB-exact and
+// blind to `internal` + `events`, so it cannot detect a Node/Deno divergence in the exposed surface.
 export { schema } from './supabase/functions/_shared/schema.ts'
 ```
 
@@ -3209,9 +3283,9 @@ with the line above. Do the same for `graphql/index.ts` against the monorepo
 ```
 
 > **Deno `npm:@movp/*` resolution gotcha (inline):** the design flags that some transitive Node
-> built-ins may not resolve under Deno `npm:` compat (C6 Risks). Task 5's gate is the real edge-runtime
+> built-ins may not resolve under Deno `npm:` compat (C6 Risks). Task 6's gate is the real edge-runtime
 > smoke that proves resolution — a typecheck is NOT sufficient. If a `npm:@movp/*` import fails to
-> boot under Deno, that surfaces as a BOOT_ERROR in the functions log (Task 5 tails it).
+> boot under Deno, that surfaces as a BOOT_ERROR in the functions log (Task 6 tails it).
 
 `templates/crm-lite/supabase/functions/graphql/deno.json` — same shape, mirroring the monorepo
 `graphql/deno.json` imports but with every `../../../packages/<pkg>/src/index.ts` replaced by
@@ -3336,9 +3410,49 @@ suffix is present; see Step 11):
   full_name email } }`) and renders a table. Keep them small; they are smoke targets, not the product.
 
 > **Executor note:** the exact generic GraphQL query names are schema-derived (06b); confirm them with
-> the running scaffold in Task 5 (`{ __type(name:"Query"){ fields { name } } }`) and wire the pages to
-> the real field names. The Astro pages are NOT on the Task 5 machine gate's critical path (the gate
+> the running scaffold in Task 6 (`{ __type(name:"Query"){ fields { name } } }`) and wire the pages to
+> the real field names. The Astro pages are NOT on the Task 6 machine gate's critical path (the gate
 > drives GraphQL/MCP/CLI directly); they exist for the template's completeness and 06e's reuse.
+
+`templates/crm-lite/README.md` — the scaffold's own README. Beyond the usual quickstart it MUST carry
+the two constraints a scaffolded project can otherwise only discover by destroying something. Author it
+with these sections VERBATIM (the rest — intro, page tour — is yours):
+
+```md
+## Codegen
+
+Run project codegen with the project's own bin:
+
+    npm run codegen
+
+**Never run `movp codegen` here.** The installed `movp` bin runs PLATFORM codegen, which owns a
+different set of generated migrations; inside a project it refuses with
+`project_codegen_use_project_bin` and tells you to use `npm run codegen`. (Same for `movp migrate` —
+it runs codegen first.) `npm run codegen` (`bin/codegen.mjs`) is the single authority for this
+project's generated baseline, `supabase/migrations/20260715000000_movp_generated.sql`.
+
+## Changing the schema
+
+Edit `supabase/functions/_shared/schema.ts` and re-run `npm run codegen`.
+
+**Schema changes are ADDITIVE-ONLY in v1.** You can add a collection, a field, or an event. You
+**cannot remove** a project collection or event once it is in the generated baseline — codegen throws
+`project_schema_removal_unsupported`. There is no prune emitter. If you must drop a collection, write
+the `drop table` yourself as a hand-authored migration and keep the collection out of any future
+generated output; the generator will not do it for you, by design (it never emits a destructive
+statement against a table that may hold your data).
+
+## Agent connectivity (MCP)
+
+This project talks to agents over the hosted streamable-HTTP MCP endpoint at `/functions/v1/mcp`,
+authenticated with a Personal Access Token. There is no stdio bridge dependency.
+```
+
+> **Why this is load-bearing, not documentation polish (inline):** `movp codegen` and `npm run codegen`
+> are adjacent in every quickstart, and one of them runs the WRONG generator. Task 5 makes the wrong one
+> refuse at runtime; this README is the other half — it tells the user which command owns the baseline
+> BEFORE they type the wrong one. Likewise `project_schema_removal_unsupported` is a throw the user will
+> otherwise meet only by deleting a collection and watching codegen fail with no stated remedy.
 
 **11. Copier `.template` suffix handling.** The copier must rename `package.json.template` →
 `package.json` on write (so pnpm never links the template's manifest in-repo). Add to
@@ -3376,7 +3490,7 @@ workspace:
 
 ```ts
 import { describe, expect, it } from 'vitest'
-import { schemaFingerprint } from '@movp/core-schema'
+import { runtimeFingerprint, schemaFingerprint } from '@movp/core-schema'
 import { schema } from '../../../templates/crm-lite/supabase/functions/_shared/schema.ts'
 
 describe('CRM-lite template schema', () => {
@@ -3387,7 +3501,18 @@ describe('CRM-lite template schema', () => {
     expect(schema.platformCollections.every((c) => c.layer === 'platform')).toBe(true)
   })
 
-  it('has a stable schemaFingerprint (06b)', () => {
+  it('declares no project events (the template extends collections only)', () => {
+    // `projectEvents`/`platformEvents` are derived, layer-scoped arrays on MovpSchema. Project codegen
+    // emits projectEvents ONLY — a project baseline must never re-seed the platform event_type catalog.
+    expect(schema.projectEvents).toEqual([])
+    expect(schema.platformEvents.length).toBeGreaterThan(0)
+  })
+
+  it('has a stable runtimeFingerprint — the one verify-schema-runtime compares (06b)', () => {
+    // runtimeFingerprint, NOT schemaFingerprint: `movp verify-schema-runtime` compares THIS one across
+    // Node and Deno. schemaFingerprint is DB-exact and blind to `internal` + `events`, so it would not
+    // catch a runtime divergence; it is asserted here only as the DB-shape identity.
+    expect(runtimeFingerprint(schema)).toMatch(/^[0-9a-f]{64}$/)
     expect(schemaFingerprint(schema)).toMatch(/^[0-9a-f]{64}$/)
   })
 })
@@ -3397,7 +3522,8 @@ Add `@movp/core-schema` as a devDependency of `packages/create-movp` so this tes
 to `devDependencies`): `"@movp/core-schema": "^0.1.0"` — it is already a runtime `dependency`, so no
 change is strictly needed; confirm the import resolves.
 
-Run — **Expected: FAIL** first (template `schema.ts` not yet written), then PASS after Steps 1–11:
+Run — **Expected: FAIL** first (template `schema.ts` not yet written), then PASS (3 `crm-lite-template`
+tests + the copier suite) after Steps 1–11:
 
 ```
 pnpm --filter create-movp exec vitest run crm-lite-template copier
@@ -3407,24 +3533,327 @@ pnpm --filter create-movp exec vitest run crm-lite-template copier
 
 ### Gate (machine-checkable)
 
-```
-pnpm --filter create-movp exec vitest run \
-  && pnpm --filter create-movp exec tsc --noEmit \
-  && test -f templates/crm-lite/supabase/functions/_shared/schema.ts \
-  && test -f templates/crm-lite/package.json.template \
-  && test ! -f templates/crm-lite/package.json \
-  && grep -q 'npm:@movp/mcp@' templates/crm-lite/supabase/functions/mcp/deno.json \
-  && ! grep -rq '@movp/mcp-bridge' templates/crm-lite
+```bash
+set -euo pipefail
+pnpm --filter create-movp exec vitest run
+pnpm --filter create-movp exec tsc --noEmit
+
+for f in templates/crm-lite/supabase/functions/_shared/schema.ts \
+         templates/crm-lite/package.json.template \
+         templates/crm-lite/README.md; do
+  if [ ! -f "$f" ]; then echo "FAIL: missing $f" >&2; exit 1; fi
+done
+if [ -f templates/crm-lite/package.json ]; then
+  echo 'FAIL: templates/crm-lite/package.json exists — pnpm would link the template' >&2; exit 1
+fi
+if ! grep -q 'npm:@movp/mcp@' templates/crm-lite/supabase/functions/mcp/deno.json; then
+  echo 'FAIL: mcp deno.json does not resolve @movp/mcp via npm:' >&2; exit 1
+fi
+if grep -rq '@movp/mcp-bridge' templates/crm-lite; then
+  echo 'FAIL: template references the private @movp/mcp-bridge' >&2; exit 1
+fi
+# The README must name BOTH constraints a scaffolded project cannot safely discover by itself.
+for needle in 'project_codegen_use_project_bin' 'project_schema_removal_unsupported' 'ADDITIVE-ONLY'; do
+  if ! grep -qF "$needle" templates/crm-lite/README.md; then
+    echo "FAIL: templates/crm-lite/README.md does not state: $needle" >&2; exit 1
+  fi
+done
+echo 'gate: crm-lite template PASS'
 ```
 
-**Expected:** copier + scaffold + template tests green; typecheck clean; the schema module and
-`package.json.template` exist while a bare `package.json` does NOT (so pnpm never links the template);
-the MCP `deno.json` resolves `@movp/*` via `npm:`; no `@movp/mcp-bridge` reference anywhere in the
-template (hosted-MCP default).
+**Expected:** exit 0, final line `gate: crm-lite template PASS`. Copier + scaffold + template tests
+green (the template suite is 3 tests); typecheck clean; the schema module, `package.json.template` and
+`README.md` exist while a bare `package.json` does NOT (so pnpm never links the template); the MCP
+`deno.json` resolves `@movp/*` via `npm:`; no `@movp/mcp-bridge` reference anywhere in the template
+(hosted-MCP default); the README states the additive-only constraint and both stable codes.
 
 ---
 
-## Task 5 — Verdaccio harness + full acceptance gate
+## Task 5 — `movp codegen` REFUSES inside a scaffolded project (`project_codegen_use_project_bin`)
+
+Close the data-loss trap the scaffold creates (INTERFACES round-12 **F1, HIGH — safety**). A scaffolded
+project ships TWO codegen entrypoints and they are adjacent in the docs:
+
+| command | entrypoint | mode | correct in a project? |
+|---|---|---|---|
+| `npm run codegen` | `bin/codegen.mjs` → `generate({ schema, deltasRegistryPath, … })` | **project** | YES |
+| `movp codegen` / `npm run movp -- codegen` | `bin/movp.mjs` = `buildProgram(projectSchema)` → the CLI's DEFAULT `runCodegen` → `generate({ schema })` | **PLATFORM** | NO — silently wrong |
+
+The default `runCodegen` (`packages/cli/src/program.ts:62`) calls `generate({ schema })` with no
+`deltasRegistryPath`, which is PLATFORM mode. Platform-mode `generate()` runs an `rm` loop keyed on the
+PLATFORM keep-set (`packages/codegen/src/generate.ts:183-188`):
+
+```js
+const keep = new Set([migrationName, ...deltaFiles])   // the PLATFORM keep-set
+for (const file of await f.readdir(migrationsDir)) {
+  if (file.endsWith('_movp_generated.sql') && !keep.has(file)) await f.rm(joinPath(migrationsDir, file))
+}
+```
+
+The project's baseline (`20260715000000_movp_generated.sql`, pinned by `bin/codegen.mjs`) is not in that
+keep-set. **Reproduced (platform-mode `generate()` over a project's migrations dir): the baseline is
+deleted and nothing throws — `threw? false`, `baseline survived? false`.** The blast radius depends on
+where `defaultRoot()` lands, and BOTH outcomes are silent successes:
+
+- **`root` resolves to the project** (any layout where `@movp/codegen` sits three levels below the
+  project root — a workspace-linked or hoisted scaffold): `supabase/migrations/` is the target →
+  **the project's generated baseline is DELETED** and replaced by the platform migrations.
+- **`root` resolves to `node_modules`** (a plain flat `npm install`, where the module lands at
+  `<proj>/node_modules/@movp/codegen/dist/index.js` and `defaultRoot()` = `<proj>/node_modules`):
+  codegen writes the platform baseline, deltas and `types.ts` into **`<proj>/node_modules/supabase/…`**
+  and exits 0 — the project's real baseline is never regenerated, and the user believes codegen ran.
+  **Reproduced against a real installed layout: `threw? false`, exit 0,
+  `node_modules/supabase/migrations` created with the three platform files.**
+
+So the property that holds in EVERY layout — and therefore the property the gate asserts — is
+**"`movp codegen` in a project must FAIL LOUD"**. The baseline-byte-unchanged assertion is the
+data-loss regression witness and is asserted too, but on its own it false-greens in the flat-npm
+layout (nothing touched the baseline there either), so it is never the only assertion.
+
+The fix is a **REFUSAL, not a mode-detector.**
+
+### Files
+
+- **Modify:** `packages/cli/src/program.ts` (the default `runCodegen` in `buildProgram`)
+- **Modify:** `packages/cli/src/error-code.ts` (add the stable code to `STABLE_CLI_ERROR_CODES`)
+- **Test (create):** `packages/cli/test/codegen-refusal.test.ts` (2 tests)
+- **Modify (arm it in CI):** `.github/workflows/ci.yml` — the EXISTING `c6-surface-wiring` job (step 5)
+
+### Interfaces
+
+- **Consumes (shipped, verbatim):** `buildProgram(schema, opts)` and its `BuildProgramOpts.runCodegen`
+  override (`packages/cli/src/program.ts:14-21`); `generate(options)` from `@movp/codegen`, whose mode is
+  selected by `deltasRegistryPath` (`packages/codegen/src/generate.ts:160`).
+- **Produces (LOCKED — on the INTERFACES cross-part stable-code list):** the CLI error
+  **`project_codegen_use_project_bin`**, thrown by the DEFAULT `runCodegen` when `movp.deltas.json`
+  exists in `process.cwd()`. It covers `movp codegen` **and** `movp migrate` (which calls `runCodegen`
+  before `supabase db push` — `program.ts:873`). An explicit `opts.runCodegen` override is unaffected:
+  the guard lives in the default only, so the monorepo's own tooling and every test that injects
+  `runCodegen` behave exactly as before.
+- **Not produced:** any project-mode capability in `@movp/cli`. See the "why a refusal" note in Step 2.
+
+### Steps
+
+**1. Write the failing test** `packages/cli/test/codegen-refusal.test.ts`.
+
+This is the data-loss regression test. It drives the REAL default `runCodegen` — `buildProgram(schema)`
+with **no `opts`** — because a test that injects `opts.runCodegen` proves nothing about the code path
+the scaffold actually runs. `@movp/codegen` is mocked so the platform generator can never touch the
+real repository (the default path's `defaultRoot()` resolves to the monorepo root, NOT to `cwd`), and
+the mock doubles as the assertion that platform codegen was never reached at all.
+
+```ts
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { schema } from '@movp/core-schema'
+import { buildProgram } from '../src/index.ts'
+
+// Mocked so the PLATFORM generator can never run for real: `generate({ schema })` resolves its root
+// from the codegen module's own location (`defaultRoot()`), NOT from cwd — an unmocked call would
+// write into the real monorepo. `generate` not being called is also the point of test 1.
+const generate = vi.fn(async () => ({ migrationPath: '', typesPath: '', deltaPaths: [] }))
+vi.mock('@movp/codegen', () => ({ generate }))
+
+const BASELINE = '20260715000000_movp_generated.sql'
+const BASELINE_SQL = '-- project baseline: contact/company/deal\ncreate table public.contact ();\n'
+
+let work = ''
+let cwd = ''
+
+beforeEach(() => {
+  cwd = process.cwd()
+  work = mkdtempSync(join(tmpdir(), 'movp-codegen-refusal-'))
+  generate.mockClear()
+})
+afterEach(() => {
+  process.chdir(cwd)
+  rmSync(work, { recursive: true, force: true })
+})
+
+describe('movp codegen inside a scaffolded project', () => {
+  it('refuses with project_codegen_use_project_bin and leaves the project baseline byte-unchanged', async () => {
+    const migrations = join(work, 'supabase', 'migrations')
+    mkdirSync(migrations, { recursive: true })
+    writeFileSync(join(work, 'movp.deltas.json'), JSON.stringify({ deltas: [] }) + '\n')
+    writeFileSync(join(migrations, BASELINE), BASELINE_SQL)
+    process.chdir(work)
+
+    const cmd = buildProgram(schema) // NO opts — the production wiring the scaffold's bin/movp.mjs uses
+    await expect(cmd.parseAsync(['node', 'movp', 'codegen'])).rejects.toThrow(
+      /project_codegen_use_project_bin/,
+    )
+    // The data-loss regression assertion: the project's generated baseline is byte-for-byte intact.
+    expect(readFileSync(join(migrations, BASELINE), 'utf8')).toBe(BASELINE_SQL)
+    // …and PLATFORM codegen was never reached, so no rm loop ran anywhere.
+    expect(generate).not.toHaveBeenCalled()
+  })
+
+  it('still runs PLATFORM codegen when there is no movp.deltas.json (no regression)', async () => {
+    process.chdir(work)
+    const cmd = buildProgram(schema)
+    await cmd.parseAsync(['node', 'movp', 'codegen'])
+    expect(generate).toHaveBeenCalledWith({ schema })
+  })
+})
+```
+
+Run — **Expected: FAIL, 1 of 2**. Test 1 fails (`promise resolved instead of rejecting` — today
+`movp codegen` succeeds in a project); test 2 already PASSES, which is what makes it a real
+no-regression test rather than a restatement of the fix:
+
+```
+pnpm --filter @movp/cli exec vitest run codegen-refusal
+```
+
+**2. Implement the guard** in `packages/cli/src/program.ts`. Add the two node builtins to the existing
+top-of-file imports:
+
+```ts
+import { existsSync } from 'node:fs'
+import { join } from 'node:path'
+import { Command, InvalidArgumentError, Option } from 'commander'
+```
+
+and replace the default `runCodegen` (currently `program.ts:62-68`) with:
+
+```ts
+  const runCodegen =
+    opts.runCodegen ??
+    (async () => {
+      // REFUSAL, not a mode-detector. This default path is PLATFORM codegen: `generate({ schema })` rm's
+      // every `*_movp_generated.sql` outside the PLATFORM keep-set, which silently DELETES a scaffolded
+      // project's generated baseline. Running project mode here would need the project's baseline
+      // FILENAME — a SECOND authority for a name `bin/codegen.mjs` already pins. Duplicate authority over
+      // a frozen artifact name is the bug class being closed, so we fail loud and point at the one
+      // correct command instead.
+      if (existsSync(join(process.cwd(), 'movp.deltas.json'))) {
+        throw new Error(
+          'project_codegen_use_project_bin: this directory is a MOVP project (movp.deltas.json is present). ' +
+            'Run `npm run codegen` (the project codegen bin) — `movp codegen` runs PLATFORM codegen and ' +
+            'would overwrite the project baseline.',
+        )
+      }
+      const mod = await import('@movp/codegen')
+      if (!mod.generate) throw new Error('@movp/codegen.generate() not found')
+      await mod.generate({ schema })
+    })
+```
+
+> **Why a refusal and NOT "detect project mode and run it" (inline, do not 'improve' this later):**
+> running project codegen from here requires the project's baseline FILENAME
+> (`20260715000000_movp_generated.sql`) and its registry/manifest paths. `bin/codegen.mjs` already pins
+> that filename; a second pin in `@movp/cli` would be a SECOND authority over a frozen artifact name —
+> which is precisely the failure mode this task exists to close. One command owns the project baseline.
+> The CLI's job is to notice it is in the wrong house and say so.
+>
+> **`existsSync` is the right primitive here (inline):** the guard never READS the file, so no
+> lstat/size bound is owed ([[untrusted-io-and-resource-bounds]] governs reads). `existsSync` follows a
+> symlink, which only ever makes the guard MORE likely to refuse — the safe direction.
+
+**3. Add the stable code** to `packages/cli/src/error-code.ts`'s `STABLE_CLI_ERROR_CODES` set (keep the
+set alphabetical; it sits between `nothing_to_allocate` and `project_schema_removal_unsupported`).
+Without this, `bin.ts`'s obs event reports the refusal as the useless bucket code `cli_error`:
+
+```ts
+  'nothing_to_allocate',
+  'project_codegen_use_project_bin',
+  'project_schema_removal_unsupported',
+```
+
+Re-run — **Expected: PASS** — `2 passed` files, `7 passed` tests (2 new `codegen-refusal` + the 5
+existing `error-code`) — and a clean typecheck:
+
+```
+pnpm --filter @movp/cli exec vitest run codegen-refusal error-code
+pnpm --filter @movp/cli exec tsc --noEmit
+```
+
+**4. Update the scaffold's README** if Task 4 has already landed: `templates/crm-lite/README.md` must
+name `project_codegen_use_project_bin` and `npm run codegen` (Task 4 Step 10 authors it; Task 4's gate
+greps for it). Nothing to do here if Task 4 is done — this is a cross-check, not a second edit.
+
+**5. ARM it in CI** — this is a STACK-FREE vitest gate, so it slots into the EXISTING `c6-surface-wiring`
+job in `.github/workflows/ci.yml`. **Do not add a new job**: the C6 productization CI shape is exactly
+two jobs — `c6-productization` (stack-bearing: Supabase/Deno/Docker) and `c6-surface-wiring`
+(stack-free). Append one step to `c6-surface-wiring`, after the existing surface-wiring step:
+
+```yaml
+      - name: Run project-codegen refusal gate
+        run: pnpm --filter @movp/cli exec vitest run test/codegen-refusal.test.ts
+```
+
+> **Gotcha (inline):** `c6-surface-wiring` has NO `supabase/setup-cli` step, and this gate needs no
+> stack — do not add one. Every `supabase/setup-cli` step in the workflow is pinned to `2.109.1` and
+> `scripts/check-supabase-cli-pins.mjs` fails the build on an unpinned or differently-pinned one, so an
+> unnecessary setup step is both waste and a new pin to maintain.
+
+**6. Commit** (`fix(c6d): movp codegen refuses inside a project (project_codegen_use_project_bin)`).
+
+### Gate (machine-checkable)
+
+Run from the repo root. The exit code IS the property: every assertion is an `if ! …; then … exit 1; fi`
+under `set -euo pipefail`, so a regression cannot exit 0.
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+BASELINE='20260715000000_movp_generated.sql'
+
+pnpm --filter @movp/cli exec vitest run codegen-refusal error-code
+pnpm --filter @movp/cli exec tsc --noEmit
+
+# End-to-end through the REAL bin (bin.ts → buildProgram(schema) → the default runCodegen), in a
+# throwaway project dir. NOTHING is written under the repository and there is no `git checkout --`.
+WORK="$(mktemp -d "${TMPDIR:-/tmp}/movp-codegen-refusal.XXXXXX")"
+trap 'rm -rf "$WORK"' EXIT
+mkdir -p "$WORK/supabase/migrations"
+printf '{"deltas":[]}\n' >"$WORK/movp.deltas.json"
+printf -- '-- project baseline\n' >"$WORK/supabase/migrations/$BASELINE"
+BEFORE="$(shasum -a 256 "$WORK/supabase/migrations/$BASELINE" | cut -d' ' -f1)"
+
+# `cd "$WORK"` (a subshell), NOT `pnpm --filter … exec` — a filtered exec runs in the PACKAGE dir, so
+# process.cwd() would be packages/cli and the guard would never see movp.deltas.json. tsx resolves the
+# bin's imports relative to the FILE, so running it from an unrelated cwd is fine.
+STATUS=0
+OUT="$(cd "$WORK" && "$REPO_ROOT/node_modules/.bin/tsx" "$REPO_ROOT/packages/cli/src/bin.ts" codegen 2>&1)" || STATUS=$?
+
+if [ "$STATUS" -eq 0 ]; then
+  echo 'FAIL: `movp codegen` exited 0 inside a project directory' >&2; exit 1
+fi
+if ! printf '%s\n' "$OUT" | grep -qF 'project_codegen_use_project_bin'; then
+  echo 'FAIL: the refusal did not name project_codegen_use_project_bin' >&2; exit 1
+fi
+if ! printf '%s\n' "$OUT" | grep -qF 'npm run codegen'; then
+  echo 'FAIL: the refusal did not name the project bin (`npm run codegen`)' >&2; exit 1
+fi
+AFTER="$(shasum -a 256 "$WORK/supabase/migrations/$BASELINE" | cut -d' ' -f1)"
+if [ "$BEFORE" != "$AFTER" ]; then
+  echo 'FAIL: `movp codegen` modified or deleted the project baseline' >&2; exit 1
+fi
+echo 'gate: project codegen refusal PASS (non-zero exit, stable code, baseline byte-unchanged)'
+```
+
+**Expected:** exit 0, final line
+`gate: project codegen refusal PASS (non-zero exit, stable code, baseline byte-unchanged)`.
+**Verified against the shipped tree:** with the guard the gate exits 0; with the guard reverted it exits
+1 at the FIRST assertion (`FAIL: movp codegen exited 0 inside a project directory`) — the gate is
+load-bearing, not decorative.
+
+> **Gotcha (inline) — why the exit-code assertion comes FIRST and cannot be dropped:** run from the
+> SOURCE tree, `defaultRoot()` resolves to the monorepo, so an unguarded `movp codegen` writes into the
+> repo's `supabase/migrations` (idempotently) and leaves `$WORK`'s baseline alone. The
+> baseline-byte-unchanged check would therefore PASS on a regression here. It is kept because it is the
+> data-loss witness in the layouts where `root` DOES land on the project — but the assertion that
+> actually fails on a regression in every layout is **non-zero exit + the stable code**. Task 6's
+> acceptance gate re-runs this against a REAL published+installed scaffold, where it also asserts that
+> no `node_modules/supabase/` junk tree was created.
+
+---
+
+## Task 6 — Verdaccio harness + full acceptance gate
 
 Pack + publish the whole bundle to a local Verdaccio, scaffold CRM-lite into a temp dir, install with
 no workspace links, and drive the real edge surfaces + CLI + `verify-schema-runtime`.
@@ -3445,13 +3874,19 @@ no workspace links, and drive the real edge surfaces + CLI + `verify-schema-runt
   preserves pre-existing untracked files and unrelated WIP edits, **against a SYNTHETIC tree**; the
   suite never writes under the real repo)
 - **Modify:** root `package.json` (`devDependencies.verdaccio`, a `check:verdaccio-crm` script)
+- **Modify:** `scripts/check-package-artifacts.mjs` — add `create-movp` to the publishable pack gate
+  (INTERFACES round-12 F2; step 4b)
+- **Modify (arm the acceptance gate in CI):** `.github/workflows/ci.yml` — one step appended to the
+  EXISTING `c6-productization` job, `timeout-minutes` 30 → 60 (step 5b). No new job.
 
 ### Interfaces
 
 - **Consumes:** the whole published bundle (`@movp/*` + `@movp/platform` + `create-movp`), the
-  scaffolder (Task 3), the CRM-lite template (Task 4), and the CLI auth contract
-  (`SUPABASE_URL` + `SUPABASE_ANON_KEY` + `MOVP_ACCESS_TOKEN`, verified in
-  `packages/cli/src/client.ts:78-95`).
+  scaffolder (Task 3), the CRM-lite template (Task 4), the CLI refusal guard (Task 5), and the CLI auth
+  contract (`SUPABASE_URL` + `SUPABASE_ANON_KEY` + `MOVP_ACCESS_TOKEN`, verified in
+  `packages/cli/src/client.ts:78-95`). Also `verifyPlatformArtifact(dir): PlatformManifest` (06a) — the
+  gate DERIVES its expected platform metadata counts from `manifest.metadata`, never hardcoding them
+  (same derivation as `fixtures/platform-consumer/gate.sh:55`).
 - **Produces (the C6d acceptance evidence + the harness shape 06e's CI matrix reuses):** a
   `gate.sh` whose steps — snapshot → stage → snapshot-compare → publish-once → scaffold → install →
   codegen → reset → serve → drive — are the per-template smoke 06e runs across all four templates.
@@ -3780,11 +4215,58 @@ npm run codegen
 test -f supabase/migrations/20260715000000_movp_generated.sql || { echo "project baseline missing"; exit 1; }
 ls supabase/migrations/*_movp_generated.sql >/dev/null || { echo "no generated migration"; exit 1; }
 
+# 6b. DATA-LOSS REGRESSION (INTERFACES round-12 F1, Task 5) — the end-to-end proof, in the one place it
+#     is real: a PUBLISHED create-movp + a plain `npm install` layout, running the INSTALLED `movp` bin.
+#     `movp codegen` here is PLATFORM codegen; before Task 5 it exited 0 and either deleted the project
+#     baseline or wrote a junk `node_modules/supabase/` tree. It must now REFUSE, loudly, and touch
+#     nothing. Assert all four properties — the exit code is the one that fails in every layout.
+BASELINE_SHA_BEFORE="$(shasum -a 256 supabase/migrations/20260715000000_movp_generated.sql | cut -d' ' -f1)"
+CODEGEN_STATUS=0
+CODEGEN_OUT="$(npx movp codegen 2>&1)" || CODEGEN_STATUS=$?
+if [ "$CODEGEN_STATUS" -eq 0 ]; then
+  echo 'gate: `movp codegen` exited 0 inside the scaffold — the platform generator ran (round-12 F1)' >&2; exit 1
+fi
+if ! printf '%s\n' "$CODEGEN_OUT" | grep -qF 'project_codegen_use_project_bin'; then
+  echo "gate: movp codegen refusal did not name project_codegen_use_project_bin: $CODEGEN_OUT" >&2; exit 1
+fi
+BASELINE_SHA_AFTER="$(shasum -a 256 supabase/migrations/20260715000000_movp_generated.sql | cut -d' ' -f1)"
+if [ "$BASELINE_SHA_BEFORE" != "$BASELINE_SHA_AFTER" ]; then
+  echo 'gate: `movp codegen` modified or deleted the scaffold project baseline' >&2; exit 1
+fi
+if [ -e node_modules/supabase ]; then
+  echo 'gate: `movp codegen` wrote a platform migration tree into node_modules/supabase' >&2; exit 1
+fi
+
 # 7. Start the isolated stack + reset.
 supabase start
 supabase db reset
 
-# 8. verify-schema-runtime (06b) MUST be green (Node config fingerprint == Deno edge fingerprint).
+# 7b. The platform metadata the bundle seeded matches the VERIFIED manifest exactly — counts are DERIVED
+#     from `verifyPlatformArtifact()`'s return value (it returns a PlatformManifest carrying
+#     `metadata: { collections, fields }`), never hardcoded. Same derivation as
+#     fixtures/platform-consumer/gate.sh:55. This also proves the project baseline did NOT re-seed or
+#     drop any platform-layer metadata row.
+PLATFORM_DIST="$REPO_ROOT/packages/platform/dist"
+EXPECTED_COUNTS="$(node --input-type=module -e "import { verifyPlatformArtifact } from '$PLATFORM_DIST/index.js'; const m = verifyPlatformArtifact('$PLATFORM_DIST'); process.stdout.write(m.metadata.collections + '|' + m.metadata.fields)")" || {
+  echo "gate: verifyPlatformArtifact failed" >&2; exit 1
+}
+IFS='|' read -r EXPECT_COLLECTIONS EXPECT_FIELDS <<<"$EXPECTED_COUNTS"
+if [[ ! "$EXPECT_COLLECTIONS" =~ ^[1-9][0-9]*$ ]] || [[ ! "$EXPECT_FIELDS" =~ ^[1-9][0-9]*$ ]]; then
+  echo "gate: verified artifact returned malformed metadata counts" >&2; exit 1
+fi
+GOT_COLLECTIONS="$(psql "$DB_URL" -tAqc "select count(*) from public.movp_collections where layer='platform';")"
+GOT_FIELDS="$(psql "$DB_URL" -tAqc "select count(*) from public.movp_fields where layer='platform';")"
+if [ "$GOT_COLLECTIONS" != "$EXPECT_COLLECTIONS" ] || [ "$GOT_FIELDS" != "$EXPECT_FIELDS" ]; then
+  echo "gate: platform metadata mismatch: manifest says collections=$EXPECT_COLLECTIONS fields=$EXPECT_FIELDS; db has collections=$GOT_COLLECTIONS fields=$GOT_FIELDS" >&2; exit 1
+fi
+PROJECT_COLLECTIONS="$(psql "$DB_URL" -tAqc "select count(*) from public.movp_collections where layer='project';")"
+if [ "$PROJECT_COLLECTIONS" != "3" ]; then
+  echo "gate: expected 3 project collections (contact/company/deal), got $PROJECT_COLLECTIONS" >&2; exit 1
+fi
+echo "artifact ok: platform metadata collections=$EXPECT_COLLECTIONS fields=$EXPECT_FIELDS; project collections=3"
+
+# 8. verify-schema-runtime (06b) MUST be green — it compares the RUNTIME fingerprint (not the DB-exact
+#    schemaFingerprint) between the Node config and the Deno edge module.
 npm run verify-schema-runtime | grep -q '"ok":true' || { echo "verify-schema-runtime not ok"; exit 1; }
 
 # 9. Load env + mint a real member JWT (same gotrue flow as slice-e2e).
@@ -3874,6 +4356,56 @@ your files.
 
 and (after approval) `"verdaccio": "^6.0.0"` in root `devDependencies`.
 
+**4b. Cover `create-movp` in the pack gate** (INTERFACES round-12 **F2**). This task PUBLISHES
+`create-movp`, so `scripts/check-package-artifacts.mjs` — which packs every publishable package and
+asserts the tarball ships `dist/` and no source entrypoints — must include it. It is the same gap
+`@movp/platform` had; follow that precedent exactly (a `dirName === 'platform'` block already exists —
+add a sibling). Add `'create-movp'` to the `publishable` array (keep it alphabetical, after
+`'core-schema'`), then append the `create-movp` assertions inside the pack loop, alongside the platform
+block:
+
+```js
+    if (dirName === 'create-movp') {
+      // The bin must resolve to dist, not src (the generic sourceEntrypoints check catches `.ts`; this
+      // pins the positive shape).
+      const bin = packedManifest.bin
+      if (typeof bin !== 'object' || bin === null || typeof bin['create-movp'] !== 'string') {
+        throw new Error('package artifact check failed: create-movp has no create-movp bin')
+      }
+      if (!bin['create-movp'].startsWith('./dist/')) {
+        throw new Error('package artifact check failed: create-movp bin does not point at dist')
+      }
+      if (!listing.includes('package/dist/cli.js')) {
+        throw new Error('package artifact check failed: create-movp bin artifact is absent')
+      }
+      // templates/ ships in the PUBLISHED tarball, which is packed from the staging tree (Step 1b) —
+      // `pnpm pack` in the source dir cannot see templates/crm-lite (it lives at the repo root), so the
+      // assertion here is on the `files` whitelist that makes the staged pack include it.
+      if (!Array.isArray(packedManifest.files) || !packedManifest.files.includes('templates')) {
+        throw new Error('package artifact check failed: create-movp files[] does not whitelist templates')
+      }
+    }
+```
+
+> **Gotcha (inline):** do NOT assert `package/templates/…` in this tarball listing. `pnpm pack` runs in
+> `packages/create-movp/`, and the CRM-lite template lives at the repo root (`templates/crm-lite/`) — it
+> is materialized into the publish tree by `stage-create-movp.mjs` at publish time. The tarball this gate
+> packs legitimately has no `templates/`; what it must have is the `files` whitelist that makes the
+> STAGED tarball ship one. The staged tarball's contents are proven by the Verdaccio gate itself (it
+> scaffolds from the published package).
+
+The pack gate is already armed in CI (the `package-artifacts` job runs `pnpm build` then
+`pnpm check:packages`), and `create-movp` has a `build` script, so no workflow change is needed for it.
+Run it:
+
+```
+pnpm build && pnpm check:packages
+```
+
+**Expected:** exit 0, no output (the script is silent on success). Sabotage check — temporarily remove
+`"templates"` from `packages/create-movp/package.json`'s `files` and re-run: it must fail with
+`package artifact check failed: create-movp files[] does not whitelist templates`. Restore it.
+
 **5. Run the staging-safety test, then the gate.** **Expected output** (tail):
 `gate: verdaccio-crm-lite acceptance PASS`.
 
@@ -3884,28 +4416,51 @@ pnpm --filter create-movp exec vitest run staging-safety
 bash fixtures/verdaccio-crm-lite/gate.sh
 ```
 
+**5b. ARM the acceptance gate in CI.** This is a STACK-BEARING gate (Docker + Supabase + Deno), so it
+slots into the EXISTING `c6-productization` job in `.github/workflows/ci.yml` — the job that already
+installs Deno `v2.9.2` and `supabase/setup-cli@v2` pinned to `2.109.1`. **Do not add a new job**; the C6
+productization CI shape is exactly two jobs (`c6-productization` stack-bearing, `c6-surface-wiring`
+stack-free). Append one step at the END of `c6-productization`'s `steps:`, and raise that job's
+`timeout-minutes: 30` → `60` (it now also publishes to a local registry, installs from it, and boots a
+second Supabase stack):
+
+```yaml
+      - run: bash fixtures/verdaccio-crm-lite/gate.sh
+```
+
+> **Gotcha (inline):** do NOT add another `supabase/setup-cli` step for this — `c6-productization`
+> already has one, pinned to `2.109.1`, and `scripts/check-supabase-cli-pins.mjs` fails the build on any
+> `setup-cli` step that is unpinned or pinned to a different version. Reuse the job's existing toolchain.
+
 **6. Commit** (`test(c6d): Verdaccio CRM-lite scaffold→install→real-surface acceptance gate`).
 
 ### Gate (machine-checkable)
 
 ```
-pnpm --filter create-movp build \
+pnpm build \
+  && pnpm check:packages \
   && pnpm --filter create-movp exec vitest run staging-safety \
   && bash fixtures/verdaccio-crm-lite/gate.sh
 ```
 
-**Expected:** exit 0; final line `gate: verdaccio-crm-lite acceptance PASS`. Along the way the gate
-asserts: no raw `copyFileSync`/`readFileSync` in the staging script or scaffolder (every explicit copy
+**Expected:** exit 0; final line `gate: verdaccio-crm-lite acceptance PASS`. `pnpm check:packages` is
+silent on success and now covers `create-movp` (round-12 F2). Along the way the gate asserts: no raw
+`copyFileSync`/`readFileSync` in the staging script or scaffolder (every explicit copy
 is `copyFileGuarded` — F1b); no `readFileSync` in `scripts/tree-snapshot.mjs` (F2 — the snapshot must
 stream, so a large untracked file cannot OOM it); the source subtree content-hash snapshot is
 **byte-identical before and after staging** (F2 — "staging changed nothing"; a dirty worktree and
 pre-existing untracked files under `packages/create-movp/` or `templates/` are preserved and still
 PASS); no `file:`/`workspace:`/`link:` specifier and no monorepo-source path in the scaffold or its
-lockfile (standalone install); the project baseline + platform migrations are present; `db reset`
-green on the isolated `+200` stack; `verify-schema-runtime` prints `"ok":true`; an authenticated HTTP
-GraphQL `companies` query, a streamable-MCP `tools/call company.list`, and `npm run movp -- company
-create/list` all return the seeded/created `Acme Corp`. (Prerequisites: Docker running; `supabase`,
-`deno`, `node`, `npm`, `psql` on PATH; `verdaccio` installed. **The worktree may be dirty.**)
+lockfile (standalone install); the project baseline + platform migrations are present; **`npx movp
+codegen` inside the scaffold exits NON-ZERO with `project_codegen_use_project_bin`, leaves the project
+baseline byte-identical, and creates no `node_modules/supabase/` tree** (round-12 F1 — the data-loss
+regression, end-to-end against the real published+installed layout); `db reset` green on the isolated
+`+200` stack; the DB's platform-layer collection/field counts equal the counts DERIVED from the verified
+`@movp/platform` manifest (`manifest.metadata`) and exactly 3 project collections exist;
+`verify-schema-runtime` prints `"ok":true`; an authenticated HTTP GraphQL `companies` query, a
+streamable-MCP `tools/call company.list`, and `npm run movp -- company create/list` all return the
+seeded/created `Acme Corp`. (Prerequisites: Docker running; `supabase`, `deno`, `node`, `npm`, `psql`
+on PATH; `verdaccio` installed. **The worktree may be dirty.**)
 
 **F1 acceptance (the test suite destroys nothing):** neither the gate nor any test writes under the
 repository — staging, the registry storage, the npm token and every fixture tree are `mktemp -d` dirs,
@@ -3919,25 +4474,32 @@ the edit is still there, byte-for-byte.
 
 ## Assumptions
 
-1. **06a/06b/06c are merged and green** before this plan runs: `@movp/platform` +
-   `verifyPlatformArtifact`, `defineSchema({ extends })` + `projectCollections`/`platformCollections`,
-   `schemaFingerprint`, `buildProgram(schema, opts)`, `movp verify-schema-runtime`, and `generate()`
-   project mode all exist with the exact signatures used here. If any differs, reconcile before coding.
+1. **06a/06b/06c are MERGED (PR #16, `1fde559`) and this plan is reconciled against the SHIPPED code,
+   not the pre-execution plans:** `verifyPlatformArtifact(dir): PlatformManifest` (returns the manifest,
+   `metadata` required), `defineSchema({ extends })` + `projectCollections`/`platformCollections` +
+   `projectEvents`/`platformEvents`, **`runtimeFingerprint`** (what `verify-schema-runtime` compares) and
+   `schemaFingerprint` (DB-exact, blind to `internal`/`events`), `buildProgram(schema, opts)`,
+   `movp verify-schema-runtime`, and `generate()` project mode — additive-only, no prune emitter. See
+   Global Constraints for the exact signatures; read the code if anything looks different.
 2. **The scaffold needs a project-aware CLI/codegen entrypoint.** The published `@movp/cli` bin bakes
    in the platform-only schema; the scaffold ships `bin/movp.mjs` = `buildProgram(projectSchema)` and
    `bin/codegen.mjs` = `generate({ schema, deltasRegistryPath, ... })`, invoked via `npm run movp` /
    `npm run codegen`. This is the load-bearing design decision of Task 4 — the installed `movp` bin
    (monorepo schema) is never used by a scaffold.
+   **Corollary (Task 5):** `bin/movp.mjs` still inherits the CLI's DEFAULT `runCodegen`, which is
+   PLATFORM codegen — so `movp codegen` / `npm run movp -- codegen` / `movp migrate` inside a project
+   must REFUSE (`project_codegen_use_project_bin`) rather than run. A project's generated baseline has
+   exactly one owner: `bin/codegen.mjs`.
 3. **Scaffold edge functions import the COMPOSED schema** from `../_shared/schema.ts` (not
    `@movp/core-schema`) and resolve `@movp/*` via `npm:@movp/*@^0.1.0` in `deno.json`. Real Deno
-   `npm:` resolution is proven only by Task 5's edge-runtime smoke (a typecheck is insufficient — C6
+   `npm:` resolution is proven only by Task 6's edge-runtime smoke (a typecheck is insufficient — C6
    Risk). If a `npm:@movp/*` import fails to boot under Deno, that is a genuine finding to escalate,
    not a gate flake.
-4. **`verdaccio` is a new (dev-only) dependency** requiring approval before install (Task 5).
+4. **`verdaccio` is a new (dev-only) dependency** requiring approval before install (Task 6).
 5. **Seed FK safety:** the CRM-lite `seed.sql` seeds `company`/`contact`/`deal`/`segment` (FKs the
    platform bundle + project baseline guarantee). An `automation_rule` seed row is only added if a
    valid `event_type` FK exists post-reset; otherwise the automation is documented in the README, not
    seeded (the C5 showcase is still satisfied by the segment + the documented automation).
 6. **CLI/GraphQL/MCP surface names are schema-derived.** The gate uses `company` (single-word `name`
    field) to keep the CLI flag unambiguously `--name`; exact GraphQL field + MCP tool names are
-   confirmed against the running scaffold in Task 5 and corrected if the derivation differs.
+   confirmed against the running scaffold in Task 6 and corrected if the derivation differs.
