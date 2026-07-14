@@ -14,15 +14,35 @@ cleanup() {
 trap cleanup EXIT
 
 platform_digest() {
-  psql "$DB_URL" -tAqc "
+  local min_collections="${1:-40}"
+  local min_fields="${2:-200}"
+  local projection
+  local collection_count
+  local field_count
+  local digest
+
+  projection="$(psql "$DB_URL" -tAqc "
     with c as (
-      select string_agg(name||'|'||label||'|'||label_plural||'|'||workspace_scoped||'|'||layer, ',' order by name) t
+      select count(*) n,
+        string_agg(name||'|'||label||'|'||label_plural||'|'||workspace_scoped||'|'||layer, ',' order by name) t
       from public.movp_collections where layer = 'platform'
     ), f as (
-      select string_agg(collection_name||'.'||name||'|'||type||'|'||coalesce(cardinality,'')||'|'||layer, ',' order by collection_name, name) t
+      select count(*) n,
+        string_agg(collection_name||'.'||name||'|'||type||'|'||coalesce(cardinality,'')||'|'||layer, ',' order by collection_name, name) t
       from public.movp_fields where layer = 'platform'
     )
-    select md5(coalesce((select t from c),'')||'::'||coalesce((select t from f),''));"
+    select c.n||'|'||f.n||'|'||md5(c.t||'::'||f.t) from c cross join f;")"
+  IFS='|' read -r collection_count field_count digest <<<"$projection"
+
+  if [ "$collection_count" -lt "$min_collections" ] || [ "$field_count" -lt "$min_fields" ]; then
+    echo "gate: platform metadata projection below floor: collections=$collection_count fields=$field_count" >&2
+    return 1
+  fi
+  if [[ ! "$digest" =~ ^[0-9a-f]{32}$ ]]; then
+    echo "gate: platform metadata digest is missing or malformed" >&2
+    return 1
+  fi
+  printf '%s\n' "$digest"
 }
 
 pnpm --filter @movp/platform build
@@ -44,6 +64,11 @@ fi
 (cd "$FIXTURE_DIR" && supabase db reset)
 DIGEST_BASE="$(platform_digest)"
 echo "platform digest (no extension): $DIGEST_BASE"
+
+if platform_digest 999999 999999 >/dev/null 2>&1; then
+  echo "gate: platform metadata floor sabotage unexpectedly passed" >&2
+  exit 1
+fi
 
 cp "$FIXTURE_DIR/extension/"*.sql "$MIGRATIONS/"
 (cd "$FIXTURE_DIR" && supabase db reset)
