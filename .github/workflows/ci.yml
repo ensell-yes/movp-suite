@@ -36,6 +36,22 @@ jobs:
       - run: pnpm codegen
       - run: git diff --exit-code
 
+  metadata-consistency:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v6
+        with: { version: 9.12.0 }
+      - uses: actions/setup-node@v6
+        with: { node-version: 22, cache: pnpm }
+      - uses: supabase/setup-cli@v2
+        with: { version: 2.109.1 }
+      - run: supabase --version | grep -qF '2.109.1'
+      - run: pnpm install --frozen-lockfile
+      - run: supabase start
+      - run: supabase db reset
+      - run: pnpm gate:metadata-consistency
+
   package-artifacts:
     runs-on: ubuntu-latest
     steps:
