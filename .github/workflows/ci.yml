@@ -19,6 +19,7 @@ jobs:
       - uses: actions/setup-node@v6
         with: { node-version: 22, cache: pnpm }
       - run: pnpm install --frozen-lockfile
+      - run: pnpm check:supabase-cli-pins
       - run: pnpm check:docs
       - run: pnpm build
       - run: pnpm typecheck
@@ -118,7 +119,7 @@ jobs:
       - uses: actions/setup-node@v6
         with: { node-version: 22, cache: pnpm }
       - uses: supabase/setup-cli@v2
-        with: { version: latest }
+        with: { version: 2.109.1 }
       - run: pnpm install --frozen-lockfile
       - run: pnpm bootstrap -- --ci --skip-frontend
       - run: pnpm --filter @movp/frontend-astro exec playwright install --with-deps chromium
@@ -155,7 +156,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: supabase/setup-cli@v2
-        with: { version: latest }
+        with: { version: 2.109.1 }
       - run: supabase start
       - run: supabase db reset
       - run: supabase db diff
@@ -165,7 +166,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: supabase/setup-cli@v2
-        with: { version: latest }
+        with: { version: 2.109.1 }
       - run: supabase start
       - run: supabase test db
 
@@ -174,7 +175,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: supabase/setup-cli@v2
-        with: { version: latest }
+        with: { version: 2.109.1 }
       - run: supabase start
       - run: supabase db reset
       - run: node scripts/check-vector-scale.mjs
@@ -279,7 +280,7 @@ jobs:
       - uses: actions/setup-node@v6
         with: { node-version: 22, cache: pnpm }
       - uses: supabase/setup-cli@v2
-        with: { version: latest }
+        with: { version: 2.109.1 }
       - run: pnpm install --frozen-lockfile
       - run: supabase start
       - name: Run full slice e2e
