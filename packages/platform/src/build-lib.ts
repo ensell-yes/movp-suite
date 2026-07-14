@@ -10,7 +10,12 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { join } from 'node:path'
-import { MAX_MIGRATION_BYTES, verifyPlatformArtifact, type PlatformManifest } from './verify.ts'
+import {
+  assertRealDirectory,
+  MAX_MIGRATION_BYTES,
+  verifyPlatformArtifact,
+  type PlatformManifest,
+} from './verify.ts'
 
 function sha256Hex(bytes: Buffer): string {
   return createHash('sha256').update(bytes).digest('hex')
@@ -29,6 +34,7 @@ export function buildPlatformArtifact(opts: {
   outDir: string
   platformVersion: string
 }): PlatformManifest {
+  assertRealDirectory(opts.sourceMigrations, 'source migrations directory')
   const outMigrations = join(opts.outDir, 'migrations')
   rmSync(outMigrations, { recursive: true, force: true })
   rmSync(join(opts.outDir, 'manifest.json'), { force: true })

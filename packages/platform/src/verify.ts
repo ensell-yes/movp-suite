@@ -23,6 +23,13 @@ export class PlatformArtifactError extends Error {
   }
 }
 
+export function assertRealDirectory(path: string, label: string): void {
+  const info = lstatSync(path, { throwIfNoEntry: false })
+  if (!info) throw new PlatformArtifactError(`${label} missing`)
+  if (info.isSymbolicLink()) throw new PlatformArtifactError(`${label} is a symlink`)
+  if (!info.isDirectory()) throw new PlatformArtifactError(`${label} is not a directory`)
+}
+
 function sha256Hex(bytes: Buffer): string {
   return createHash('sha256').update(bytes).digest('hex')
 }
@@ -64,17 +71,14 @@ function readManifest(dir: string): PlatformManifest {
 }
 
 export function verifyPlatformArtifact(dir: string): void {
+  assertRealDirectory(dir, 'artifact directory')
   const manifest = readManifest(dir)
   const migrationsDir = join(dir, 'migrations')
+  assertRealDirectory(migrationsDir, 'migrations/ directory')
 
-  let present: string[]
-  try {
-    present = readdirSync(migrationsDir)
-      .filter((name) => name.endsWith('.sql'))
-      .sort()
-  } catch {
-    throw new PlatformArtifactError('migrations/ directory missing')
-  }
+  const present = readdirSync(migrationsDir)
+    .filter((name) => name.endsWith('.sql'))
+    .sort()
 
   const expected = manifest.files.map((f) => f.name)
   const expectedSet = new Set(expected)

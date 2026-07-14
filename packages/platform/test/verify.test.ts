@@ -73,6 +73,16 @@ describe('verifyPlatformArtifact', () => {
     expect(() => verifyPlatformArtifact(dir)).toThrow(/symlink/)
   })
 
+  it('rejects a symlinked migrations root before enumeration', () => {
+    writeArtifact(dir)
+    const outside = join(dir, 'outside-migrations')
+    mkdirSync(outside)
+    for (const file of files) writeFileSync(join(outside, file.name), file.body)
+    rmSync(join(dir, 'migrations'), { recursive: true })
+    symlinkSync(outside, join(dir, 'migrations'))
+    expect(() => verifyPlatformArtifact(dir)).toThrow(/migrations\/ directory is a symlink/)
+  })
+
   it('rejects an oversized manifest on its size bound (never buffers it)', () => {
     writeArtifact(dir)
     const huge = `{"platformVersion":"0.0.0","files":[],"pad":"${'x'.repeat(1024 * 1024 + 16)}"}`

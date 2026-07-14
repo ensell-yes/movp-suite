@@ -35,6 +35,18 @@ describe('buildPlatformArtifact untrusted-I/O guards', () => {
     expect(existsSync(join(out, 'migrations', '20260101000001_evil.sql'))).toBe(false)
   })
 
+  it('refuses a symlinked source migrations root before enumeration', () => {
+    const outside = join(root, 'outside-migrations')
+    mkdirSync(outside)
+    writeFileSync(join(outside, '20260101000001_evil.sql'), '-- TOP SECRET\n')
+    rmSync(src, { recursive: true })
+    symlinkSync(outside, src)
+    expect(() =>
+      buildPlatformArtifact({ sourceMigrations: src, outDir: out, platformVersion: '0.0.0' }),
+    ).toThrow(/source migrations directory.*symlink/)
+    expect(existsSync(join(out, 'migrations', '20260101000001_evil.sql'))).toBe(false)
+  })
+
   it('refuses an oversized source migration before buffering it', () => {
     writeFileSync(join(src, '20260101000002_big.sql'), 'x'.repeat(11 * 1024 * 1024))
     expect(() =>
