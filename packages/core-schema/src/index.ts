@@ -7,6 +7,7 @@ export type {
   MovpSchema,
   ReportingRole,
 } from './types.ts'
+export { metadataProjection, schemaFingerprint, type CollectionMeta, type FieldMeta } from './projection.ts'
 export { f, type FieldOptions } from './builders.ts'
 export { defineCollection, defineEvent, defineSchema } from './define.ts'
 export { asset } from './collections/asset.ts'
