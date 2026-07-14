@@ -12,6 +12,8 @@
   `supabase functions serve --env-file <file>` with `MOVP_JWT_ISSUER=<API_URL>/auth/v1`.
   The installed CLI serves all functions and accepts no positional function-name list.
   Shell-prefixed env vars may not propagate into the edge runtime and can look like JWT/auth defects.
+- The integration smoke retries only transient Edge gateway responses (`502`/`503`/`504`), at most three
+  attempts, and prints the content-disciplined function log on final failure. Authentication failures are terminal.
 - The slice only kills existing local edge-runtime/function processes in CI, or when explicitly run with
   `MOVP_CLEAN_EDGE_RUNTIME=1`; keep that cleanup opt-in locally so other Supabase projects are not disturbed.
 
