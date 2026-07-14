@@ -18,3 +18,10 @@ export {
   type DeltaRegistryEntry,
 } from './deltas-registry.ts'
 export { newDelta, type NewDeltaOptions } from './new-delta.ts'
+export {
+  emitManifest,
+  serializeManifest,
+  type ManifestCollection,
+  type ManifestField,
+  type SchemaManifest,
+} from './emit-manifest.ts'

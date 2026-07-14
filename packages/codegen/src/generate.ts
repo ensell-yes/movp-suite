@@ -1,9 +1,11 @@
 import type { MovpSchema } from '@movp/core-schema'
+import { fileURLToPath } from 'node:url'
 import { emitReportingSql } from './emit-reporting.ts'
 import { emitDeltaSql, emitProjectDeltaSql, emitProjectMigration, emitSqlMigration } from './emit-sql.ts'
 import { emitTypes } from './emit-types.ts'
 import { loadDeltaRegistry, type DeltaRegistryEntry } from './deltas-registry.ts'
 import { atomicWriteFile } from './safe-write.ts'
+import { emitManifest, serializeManifest } from './emit-manifest.ts'
 
 export interface GeneratedDelta {
   file: string
@@ -111,6 +113,48 @@ async function assertSafeWriteTarget(f: Fs, path: string, label: string): Promis
   }
   if (info.isSymbolicLink()) throw new Error(`${label} is a symlink: ${path}`)
   if (!info.isFile()) throw new Error(`${label} is not a regular file: ${path}`)
+}
+
+export async function resolveGeneratorVersion(
+  explicit?: string,
+  packageUrl = new URL('../package.json', import.meta.url),
+): Promise<string> {
+  if (explicit !== undefined) return explicit
+  const packagePath = fileURLToPath(packageUrl)
+  const f = await fs()
+  let info: Awaited<ReturnType<Fs['lstat']>>
+  try {
+    info = await f.lstat(packagePath)
+  } catch {
+    throw new Error(`generator_version_unreadable: ${packagePath} cannot be inspected`)
+  }
+  if (info.isSymbolicLink()) throw new Error(`generator_version_symlink_rejected: ${packagePath} is a symlink`)
+  if (!info.isFile()) {
+    throw new Error(`generator_version_not_regular_file: ${packagePath} is not a regular file`)
+  }
+  if (info.size > MAX_GENERATED_FILE_BYTES) {
+    throw new Error(`generator_version_too_large: ${packagePath} exceeds ${MAX_GENERATED_FILE_BYTES} bytes`)
+  }
+  let raw: string
+  try {
+    raw = await f.readFile(packagePath, 'utf8')
+  } catch {
+    throw new Error(`generator_version_unreadable: ${packagePath} cannot be read`)
+  }
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    throw new Error(`generator_version_invalid_json: ${packagePath} is not valid JSON`)
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw new Error(`generator_version_invalid_shape: ${packagePath} is not an object`)
+  }
+  const version = (parsed as { version?: unknown }).version
+  if (typeof version !== 'string') {
+    throw new Error(`generator_version_invalid_shape: ${packagePath} has no string version`)
+  }
+  return version
 }
 
 export async function generate(
@@ -223,7 +267,19 @@ async function generateProject(
     }
   }
 
+  if (options.manifestPath !== undefined) {
+    await assertSafeWriteTarget(f, options.manifestPath, 'schema manifest')
+  }
+
   for (const item of toWrite) await atomicWriteFile(item.path, item.expected)
+
+  if (options.manifestPath !== undefined) {
+    const generatorVersion = await resolveGeneratorVersion(options.generatorVersion)
+    await atomicWriteFile(
+      options.manifestPath,
+      serializeManifest(emitManifest(options.schema, { generatorVersion })),
+    )
+  }
 
   return {
     migrationPath: joinPath(migrationsDir, migrationName),
