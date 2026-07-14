@@ -1,7 +1,9 @@
 import type { MovpSchema } from '@movp/core-schema'
 import { emitReportingSql } from './emit-reporting.ts'
-import { emitDeltaSql, emitSqlMigration } from './emit-sql.ts'
+import { emitDeltaSql, emitProjectDeltaSql, emitProjectMigration, emitSqlMigration } from './emit-sql.ts'
 import { emitTypes } from './emit-types.ts'
+import { loadDeltaRegistry, type DeltaRegistryEntry } from './deltas-registry.ts'
+import { atomicWriteFile } from './safe-write.ts'
 
 export interface GeneratedDelta {
   file: string
@@ -41,6 +43,9 @@ export interface GenerateOptions {
   migrationsDir?: string
   typesPath?: string
   deltas?: readonly GeneratedDelta[]
+  deltasRegistryPath?: string
+  manifestPath?: string
+  generatorVersion?: string
 }
 
 const MAX_GENERATED_FILE_BYTES = 10 * 1024 * 1024
@@ -111,6 +116,7 @@ async function assertSafeWriteTarget(f: Fs, path: string, label: string): Promis
 export async function generate(
   options: GenerateOptions,
 ): Promise<{ migrationPath: string; typesPath: string; deltaPaths: string[] }> {
+  if (options.deltasRegistryPath !== undefined) return generateProject(options)
   const schema = options.schema
   const root = options.root ?? defaultRoot()
   const migrationName = migrationFileName(
@@ -162,4 +168,66 @@ export async function generate(
   await f.writeFile(typesPath, emitTypes(schema))
 
   return { migrationPath, typesPath, deltaPaths }
+}
+
+function projectOwnedByDeltas(deltas: readonly DeltaRegistryEntry[]): {
+  collections: Set<string>
+  events: Set<string>
+} {
+  return {
+    collections: new Set(deltas.flatMap((delta) => delta.collections)),
+    events: new Set(deltas.flatMap((delta) => delta.events)),
+  }
+}
+
+async function generateProject(
+  options: GenerateOptions,
+): Promise<{ migrationPath: string; typesPath: string; deltaPaths: string[] }> {
+  const registryPath = options.deltasRegistryPath
+  if (registryPath === undefined) throw new Error('generate(project): deltasRegistryPath is required')
+  if (!options.migrationsDir) throw new Error('generate(project): migrationsDir is required')
+  const migrationsDir = options.migrationsDir
+  const migrationName = migrationFileName(
+    options.migrationName ?? '20260712120000_movp_generated.sql',
+    'generated baseline',
+  )
+  const registry = await loadDeltaRegistry(registryPath)
+  const deltaFiles = registry.deltas.map((delta) => migrationFileName(delta.file, 'generated delta'))
+  if (new Set(deltaFiles).size !== deltaFiles.length) throw new Error('duplicate generated delta filename')
+  const owned = projectOwnedByDeltas(registry.deltas)
+  const planned = [
+    {
+      path: joinPath(migrationsDir, migrationName),
+      expected: emitProjectMigration(options.schema, {
+        excludeCollections: [...owned.collections],
+        excludeEvents: [...owned.events],
+      }),
+    },
+    ...registry.deltas.map((delta) => ({
+      path: joinPath(migrationsDir, delta.file),
+      expected: emitProjectDeltaSql(options.schema, delta),
+    })),
+  ]
+  const f = await fs()
+  await f.mkdir(migrationsDir, { recursive: true })
+  const toWrite: typeof planned = []
+
+  for (const item of planned) {
+    const existing = await readIfPresent(f, item.path)
+    if (existing === null) {
+      toWrite.push(item)
+    } else if (existing !== item.expected) {
+      throw new Error(
+        `new_generated_delta_required: ${item.path} is frozen but the current project schema emits different SQL`,
+      )
+    }
+  }
+
+  for (const item of toWrite) await atomicWriteFile(item.path, item.expected)
+
+  return {
+    migrationPath: joinPath(migrationsDir, migrationName),
+    typesPath: '',
+    deltaPaths: registry.deltas.map((delta) => joinPath(migrationsDir, delta.file)),
+  }
 }
