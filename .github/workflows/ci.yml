@@ -37,6 +37,22 @@ jobs:
       - run: pnpm codegen
       - run: git diff --exit-code
 
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v6
+        with: { version: 9.12.0 }
+      - uses: actions/setup-node@v6
+        with: { node-version: 22, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @movp/core-schema --filter @movp/codegen build
+      - run: pnpm docs:manifest
+      - run: pnpm docs:reference
+      - run: pnpm check:docs-freshness
+      - run: pnpm check:docs-manifest
+      - run: pnpm docs:build
+
   c6-productization:
     runs-on: ubuntu-latest
     timeout-minutes: 60

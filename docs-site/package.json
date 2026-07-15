@@ -1,0 +1,21 @@
+{
+  "name": "@movp/docs-site",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@astrojs/starlight": "^0.39.3",
+    "@movp/codegen": "workspace:*",
+    "@movp/core-schema": "workspace:*",
+    "astro": "^6.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0",
+    "vitest": "^3.2.6"
+  }
+}
