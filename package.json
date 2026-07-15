@@ -10,6 +10,7 @@
     "check:publishable-versions": "node scripts/check-publishable-versions.mjs",
     "check:ci-wiring": "node scripts/check-ci-wiring.mjs",
     "check:verdaccio-crm": "bash fixtures/verdaccio-crm-lite/gate.sh",
+    "check:verdaccio-gallery": "bash -c 'set -euo pipefail; d=$(mktemp -d); trap \"rm -rf $d\" EXIT; bash fixtures/verdaccio-gallery/pack.sh $d; for t in crm-lite marketing-site support-desk knowledge-base; do ARTIFACTS_DIR=$d bash fixtures/verdaccio-gallery/gate.sh $t; done'",
     "test:version-gate": "node --test scripts/test/guarded-read.test.mjs scripts/test/check-publishable-versions.test.mjs scripts/test/check-ci-wiring.test.mjs",
     "check:release-preflight": "node scripts/check-release-preflight.mjs",
     "check:demo-seed": "node scripts/check-demo-seed.mjs",

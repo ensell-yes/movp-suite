@@ -63,17 +63,47 @@ import { MAX_WORKFLOW_BYTES, readTextGuarded } from './lib/guarded-read.mjs'
  */
 export const REQUIRED_JOBS = {
   'publishable-versions': {
-    runs: ['pnpm test:version-gate', 'pnpm check:publishable-versions'],
+    runs: ['pnpm test:version-gate', 'pnpm check:publishable-versions', 'pnpm check:ci-wiring'],
   },
-  // 06e APPENDS its three entries here; nothing else in this file changes. For example, 06e's
-  // `template-smoke` pins the Supabase CLI — not a `run:` command, and the pin must be OWNED by the
-  // setup-cli step (`steps`), while the 4-way matrix sits under `strategy:`, outside every step (`lines`):
-  //   'template-smoke': {
-  //     runs: ["supabase --version | grep -qF '2.109.1'",
-  //            'bash fixtures/verdaccio-gallery/gate.sh ${{ matrix.template }}'],
-  //     lines: ['template: [crm-lite, marketing-site, support-desk, knowledge-base]'],
-  //     steps: [['uses: supabase/setup-cli@v2', 'with: { version: 2.109.1 }']],
-  //   },
+  'c6-productization': {
+    runs: [
+      'pnpm --filter @movp/platform test',
+      'bash fixtures/platform-consumer/gate.sh',
+      'pnpm --filter @movp/cli test:built-runtime',
+      'bash fixtures/verdaccio-crm-lite/gate.sh',
+    ],
+  },
+  'c6-surface-wiring': {
+    runs: [
+      'pnpm --filter @movp/domain exec vitest run --config vitest.unit.config.ts',
+      'pnpm --filter @movp/flows exec vitest run test/schema-injection.test.ts',
+      'pnpm --filter @movp/mcp exec vitest run test/surface-wiring.test.ts',
+      'pnpm --filter @movp/cli exec vitest run test/codegen-refusal.test.ts',
+    ],
+  },
+  'pack-artifacts': {
+    runs: ['bash fixtures/verdaccio-gallery/pack.sh ./artifacts'],
+  },
+  'template-gallery': {
+    runs: [
+      'pnpm --filter create-movp build',
+      'pnpm exec tsx scripts/check-template-gallery.ts',
+      'bash scripts/check-template-gallery-guards.sh',
+    ],
+  },
+  'template-smoke': {
+    runs: [
+      "supabase --version | grep -qF '2.109.1'",
+      "deno --version | head -n 1 | grep -qF 'deno 2.9.2'",
+      'bash fixtures/verdaccio-gallery/gate.sh ${{ matrix.template }}',
+    ],
+    lines: ['template: [crm-lite, marketing-site, support-desk, knowledge-base]'],
+    steps: [
+      ['uses: supabase/setup-cli@v2', 'with: { version: 2.109.1 }'],
+      ['uses: denoland/setup-deno@v2', 'with: { deno-version: v2.9.2 }'],
+      ['uses: actions/download-artifact@v5', 'with: { name: movp-tarballs, path: ./artifacts }'],
+    ],
+  },
 }
 
 export const DEFAULT_WORKFLOW = '.github/workflows/ci.yml'

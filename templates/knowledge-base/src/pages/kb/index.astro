@@ -1,0 +1,73 @@
+---
+import Base from '../../layouts/Base.astro'
+import { readServerEnv } from '../../lib/env.ts'
+import { postGraphql } from '../../lib/graphql.ts'
+
+const ARTICLES_QUERY = /* GraphQL */ `
+  query KbArticles($workspaceId: ID!, $first: Int) {
+    kbArticles: kb_articles(workspaceId: $workspaceId, first: $first) { items { id title } }
+  }`
+const SEARCH_QUERY = /* GraphQL */ `
+  query Search($workspaceId: ID!, $query: String!) {
+    search(workspaceId: $workspaceId, query: $query) { collection id title snippet score }
+  }`
+
+type ArticleRow = { id: string; title: string | null }
+type SearchHit = { collection: string; id: string; title: string; snippet: string; score: number }
+
+const token = Astro.cookies.get('sb-access-token')?.value ?? ''
+const query = Astro.url.searchParams.get('q')?.trim() ?? ''
+let articles: ArticleRow[] = []
+let hits: SearchHit[] = []
+let error = false
+if (token) {
+  const { graphqlEndpoint, workspaceId } = readServerEnv()
+  const articleResult = await postGraphql<{ kbArticles: { items: ArticleRow[] } }>(
+    graphqlEndpoint,
+    token,
+    ARTICLES_QUERY,
+    { workspaceId, first: 100 },
+  )
+  if (!articleResult.ok) {
+    error = true
+  } else {
+    articles = articleResult.data.kbArticles.items
+    if (query) {
+      const searchResult = await postGraphql<{ search: SearchHit[] }>(
+        graphqlEndpoint,
+        token,
+        SEARCH_QUERY,
+        { workspaceId, query },
+      )
+      if (searchResult.ok) hits = searchResult.data.search.filter((hit) => hit.collection === 'kb_article')
+      else error = true
+    }
+  }
+}
+---
+<Base title="Knowledge base">
+  <h1 tabindex="-1" id="kb-heading">Knowledge base</h1>
+  {!token && <p>Sign in to view articles.</p>}
+  {error && <p role="alert">Could not load articles.</p>}
+  {token && !error && (
+    <form method="get" aria-label="Search the knowledge base">
+      <label>Search<input name="q" type="search" value={query} /></label>
+      <button type="submit">Search</button>
+    </form>
+  )}
+  {token && !error && query && (
+    <section aria-labelledby="kb-search-heading" data-testid="kb-search-results">
+      <h2 id="kb-search-heading">Search results</h2>
+      {hits.length === 0 ? <p>No matching articles.</p> : (
+        <ul>{hits.map((hit) => <li>{hit.title} <small>{hit.snippet}</small></li>)}</ul>
+      )}
+    </section>
+  )}
+  {token && !error && articles.length === 0 && <p>No articles yet.</p>}
+  {token && !error && articles.length > 0 && (
+    <section aria-labelledby="kb-list-heading">
+      <h2 id="kb-list-heading">Published articles</h2>
+      <ul data-testid="kb-articles">{articles.map((article) => <li>{article.title ?? article.id}</li>)}</ul>
+    </section>
+  )}
+</Base>

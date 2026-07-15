@@ -1,0 +1,56 @@
+---
+import Base from '../../layouts/Base.astro'
+import { readServerEnv } from '../../lib/env.ts'
+import { postGraphql } from '../../lib/graphql.ts'
+
+const TICKETS_QUERY = /* GraphQL */ `
+  query SupportTickets($workspaceId: ID!, $first: Int) {
+    supportTickets: support_tickets(workspaceId: $workspaceId, first: $first) {
+      items { id subject requester_email channel sla_due_at }
+    }
+  }`
+
+type TicketRow = {
+  id: string
+  subject: string | null
+  requester_email: string | null
+  channel: string | null
+  sla_due_at: string | null
+}
+
+const token = Astro.cookies.get('sb-access-token')?.value ?? ''
+let tickets: TicketRow[] = []
+let error = false
+if (token) {
+  const { graphqlEndpoint, workspaceId } = readServerEnv()
+  const result = await postGraphql<{ supportTickets: { items: TicketRow[] } }>(
+    graphqlEndpoint,
+    token,
+    TICKETS_QUERY,
+    { workspaceId, first: 100 },
+  )
+  if (result.ok) tickets = result.data.supportTickets.items
+  else error = true
+}
+---
+<Base title="Support inbox">
+  <h1 tabindex="-1" id="support-heading">Support inbox</h1>
+  {!token && <p>Sign in to view tickets.</p>}
+  {error && <p role="alert">Could not load tickets.</p>}
+  {token && !error && tickets.length === 0 && <p>No open tickets.</p>}
+  {token && !error && tickets.length > 0 && (
+    <table data-testid="ticket-list">
+      <thead><tr><th>Subject</th><th>Requester</th><th>Channel</th><th>SLA due</th></tr></thead>
+      <tbody>
+        {tickets.map((ticket) => (
+          <tr>
+            <td>{ticket.subject ?? ticket.id}</td>
+            <td>{ticket.requester_email ?? ''}</td>
+            <td>{ticket.channel ?? ''}</td>
+            <td>{ticket.sla_due_at ?? 'unset'}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  )}
+</Base>

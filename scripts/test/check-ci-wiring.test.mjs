@@ -6,6 +6,10 @@ import { after, before, describe, it } from 'node:test'
 import { MAX_WORKFLOW_BYTES } from '../lib/guarded-read.mjs'
 import { REQUIRED_JOBS, checkCiWiring } from '../check-ci-wiring.mjs'
 
+const SEED_REQUIREMENT = {
+  'publishable-versions': REQUIRED_JOBS['publishable-versions'],
+}
+
 // Synthetic fixtures under $TMPDIR only. NO writes under the real repository (INTERFACES round-5 F1);
 // the checker takes the workflow path as an argument so the hostile cases point at a temp file.
 let work = ''
@@ -31,6 +35,7 @@ const ARMED_JOB = `
       - run: pnpm install --frozen-lockfile
       - run: pnpm test:version-gate
       - run: pnpm check:publishable-versions
+      - run: pnpm check:ci-wiring
 `
 
 /** The real ci.yml shape: a top-level `jobs:`, a neighbouring job, and a job literally NAMED `jobs`. */
@@ -53,25 +58,58 @@ ${ARMED_JOB}
 `
 
 describe('checkCiWiring — the intended workflow', () => {
-  it('PASSES: the job exists under jobs: and invokes both commands', () => {
-    assert.deepEqual(checkCiWiring(fixture('good', GOOD)), [])
+  it('PASSES: the job exists under jobs: and invokes every required command', () => {
+    assert.deepEqual(checkCiWiring(fixture('good', GOOD), SEED_REQUIREMENT), [])
   })
 
   // The real ci.yml contains a job literally NAMED `jobs:` (ci.yml:173). Matching the trimmed text
   // alone would anchor on it and scan the wrong block.
   it('anchors on the TOP-LEVEL jobs: mapping, not a job named "jobs"', () => {
     const noTopLevel = GOOD.replace(/^jobs:$/m, 'not-jobs:')
-    const problems = checkCiWiring(fixture('no-jobs', noTopLevel))
+    const problems = checkCiWiring(fixture('no-jobs', noTopLevel), SEED_REQUIREMENT)
     assert.equal(problems.length, 1)
     assert.match(problems[0], /ci_wiring_jobs_block_missing/)
   })
 })
 
+describe('checkCiWiring — C6 productization gates stay armed', () => {
+  const workflow = `name: ci
+on: [push]
+jobs:
+  c6-productization:
+    runs-on: ubuntu-latest
+    steps:
+      - run: pnpm --filter @movp/platform test
+      - run: bash fixtures/platform-consumer/gate.sh
+      - run: pnpm --filter @movp/cli test:built-runtime
+      - run: bash fixtures/verdaccio-crm-lite/gate.sh
+  c6-surface-wiring:
+    runs-on: ubuntu-latest
+    steps:
+      - run: pnpm --filter @movp/domain exec vitest run --config vitest.unit.config.ts
+      - run: pnpm --filter @movp/flows exec vitest run test/schema-injection.test.ts
+      - run: pnpm --filter @movp/mcp exec vitest run test/surface-wiring.test.ts
+      - run: pnpm --filter @movp/cli exec vitest run test/codegen-refusal.test.ts
+`
+
+  it('fails when a load-bearing C6 productization invocation is removed', () => {
+    assert.ok(REQUIRED_JOBS['c6-productization'])
+    assert.ok(REQUIRED_JOBS['c6-surface-wiring'])
+    const withoutConsumerGate = workflow.replace('      - run: bash fixtures/platform-consumer/gate.sh\n', '')
+    const problems = checkCiWiring(fixture('c6-consumer-gate-missing', withoutConsumerGate), {
+      'c6-productization': REQUIRED_JOBS['c6-productization'],
+      'c6-surface-wiring': REQUIRED_JOBS['c6-surface-wiring'],
+    })
+    assert.equal(problems.length, 1)
+    assert.match(problems[0], /ci_wiring_run_missing: .* job "c6-productization" does not invoke `bash fixtures\/platform-consumer\/gate\.sh`/)
+  })
+})
+
 describe('checkCiWiring — hostile workflows that MUST fail (each false-greened the substring scan)', () => {
   // THE reproduced defect: `y.includes('publishable-versions:')` is true for a COMMENTED-OUT job.
-  it('FAILS: the job and both commands appear ONLY inside # comments', () => {
+  it('FAILS: the job and its commands appear ONLY inside # comments', () => {
     const commented = GOOD.replace(ARMED_JOB, `${ARMED_JOB.replace(/^(.*)$/gm, '#$1')}\n`)
-    const problems = checkCiWiring(fixture('comments-only', commented))
+    const problems = checkCiWiring(fixture('comments-only', commented), SEED_REQUIREMENT)
     assert.equal(problems.length, 1)
     assert.match(problems[0], /ci_wiring_job_missing: .* has no "publishable-versions:" job/)
   })
@@ -90,32 +128,33 @@ describe('checkCiWiring — hostile workflows that MUST fail (each false-greened
     steps:
       - run: pnpm test:version-gate
       - run: pnpm check:publishable-versions
+      - run: pnpm check:ci-wiring
 `,
     )
-    const problems = checkCiWiring(fixture('wrong-job', wrongJob))
-    assert.equal(problems.length, 2) // BOTH commands are outside the job's block
+    const problems = checkCiWiring(fixture('wrong-job', wrongJob), SEED_REQUIREMENT)
+    assert.equal(problems.length, 3) // All commands are outside the job's block.
     assert.match(problems[0], /ci_wiring_run_missing: .* job "publishable-versions" does not invoke `pnpm test:version-gate`/)
     assert.match(problems[1], /ci_wiring_run_missing: .* does not invoke `pnpm check:publishable-versions`/)
+    assert.match(problems[2], /ci_wiring_run_missing: .* does not invoke `pnpm check:ci-wiring`/)
   })
 
   it('FAILS: the job is present but ONE command is missing', () => {
     const oneMissing = GOOD.replace('      - run: pnpm check:publishable-versions\n', '')
-    const problems = checkCiWiring(fixture('one-missing', oneMissing))
+    const problems = checkCiWiring(fixture('one-missing', oneMissing), SEED_REQUIREMENT)
     assert.equal(problems.length, 1)
     assert.match(problems[0], /ci_wiring_run_missing: .* does not invoke `pnpm check:publishable-versions`/)
   })
 
   it('FAILS: the job name is DUPLICATED (never silently pick one)', () => {
     const duplicated = GOOD.replace(ARMED_JOB, `${ARMED_JOB}${ARMED_JOB}`)
-    const problems = checkCiWiring(fixture('duplicate', duplicated))
+    const problems = checkCiWiring(fixture('duplicate', duplicated), SEED_REQUIREMENT)
     assert.equal(problems.length, 1)
     assert.match(problems[0], /ci_wiring_job_duplicated: .* declares the "publishable-versions:" job 2 times/)
   })
 
   it('reports EVERY failing table entry, not just the first', () => {
     const problems = checkCiWiring(fixture('good-multi', GOOD), {
-      ...REQUIRED_JOBS,
-      // 06e's future entry, not wired yet
+      ...SEED_REQUIREMENT,
       'template-gallery': { runs: ['pnpm check:template-gallery'] },
     })
     assert.equal(problems.length, 1)
@@ -329,6 +368,22 @@ on:
 
 jobs:
 ${ARMED_JOB}
+  c6-productization:
+    runs-on: ubuntu-latest
+    steps:
+      - run: pnpm --filter @movp/platform test
+      - run: bash fixtures/platform-consumer/gate.sh
+      - run: pnpm --filter @movp/cli test:built-runtime
+      - run: bash fixtures/verdaccio-crm-lite/gate.sh
+
+  c6-surface-wiring:
+    runs-on: ubuntu-latest
+    steps:
+      - run: pnpm --filter @movp/domain exec vitest run --config vitest.unit.config.ts
+      - run: pnpm --filter @movp/flows exec vitest run test/schema-injection.test.ts
+      - run: pnpm --filter @movp/mcp exec vitest run test/surface-wiring.test.ts
+      - run: pnpm --filter @movp/cli exec vitest run test/codegen-refusal.test.ts
+
   template-gallery:
     runs-on: ubuntu-latest
     steps:
@@ -378,7 +433,10 @@ ${ARMED_JOB}
         with: { version: 2.109.1 }
       # fail loud if the pinned CLI drifts at runtime
       - run: supabase --version | grep -qF '2.109.1'
-      - uses: actions/download-artifact@v4
+      - uses: denoland/setup-deno@v2
+        with: { deno-version: v2.9.2 }
+      - run: deno --version | head -n 1 | grep -qF 'deno 2.9.2'
+      - uses: actions/download-artifact@v5
         with: { name: movp-tarballs, path: ./artifacts }
       - run: pnpm install --frozen-lockfile
       - env:
@@ -402,12 +460,17 @@ const FULL_TABLE = {
   'template-smoke': {
     runs: [
       "supabase --version | grep -qF '2.109.1'",
+      "deno --version | head -n 1 | grep -qF 'deno 2.9.2'",
       'bash fixtures/verdaccio-gallery/gate.sh ${{ matrix.template }}',   // multi-key `- env:` / `run:` step
     ],
     // The 4-way matrix sits under `strategy:`, NOT inside a step — so it stays a `lines` requirement.
     lines: ['template: [crm-lite, marketing-site, support-desk, knowledge-base]'],
     // OWNERSHIP: the pin must live in the SAME STEP as the setup-cli action (round-11 F1).
-    steps: [['uses: supabase/setup-cli@v2', 'with: { version: 2.109.1 }']],
+    steps: [
+      ['uses: supabase/setup-cli@v2', 'with: { version: 2.109.1 }'],
+      ['uses: denoland/setup-deno@v2', 'with: { deno-version: v2.9.2 }'],
+      ['uses: actions/download-artifact@v5', 'with: { name: movp-tarballs, path: ./artifacts }'],
+    ],
   },
 }
 
@@ -429,6 +492,13 @@ describe("checkCiWiring — 06e's REAL workflow, pasted verbatim (round-10 F1 ac
     const problems = checkCiWiring(fixture('real-no-gate', withoutGate), FULL_TABLE)
     assert.equal(problems.length, 1)
     assert.match(problems[0], /ci_wiring_run_missing: .* job "template-smoke" does not invoke `bash fixtures\/verdaccio-gallery\/gate\.sh \$\{\{ matrix\.template \}\}`/)
+  })
+
+  it('FAILS when template-smoke downgrades download-artifact from Node 24', () => {
+    const downgraded = REAL_CI.replace('actions/download-artifact@v5', 'actions/download-artifact@v4')
+    const problems = checkCiWiring(fixture('real-old-download-artifact', downgraded), FULL_TABLE)
+    assert.equal(problems.length, 1)
+    assert.match(problems[0], /ci_wiring_step_missing: .*actions\/download-artifact@v5/)
   })
 })
 

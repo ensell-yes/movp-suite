@@ -1,0 +1,19 @@
+{
+  "imports": {
+    "@movp/graphql": "npm:@movp/graphql@^0.1.0",
+    "@movp/core-schema": "npm:@movp/core-schema@^0.1.0",
+    "@movp/domain": "npm:@movp/domain@^0.1.0",
+    "@movp/auth": "npm:@movp/auth@^0.1.0",
+    "@movp/obs": "npm:@movp/obs@^0.1.0",
+    "@movp/search": "npm:@movp/search@^0.1.0",
+    "@movp/search/gte-small": "npm:@movp/search@^0.1.0/gte-small",
+    "@pothos/core": "npm:@pothos/core@^4.3.0",
+    "@pothos/plugin-complexity": "npm:@pothos/plugin-complexity@^4.1.0",
+    "@pothos/plugin-dataloader": "npm:@pothos/plugin-dataloader@^4.1.0",
+    "graphql": "npm:graphql@^16.9.0",
+    "graphql-yoga": "npm:graphql-yoga@^5.10.0",
+    "zod": "npm:zod@^3.23.8",
+    "@supabase/supabase-js": "npm:@supabase/supabase-js@2",
+    "jose": "npm:jose@5"
+  }
+}

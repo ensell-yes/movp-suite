@@ -1,4 +1,4 @@
-export const TEMPLATES = ['crm-lite'] as const
+export const TEMPLATES = ['crm-lite', 'marketing-site', 'support-desk', 'knowledge-base'] as const
 export type TemplateName = (typeof TEMPLATES)[number]
 
 export const DEFAULT_WORKSPACE_ID = '33333333-3333-3333-3333-333333333333'

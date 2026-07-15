@@ -112,6 +112,58 @@ jobs:
       - run: pnpm check:packages
       - run: pnpm check:release-preflight
 
+  template-gallery:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v6
+        with: { version: 9.12.0 }
+      - uses: actions/setup-node@v6
+        with: { node-version: 22, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter create-movp build
+      - run: pnpm exec tsx scripts/check-template-gallery.ts
+      - run: bash scripts/check-template-gallery-guards.sh
+
+  pack-artifacts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v6
+        with: { version: 9.12.0 }
+      - uses: actions/setup-node@v6
+        with: { node-version: 22, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: bash fixtures/verdaccio-gallery/pack.sh ./artifacts
+      - uses: actions/upload-artifact@v4
+        with: { name: movp-tarballs, path: ./artifacts }
+
+  template-smoke:
+    needs: [pack-artifacts]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        template: [crm-lite, marketing-site, support-desk, knowledge-base]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v6
+        with: { version: 9.12.0 }
+      - uses: actions/setup-node@v6
+        with: { node-version: 22, cache: pnpm }
+      - uses: supabase/setup-cli@v2
+        with: { version: 2.109.1 }
+      - run: supabase --version | grep -qF '2.109.1'
+      - uses: denoland/setup-deno@v2
+        with: { deno-version: v2.9.2 }
+      - run: deno --version | head -n 1 | grep -qF 'deno 2.9.2'
+      - uses: actions/download-artifact@v5
+        with: { name: movp-tarballs, path: ./artifacts }
+      - run: pnpm install --frozen-lockfile
+      - env:
+          ARTIFACTS_DIR: ${{ github.workspace }}/artifacts
+        run: bash fixtures/verdaccio-gallery/gate.sh ${{ matrix.template }}
+
   publishable-versions:
     runs-on: ubuntu-latest
     steps:
@@ -124,6 +176,7 @@ jobs:
       # This dependency-free gate must remain runnable before packages are built.
       - run: pnpm test:version-gate
       - run: pnpm check:publishable-versions
+      - run: pnpm check:ci-wiring
 
   quickstart:
     runs-on: ubuntu-latest

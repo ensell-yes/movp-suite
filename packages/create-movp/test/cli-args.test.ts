@@ -36,6 +36,24 @@ describe('parseCreateCliArgs', () => {
     ])).toMatchObject({ projectName: 'acme-crm', template: 'crm-lite' })
   })
 
+  it('accepts the marketing-site gallery template', () => {
+    expect(parseCreateCliArgs(['--template', 'marketing-site'])).toMatchObject({
+      template: 'marketing-site',
+    })
+  })
+
+  it('accepts the support-desk gallery template', () => {
+    expect(parseCreateCliArgs(['--template', 'support-desk'])).toMatchObject({
+      template: 'support-desk',
+    })
+  })
+
+  it('accepts the knowledge-base gallery template', () => {
+    expect(parseCreateCliArgs(['--template', 'knowledge-base'])).toMatchObject({
+      template: 'knowledge-base',
+    })
+  })
+
   it('rejects an unknown template', () => {
     expect(() => parseCreateCliArgs(['--template', 'unknown'])).toThrow(/unknown_template/)
   })
