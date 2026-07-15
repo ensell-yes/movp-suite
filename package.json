@@ -7,6 +7,7 @@
     "codegen": "tsx scripts/codegen.ts",
     "docs:manifest": "tsx scripts/emit-docs-manifest.ts",
     "docs:reference": "tsx docs-site/scripts/gen-dsl-reference.ts",
+    "check:docs-manifest": "tsx scripts/check-docs-manifest.ts",
     "check:docs": "pnpm check:task-cms-contracts && node scripts/check-docs-presence.mjs && node scripts/check-agent-configs.mjs",
     "check:packages": "node scripts/check-package-artifacts.mjs",
     "check:publishable-versions": "node scripts/check-publishable-versions.mjs",
