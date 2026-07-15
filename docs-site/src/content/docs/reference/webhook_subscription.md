@@ -3,7 +3,7 @@ title: Webhook Subscription
 description: DSL reference for the webhook_subscription collection (generated — do not edit).
 ---
 
-<!-- Generated from movp.schema.json by scripts/gen-dsl-reference. Do not edit by hand. -->
+<!-- Generated from movp.schema.json by `pnpm docs:reference`. Do not edit by hand. -->
 
 **Collection name:** `webhook_subscription`
 **Layer:** platform

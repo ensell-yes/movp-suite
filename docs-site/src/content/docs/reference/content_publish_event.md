@@ -3,7 +3,7 @@ title: Content Publish Event
 description: DSL reference for the content_publish_event collection (generated — do not edit).
 ---
 
-<!-- Generated from movp.schema.json by scripts/gen-dsl-reference. Do not edit by hand. -->
+<!-- Generated from movp.schema.json by `pnpm docs:reference`. Do not edit by hand. -->
 
 **Collection name:** `content_publish_event`
 **Layer:** platform

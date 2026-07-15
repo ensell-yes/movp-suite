@@ -3,7 +3,7 @@ title: Schema reference
 description: Generated DSL reference for every MOVP collection.
 ---
 
-<!-- Generated from movp.schema.json by scripts/gen-dsl-reference. Do not edit by hand. -->
+<!-- Generated from movp.schema.json by `pnpm docs:reference`. Do not edit by hand. -->
 
 Generated from manifest version 1 (generator 0.1.0).
 

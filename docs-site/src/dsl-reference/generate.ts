@@ -8,6 +8,7 @@ export interface GeneratedPage {
 
 const yesNo = (value: boolean): string => (value ? 'yes' : 'no')
 const orDash = (value: string | null): string => (value === null || value === '' ? '—' : value)
+const GENERATED_BANNER = '<!-- Generated from movp.schema.json by `pnpm docs:reference`. Do not edit by hand. -->'
 
 function fieldRow(field: ManifestField): string {
   return `| \`${field.name}\` | \`${field.type}\` | ${field.label} | ${orDash(field.cardinality)} | ${orDash(
@@ -23,7 +24,7 @@ function collectionPage(collection: ManifestCollection): GeneratedPage {
     `description: DSL reference for the ${collection.name} collection (generated — do not edit).`,
     '---',
     '',
-    '<!-- Generated from movp.schema.json by scripts/gen-dsl-reference. Do not edit by hand. -->',
+    GENERATED_BANNER,
     '',
     `**Collection name:** \`${collection.name}\``,
     `**Layer:** ${collection.layer}`,
@@ -50,7 +51,7 @@ function indexPage(manifest: SchemaManifest, collections: readonly ManifestColle
     'description: Generated DSL reference for every MOVP collection.',
     '---',
     '',
-    '<!-- Generated from movp.schema.json by scripts/gen-dsl-reference. Do not edit by hand. -->',
+    GENERATED_BANNER,
     '',
     `Generated from manifest version ${manifest.manifestVersion} (generator ${manifest.generatorVersion}).`,
     '',

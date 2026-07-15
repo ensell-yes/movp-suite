@@ -3,7 +3,7 @@ title: Share Link
 description: DSL reference for the share_link collection (generated — do not edit).
 ---
 
-<!-- Generated from movp.schema.json by scripts/gen-dsl-reference. Do not edit by hand. -->
+<!-- Generated from movp.schema.json by `pnpm docs:reference`. Do not edit by hand. -->
 
 **Collection name:** `share_link`
 **Layer:** platform

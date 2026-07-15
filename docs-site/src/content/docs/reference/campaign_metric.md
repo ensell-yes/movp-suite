@@ -3,7 +3,7 @@ title: Campaign Metric
 description: DSL reference for the campaign_metric collection (generated — do not edit).
 ---
 
-<!-- Generated from movp.schema.json by scripts/gen-dsl-reference. Do not edit by hand. -->
+<!-- Generated from movp.schema.json by `pnpm docs:reference`. Do not edit by hand. -->
 
 **Collection name:** `campaign_metric`
 **Layer:** platform

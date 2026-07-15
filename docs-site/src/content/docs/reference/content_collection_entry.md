@@ -3,7 +3,7 @@ title: Content Collection Entry
 description: DSL reference for the content_collection_entry collection (generated — do not edit).
 ---
 
-<!-- Generated from movp.schema.json by scripts/gen-dsl-reference. Do not edit by hand. -->
+<!-- Generated from movp.schema.json by `pnpm docs:reference`. Do not edit by hand. -->
 
 **Collection name:** `content_collection_entry`
 **Layer:** platform

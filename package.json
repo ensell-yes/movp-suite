@@ -8,6 +8,7 @@
     "docs:manifest": "tsx scripts/emit-docs-manifest.ts",
     "docs:reference": "tsx docs-site/scripts/gen-dsl-reference.ts",
     "docs:build": "pnpm --filter @movp/docs-site build",
+    "check:docs-freshness": "node scripts/check-docs-freshness.mjs",
     "check:docs-manifest": "tsx scripts/check-docs-manifest.ts",
     "check:docs": "pnpm check:task-cms-contracts && node scripts/check-docs-presence.mjs && node scripts/check-agent-configs.mjs",
     "check:packages": "node scripts/check-package-artifacts.mjs",

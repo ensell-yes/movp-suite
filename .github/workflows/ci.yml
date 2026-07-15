@@ -46,10 +46,10 @@ jobs:
       - uses: actions/setup-node@v6
         with: { node-version: 22, cache: pnpm }
       - run: pnpm install --frozen-lockfile
-      - run: pnpm build
+      - run: pnpm --filter @movp/core-schema --filter @movp/codegen build
       - run: pnpm docs:manifest
       - run: pnpm docs:reference
-      - run: git diff --exit-code docs-site/movp.schema.json docs-site/src/content/docs/reference
+      - run: pnpm check:docs-freshness
       - run: pnpm check:docs-manifest
       - run: pnpm docs:build
 
