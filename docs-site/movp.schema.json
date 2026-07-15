@@ -1,0 +1,2617 @@
+{
+  "manifestVersion": 1,
+  "generatorVersion": "0.1.0",
+  "schemaFingerprint": "268dc36b15138c9eacd3efd01f5bf320f7ed5b0bb0a3c1c2b0f5acf211555115",
+  "collections": [
+    {
+      "name": "asset",
+      "internal": true,
+      "label": "Asset",
+      "workspaceScoped": true,
+      "layer": "platform",
+      "fields": [
+        {
+          "name": "alt_text",
+          "type": "text",
+          "label": "Alt Text",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": true,
+          "embeddable": false
+        },
+        {
+          "name": "checksum",
+          "type": "text",
+          "label": "Checksum",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "filename",
+          "type": "text",
+          "label": "Filename",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "height",
+          "type": "number",
+          "label": "Height",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "mime",
+          "type": "text",
+          "label": "MIME Type",
+          "cardinality": null,
+          "reporting_role": "dimension",
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "r2_key",
+          "type": "text",
+          "label": "R2 Key",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "size_bytes",
+          "type": "number",
+          "label": "Size Bytes",
+          "cardinality": null,
+          "reporting_role": "measure",
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "uploaded_by",
+          "type": "uuid",
+          "label": "Uploaded By",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "width",
+          "type": "number",
+          "label": "Width",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        }
+      ]
+    },
+    {
+      "name": "automation_rule",
+      "internal": false,
+      "label": "Automation Rule",
+      "workspaceScoped": true,
+      "layer": "platform",
+      "fields": [
+        {
+          "name": "action_config",
+          "type": "json",
+          "label": "Action Config",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "action_type",
+          "type": "enum",
+          "label": "Action Type",
+          "cardinality": null,
+          "reporting_role": "dimension",
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "condition",
+          "type": "json",
+          "label": "Condition",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "enabled",
+          "type": "boolean",
+          "label": "Enabled",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "priority",
+          "type": "number",
+          "label": "Priority",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "trigger_event_type",
+          "type": "relation",
+          "label": "Trigger Event Type",
+          "cardinality": "many-to-one",
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        }
+      ]
+    },
+    {
+      "name": "campaign",
+      "internal": false,
+      "label": "Campaign",
+      "workspaceScoped": true,
+      "layer": "platform",
+      "fields": [
+        {
+          "name": "brief",
+          "type": "richText",
+          "label": "Brief",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": true,
+          "embeddable": true
+        },
+        {
+          "name": "end_date",
+          "type": "date",
+          "label": "End Date",
+          "cardinality": null,
+          "reporting_role": "dimension",
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "goal_metrics",
+          "type": "json",
+          "label": "Goal Metrics",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "marketing_plan",
+          "type": "relation",
+          "label": "Marketing Plan",
+          "cardinality": "many-to-one",
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "name",
+          "type": "text",
+          "label": "Name",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": true,
+          "embeddable": false
+        },
+        {
+          "name": "owner_id",
+          "type": "uuid",
+          "label": "Owner",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "priority",
+          "type": "enum",
+          "label": "Priority",
+          "cardinality": null,
+          "reporting_role": "dimension",
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "rank",
+          "type": "number",
+          "label": "Rank",
+          "cardinality": null,
+          "reporting_role": "dimension",
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "start_date",
+          "type": "date",
+          "label": "Start Date",
+          "cardinality": null,
+          "reporting_role": "dimension",
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "status",
+          "type": "enum",
+          "label": "Status",
+          "cardinality": null,
+          "reporting_role": "dimension",
+          "searchable": false,
+          "embeddable": false
+        }
+      ]
+    },
+    {
+      "name": "campaign_calendar_event",
+      "internal": false,
+      "label": "Campaign Calendar Event",
+      "workspaceScoped": true,
+      "layer": "platform",
+      "fields": [
+        {
+          "name": "campaign",
+          "type": "relation",
+          "label": "Campaign",
+          "cardinality": "many-to-one",
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "event_date",
+          "type": "date",
+          "label": "Event Date",
+          "cardinality": null,
+          "reporting_role": "dimension",
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "event_type",
+          "type": "enum",
+          "label": "Event Type",
+          "cardinality": null,
+          "reporting_role": "dimension",
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "title",
+          "type": "text",
+          "label": "Title",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": true,
+          "embeddable": false
+        }
+      ]
+    },
+    {
+      "name": "campaign_channel",
+      "internal": false,
+      "label": "Campaign Channel",
+      "workspaceScoped": true,
+      "layer": "platform",
+      "fields": [
+        {
+          "name": "campaign",
+          "type": "relation",
+          "label": "Campaign",
+          "cardinality": "many-to-one",
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "channel_type",
+          "type": "enum",
+          "label": "Channel Type",
+          "cardinality": null,
+          "reporting_role": "dimension",
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "name",
+          "type": "text",
+          "label": "Name",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        }
+      ]
+    },
+    {
+      "name": "campaign_deliverable",
+      "internal": false,
+      "label": "Campaign Deliverable",
+      "workspaceScoped": true,
+      "layer": "platform",
+      "fields": [
+        {
+          "name": "campaign",
+          "type": "relation",
+          "label": "Campaign",
+          "cardinality": "many-to-one",
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "channel",
+          "type": "relation",
+          "label": "Channel",
+          "cardinality": "many-to-one",
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "deliverable_type",
+          "type": "enum",
+          "label": "Deliverable Type",
+          "cardinality": null,
+          "reporting_role": "dimension",
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "name",
+          "type": "text",
+          "label": "Name",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": true,
+          "embeddable": false
+        }
+      ]
+    },
+    {
+      "name": "campaign_metric",
+      "internal": false,
+      "label": "Campaign Metric",
+      "workspaceScoped": true,
+      "layer": "platform",
+      "fields": [
+        {
+          "name": "campaign",
+          "type": "relation",
+          "label": "Campaign",
+          "cardinality": "many-to-one",
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "channel",
+          "type": "relation",
+          "label": "Channel",
+          "cardinality": "many-to-one",
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "deliverable",
+          "type": "relation",
+          "label": "Deliverable",
+          "cardinality": "many-to-one",
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "measured_at",
+          "type": "date",
+          "label": "Measured At",
+          "cardinality": null,
+          "reporting_role": "dimension",
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "metric_key",
+          "type": "text",
+          "label": "Metric Key",
+          "cardinality": null,
+          "reporting_role": "dimension",
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "unit",
+          "type": "text",
+          "label": "Unit",
+          "cardinality": null,
+          "reporting_role": "dimension",
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "value",
+          "type": "number",
+          "label": "Value",
+          "cardinality": null,
+          "reporting_role": "measure",
+          "searchable": false,
+          "embeddable": false
+        }
+      ]
+    },
+    {
+      "name": "campaign_segment",
+      "internal": false,
+      "label": "Campaign Segment",
+      "workspaceScoped": true,
+      "layer": "platform",
+      "fields": [
+        {
+          "name": "campaign",
+          "type": "relation",
+          "label": "Campaign",
+          "cardinality": "many-to-one",
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "targeting_role",
+          "type": "enum",
+          "label": "Targeting Role",
+          "cardinality": null,
+          "reporting_role": "dimension",
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "weight",
+          "type": "number",
+          "label": "Weight",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        }
+      ]
+    },
+    {
+      "name": "comment",
+      "internal": true,
+      "label": "Comment",
+      "workspaceScoped": true,
+      "layer": "platform",
+      "fields": [
+        {
+          "name": "author_id",
+          "type": "uuid",
+          "label": "Author",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "body",
+          "type": "richText",
+          "label": "Body",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": true,
+          "embeddable": false
+        },
+        {
+          "name": "entity_id",
+          "type": "uuid",
+          "label": "Entity",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "entity_type",
+          "type": "text",
+          "label": "Entity Type",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "parent",
+          "type": "relation",
+          "label": "Parent Comment",
+          "cardinality": "many-to-one",
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        }
+      ]
+    },
+    {
+      "name": "content_approval",
+      "internal": true,
+      "label": "Content Approval",
+      "workspaceScoped": true,
+      "layer": "platform",
+      "fields": [
+        {
+          "name": "approvals_required",
+          "type": "number",
+          "label": "Approvals Required",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "approved_content_hash",
+          "type": "text",
+          "label": "Approved Content Hash",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "approved_revision",
+          "type": "relation",
+          "label": "Approved Revision",
+          "cardinality": "many-to-one",
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "content_item",
+          "type": "relation",
+          "label": "Content Item",
+          "cardinality": "many-to-one",
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "decided_at",
+          "type": "datetime",
+          "label": "Decided At",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "decided_by",
+          "type": "uuid",
+          "label": "Decided By",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "policy",
+          "type": "enum",
+          "label": "Policy",
+          "cardinality": null,
+          "reporting_role": "dimension",
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "state",
+          "type": "enum",
+          "label": "State",
+          "cardinality": null,
+          "reporting_role": "dimension",
+          "searchable": false,
+          "embeddable": false
+        }
+      ]
+    },
+    {
+      "name": "content_approval_vote",
+      "internal": true,
+      "label": "Content Approval Vote",
+      "workspaceScoped": true,
+      "layer": "platform",
+      "fields": [
+        {
+          "name": "approval",
+          "type": "relation",
+          "label": "Approval",
+          "cardinality": "many-to-one",
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "vote",
+          "type": "enum",
+          "label": "Vote",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "voter_id",
+          "type": "uuid",
+          "label": "Voter",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        }
+      ]
+    },
+    {
+      "name": "content_collection",
+      "internal": true,
+      "label": "Content Collection",
+      "workspaceScoped": true,
+      "layer": "platform",
+      "fields": [
+        {
+          "name": "description",
+          "type": "text",
+          "label": "Description",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "key",
+          "type": "text",
+          "label": "Key",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "label",
+          "type": "text",
+          "label": "Label",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        }
+      ]
+    },
+    {
+      "name": "content_collection_entry",
+      "internal": true,
+      "label": "Content Collection Entry",
+      "workspaceScoped": true,
+      "layer": "platform",
+      "fields": [
+        {
+          "name": "collection",
+          "type": "relation",
+          "label": "Collection",
+          "cardinality": "many-to-one",
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "content_item",
+          "type": "relation",
+          "label": "Content Item",
+          "cardinality": "many-to-one",
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "position",
+          "type": "number",
+          "label": "Position",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        }
+      ]
+    },
+    {
+      "name": "content_item",
+      "internal": true,
+      "label": "Content Item",
+      "workspaceScoped": true,
+      "layer": "platform",
+      "fields": [
+        {
+          "name": "approved_revision_id",
+          "type": "uuid",
+          "label": "Approved Revision",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "content_type",
+          "type": "relation",
+          "label": "Content Type",
+          "cardinality": "many-to-one",
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "current_revision_id",
+          "type": "uuid",
+          "label": "Current Revision",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "published_at",
+          "type": "datetime",
+          "label": "Published At",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "published_revision_id",
+          "type": "uuid",
+          "label": "Published Revision",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "search_body",
+          "type": "richText",
+          "label": "Search Body",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": true,
+          "embeddable": true
+        },
+        {
+          "name": "search_text",
+          "type": "text",
+          "label": "Search Text",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": true,
+          "embeddable": false
+        },
+        {
+          "name": "slug",
+          "type": "text",
+          "label": "Slug",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "status",
+          "type": "enum",
+          "label": "Status",
+          "cardinality": null,
+          "reporting_role": "dimension",
+          "searchable": false,
+          "embeddable": false
+        }
+      ]
+    },
+    {
+      "name": "content_publish_event",
+      "internal": true,
+      "label": "Content Publish Event",
+      "workspaceScoped": true,
+      "layer": "platform",
+      "fields": [
+        {
+          "name": "action",
+          "type": "enum",
+          "label": "Action",
+          "cardinality": null,
+          "reporting_role": "dimension",
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "actor_id",
+          "type": "uuid",
+          "label": "Actor",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "content_hash",
+          "type": "text",
+          "label": "Content Hash",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "content_item",
+          "type": "relation",
+          "label": "Content Item",
+          "cardinality": "many-to-one",
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "revision",
+          "type": "relation",
+          "label": "Revision",
+          "cardinality": "many-to-one",
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        }
+      ]
+    },
+    {
+      "name": "content_revision",
+      "internal": true,
+      "label": "Content Revision",
+      "workspaceScoped": true,
+      "layer": "platform",
+      "fields": [
+        {
+          "name": "author_id",
+          "type": "uuid",
+          "label": "Author",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "content_hash",
+          "type": "text",
+          "label": "Content Hash",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "content_item",
+          "type": "relation",
+          "label": "Item",
+          "cardinality": "many-to-one",
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "data",
+          "type": "json",
+          "label": "Data",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "parent",
+          "type": "relation",
+          "label": "Parent Revision",
+          "cardinality": "many-to-one",
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "revision_number",
+          "type": "number",
+          "label": "Revision Number",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        }
+      ]
+    },
+    {
+      "name": "content_schedule",
+      "internal": true,
+      "label": "Content Schedule",
+      "workspaceScoped": true,
+      "layer": "platform",
+      "fields": [
+        {
+          "name": "action",
+          "type": "enum",
+          "label": "Action",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "content_item",
+          "type": "relation",
+          "label": "Content Item",
+          "cardinality": "many-to-one",
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "revision",
+          "type": "relation",
+          "label": "Revision",
+          "cardinality": "many-to-one",
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "run_at",
+          "type": "datetime",
+          "label": "Run At",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "scheduled_by",
+          "type": "uuid",
+          "label": "Scheduled By",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "state",
+          "type": "enum",
+          "label": "State",
+          "cardinality": null,
+          "reporting_role": "dimension",
+          "searchable": false,
+          "embeddable": false
+        }
+      ]
+    },
+    {
+      "name": "content_seo",
+      "internal": true,
+      "label": "Content SEO",
+      "workspaceScoped": true,
+      "layer": "platform",
+      "fields": [
+        {
+          "name": "checklist",
+          "type": "json",
+          "label": "Checklist",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "content_item",
+          "type": "relation",
+          "label": "Content Item",
+          "cardinality": "many-to-one",
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "jsonld",
+          "type": "json",
+          "label": "JSON-LD",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "meta",
+          "type": "json",
+          "label": "Meta",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "score",
+          "type": "number",
+          "label": "Score",
+          "cardinality": null,
+          "reporting_role": "measure",
+          "searchable": false,
+          "embeddable": false
+        }
+      ]
+    },
+    {
+      "name": "content_type",
+      "internal": true,
+      "label": "Content Type",
+      "workspaceScoped": true,
+      "layer": "platform",
+      "fields": [
+        {
+          "name": "approval_policy",
+          "type": "enum",
+          "label": "Approval Policy",
+          "cardinality": null,
+          "reporting_role": "dimension",
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "field_schema",
+          "type": "json",
+          "label": "Field Schema",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "key",
+          "type": "text",
+          "label": "Key",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "label",
+          "type": "text",
+          "label": "Label",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "moderation_policy",
+          "type": "enum",
+          "label": "Moderation Policy",
+          "cardinality": null,
+          "reporting_role": "dimension",
+          "searchable": false,
+          "embeddable": false
+        }
+      ]
+    },
+    {
+      "name": "event_type",
+      "internal": false,
+      "label": "Event Type",
+      "workspaceScoped": false,
+      "layer": "platform",
+      "fields": [
+        {
+          "name": "active",
+          "type": "boolean",
+          "label": "Active",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "description",
+          "type": "text",
+          "label": "Description",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": true,
+          "embeddable": false
+        },
+        {
+          "name": "domain",
+          "type": "enum",
+          "label": "Domain",
+          "cardinality": null,
+          "reporting_role": "dimension",
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "key",
+          "type": "text",
+          "label": "Key",
+          "cardinality": null,
+          "reporting_role": "dimension",
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "label",
+          "type": "text",
+          "label": "Label",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "payload_schema",
+          "type": "json",
+          "label": "Payload Schema",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "schema_version",
+          "type": "number",
+          "label": "Schema Version",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        }
+      ]
+    },
+    {
+      "name": "external_record",
+      "internal": false,
+      "label": "External Record",
+      "workspaceScoped": true,
+      "layer": "platform",
+      "fields": [
+        {
+          "name": "external_id",
+          "type": "text",
+          "label": "External ID",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "payload",
+          "type": "json",
+          "label": "Payload",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "source",
+          "type": "text",
+          "label": "Source",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        }
+      ]
+    },
+    {
+      "name": "marketing_plan",
+      "internal": false,
+      "label": "Marketing Plan",
+      "workspaceScoped": true,
+      "layer": "platform",
+      "fields": [
+        {
+          "name": "description",
+          "type": "richText",
+          "label": "Description",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": true,
+          "embeddable": false
+        },
+        {
+          "name": "goals",
+          "type": "json",
+          "label": "Goals",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "name",
+          "type": "text",
+          "label": "Name",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": true,
+          "embeddable": false
+        },
+        {
+          "name": "owner_id",
+          "type": "uuid",
+          "label": "Owner",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "period_end",
+          "type": "date",
+          "label": "Period End",
+          "cardinality": null,
+          "reporting_role": "dimension",
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "period_start",
+          "type": "date",
+          "label": "Period Start",
+          "cardinality": null,
+          "reporting_role": "dimension",
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "status",
+          "type": "enum",
+          "label": "Status",
+          "cardinality": null,
+          "reporting_role": "dimension",
+          "searchable": false,
+          "embeddable": false
+        }
+      ]
+    },
+    {
+      "name": "mention",
+      "internal": true,
+      "label": "Mention",
+      "workspaceScoped": true,
+      "layer": "platform",
+      "fields": [
+        {
+          "name": "comment",
+          "type": "relation",
+          "label": "Comment",
+          "cardinality": "many-to-one",
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "entity_id",
+          "type": "uuid",
+          "label": "Entity",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "entity_type",
+          "type": "text",
+          "label": "Entity Type",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "mentioned_user_id",
+          "type": "uuid",
+          "label": "Mentioned User",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        }
+      ]
+    },
+    {
+      "name": "note",
+      "internal": false,
+      "label": "Note",
+      "workspaceScoped": true,
+      "layer": "platform",
+      "fields": [
+        {
+          "name": "body",
+          "type": "richText",
+          "label": "Body",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": true,
+          "embeddable": true
+        },
+        {
+          "name": "status",
+          "type": "enum",
+          "label": "Status",
+          "cardinality": null,
+          "reporting_role": "dimension",
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "tags",
+          "type": "relation",
+          "label": "Tags",
+          "cardinality": "many-to-many",
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "title",
+          "type": "text",
+          "label": "Title",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": true,
+          "embeddable": false
+        }
+      ]
+    },
+    {
+      "name": "platform_event",
+      "internal": false,
+      "label": "Platform Event",
+      "workspaceScoped": true,
+      "layer": "platform",
+      "fields": [
+        {
+          "name": "actor_ref",
+          "type": "text",
+          "label": "Actor Ref",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "event_type",
+          "type": "text",
+          "label": "Event Type",
+          "cardinality": null,
+          "reporting_role": "dimension",
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "ingested_at",
+          "type": "datetime",
+          "label": "Ingested At",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "occurred_at",
+          "type": "datetime",
+          "label": "Occurred At",
+          "cardinality": null,
+          "reporting_role": "dimension",
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "properties",
+          "type": "json",
+          "label": "Properties",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "source",
+          "type": "enum",
+          "label": "Source",
+          "cardinality": null,
+          "reporting_role": "dimension",
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "subject_ref",
+          "type": "text",
+          "label": "Subject Ref",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "subject_type",
+          "type": "text",
+          "label": "Subject Type",
+          "cardinality": null,
+          "reporting_role": "dimension",
+          "searchable": false,
+          "embeddable": false
+        }
+      ]
+    },
+    {
+      "name": "reaction",
+      "internal": true,
+      "label": "Reaction",
+      "workspaceScoped": true,
+      "layer": "platform",
+      "fields": [
+        {
+          "name": "entity_id",
+          "type": "uuid",
+          "label": "Entity",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "entity_type",
+          "type": "text",
+          "label": "Entity Type",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "kind",
+          "type": "enum",
+          "label": "Kind",
+          "cardinality": null,
+          "reporting_role": "dimension",
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "user_id",
+          "type": "uuid",
+          "label": "User",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        }
+      ]
+    },
+    {
+      "name": "saved_item",
+      "internal": true,
+      "label": "Saved Item",
+      "workspaceScoped": true,
+      "layer": "platform",
+      "fields": [
+        {
+          "name": "entity_id",
+          "type": "uuid",
+          "label": "Entity",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "entity_type",
+          "type": "text",
+          "label": "Entity Type",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "user_id",
+          "type": "uuid",
+          "label": "User",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        }
+      ]
+    },
+    {
+      "name": "segment",
+      "internal": false,
+      "label": "Segment",
+      "workspaceScoped": true,
+      "layer": "platform",
+      "fields": [
+        {
+          "name": "active",
+          "type": "boolean",
+          "label": "Active",
+          "cardinality": null,
+          "reporting_role": "dimension",
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "description",
+          "type": "richText",
+          "label": "Description",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": true,
+          "embeddable": false
+        },
+        {
+          "name": "mode",
+          "type": "enum",
+          "label": "Mode",
+          "cardinality": null,
+          "reporting_role": "dimension",
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "name",
+          "type": "text",
+          "label": "Name",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": true,
+          "embeddable": false
+        },
+        {
+          "name": "owner_ref",
+          "type": "text",
+          "label": "Owner Ref",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        }
+      ]
+    },
+    {
+      "name": "segment_membership",
+      "internal": false,
+      "label": "Segment Membership",
+      "workspaceScoped": true,
+      "layer": "platform",
+      "fields": [
+        {
+          "name": "evaluated_at",
+          "type": "datetime",
+          "label": "Evaluated At",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "evidence",
+          "type": "json",
+          "label": "Evidence",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "first_matched_at",
+          "type": "datetime",
+          "label": "First Matched At",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "matched_rule",
+          "type": "relation",
+          "label": "Matched Rule",
+          "cardinality": "many-to-one",
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "segment",
+          "type": "relation",
+          "label": "Segment",
+          "cardinality": "many-to-one",
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "subject_ref",
+          "type": "text",
+          "label": "Subject Ref",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "subject_type",
+          "type": "text",
+          "label": "Subject Type",
+          "cardinality": null,
+          "reporting_role": "dimension",
+          "searchable": false,
+          "embeddable": false
+        }
+      ]
+    },
+    {
+      "name": "segment_recompute_run",
+      "internal": false,
+      "label": "Segment Recompute Run",
+      "workspaceScoped": true,
+      "layer": "platform",
+      "fields": [
+        {
+          "name": "added_count",
+          "type": "number",
+          "label": "Added Count",
+          "cardinality": null,
+          "reporting_role": "measure",
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "evaluated_count",
+          "type": "number",
+          "label": "Evaluated Count",
+          "cardinality": null,
+          "reporting_role": "measure",
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "finished_at",
+          "type": "datetime",
+          "label": "Finished At",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "idempotency_key",
+          "type": "text",
+          "label": "Idempotency Key",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "mode",
+          "type": "text",
+          "label": "Mode",
+          "cardinality": null,
+          "reporting_role": "dimension",
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "outcome_code",
+          "type": "text",
+          "label": "Outcome Code",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "removed_count",
+          "type": "number",
+          "label": "Removed Count",
+          "cardinality": null,
+          "reporting_role": "measure",
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "segment",
+          "type": "relation",
+          "label": "Segment",
+          "cardinality": "many-to-one",
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "started_at",
+          "type": "datetime",
+          "label": "Started At",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        }
+      ]
+    },
+    {
+      "name": "segment_rule",
+      "internal": false,
+      "label": "Segment Rule",
+      "workspaceScoped": true,
+      "layer": "platform",
+      "fields": [
+        {
+          "name": "active",
+          "type": "boolean",
+          "label": "Active",
+          "cardinality": null,
+          "reporting_role": "dimension",
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "description",
+          "type": "text",
+          "label": "Description",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "predicate",
+          "type": "json",
+          "label": "Predicate",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "segment",
+          "type": "relation",
+          "label": "Segment",
+          "cardinality": "many-to-one",
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "version",
+          "type": "number",
+          "label": "Version",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        }
+      ]
+    },
+    {
+      "name": "segment_snapshot",
+      "internal": false,
+      "label": "Segment Snapshot",
+      "workspaceScoped": true,
+      "layer": "platform",
+      "fields": [
+        {
+          "name": "member_count",
+          "type": "number",
+          "label": "Member Count",
+          "cardinality": null,
+          "reporting_role": "measure",
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "reason",
+          "type": "enum",
+          "label": "Reason",
+          "cardinality": null,
+          "reporting_role": "dimension",
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "rule_version_set",
+          "type": "json",
+          "label": "Rule Version Set",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "segment",
+          "type": "relation",
+          "label": "Segment",
+          "cardinality": "many-to-one",
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "taken_at",
+          "type": "datetime",
+          "label": "Taken At",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        }
+      ]
+    },
+    {
+      "name": "segment_snapshot_member",
+      "internal": false,
+      "label": "Segment Snapshot Member",
+      "workspaceScoped": true,
+      "layer": "platform",
+      "fields": [
+        {
+          "name": "evidence",
+          "type": "json",
+          "label": "Evidence",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "matched_rule",
+          "type": "relation",
+          "label": "Matched Rule",
+          "cardinality": "many-to-one",
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "snapshot",
+          "type": "relation",
+          "label": "Snapshot",
+          "cardinality": "many-to-one",
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "subject_ref",
+          "type": "text",
+          "label": "Subject Ref",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        }
+      ]
+    },
+    {
+      "name": "share_link",
+      "internal": true,
+      "label": "Share Link",
+      "workspaceScoped": true,
+      "layer": "platform",
+      "fields": [
+        {
+          "name": "created_by",
+          "type": "uuid",
+          "label": "Created By",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "entity_id",
+          "type": "uuid",
+          "label": "Entity",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "entity_type",
+          "type": "text",
+          "label": "Entity Type",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "expires_at",
+          "type": "datetime",
+          "label": "Expires At",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "scope",
+          "type": "enum",
+          "label": "Scope",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "token_hash",
+          "type": "text",
+          "label": "Token Hash",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        }
+      ]
+    },
+    {
+      "name": "tag",
+      "internal": false,
+      "label": "Tag",
+      "workspaceScoped": true,
+      "layer": "platform",
+      "fields": [
+        {
+          "name": "name",
+          "type": "text",
+          "label": "Name",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": true,
+          "embeddable": false
+        }
+      ]
+    },
+    {
+      "name": "task",
+      "internal": true,
+      "label": "Task",
+      "workspaceScoped": true,
+      "layer": "platform",
+      "fields": [
+        {
+          "name": "completed_at",
+          "type": "datetime",
+          "label": "Completed At",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "current_revision_id",
+          "type": "uuid",
+          "label": "Current Revision",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "dependency_blocked",
+          "type": "boolean",
+          "label": "Dependency Blocked",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "due_date",
+          "type": "date",
+          "label": "Due Date",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "due_soon_notified_at",
+          "type": "datetime",
+          "label": "Due Soon Notified At",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "parent",
+          "type": "relation",
+          "label": "Parent Task",
+          "cardinality": "many-to-one",
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "priority",
+          "type": "relation",
+          "label": "Priority",
+          "cardinality": "many-to-one",
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "start_date",
+          "type": "date",
+          "label": "Start Date",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "status",
+          "type": "relation",
+          "label": "Status",
+          "cardinality": "many-to-one",
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "title",
+          "type": "text",
+          "label": "Title",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": true,
+          "embeddable": false
+        }
+      ]
+    },
+    {
+      "name": "task_assignment",
+      "internal": true,
+      "label": "Task Assignment",
+      "workspaceScoped": true,
+      "layer": "platform",
+      "fields": [
+        {
+          "name": "assignee_user_id",
+          "type": "uuid",
+          "label": "Assignee",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "role",
+          "type": "enum",
+          "label": "Role",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "task",
+          "type": "relation",
+          "label": "Task",
+          "cardinality": "many-to-one",
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        }
+      ]
+    },
+    {
+      "name": "task_attachment",
+      "internal": true,
+      "label": "Task Attachment",
+      "workspaceScoped": true,
+      "layer": "platform",
+      "fields": [
+        {
+          "name": "bytes",
+          "type": "number",
+          "label": "Bytes",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "content_type",
+          "type": "text",
+          "label": "Content Type",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "filename",
+          "type": "text",
+          "label": "Filename",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "r2_key",
+          "type": "text",
+          "label": "R2 Key",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "task",
+          "type": "relation",
+          "label": "Task",
+          "cardinality": "many-to-one",
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "uploaded_by",
+          "type": "uuid",
+          "label": "Uploaded By",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        }
+      ]
+    },
+    {
+      "name": "task_dependency",
+      "internal": true,
+      "label": "Task Dependency",
+      "workspaceScoped": true,
+      "layer": "platform",
+      "fields": [
+        {
+          "name": "blocker",
+          "type": "relation",
+          "label": "Blocker",
+          "cardinality": "many-to-one",
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "task",
+          "type": "relation",
+          "label": "Task",
+          "cardinality": "many-to-one",
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        }
+      ]
+    },
+    {
+      "name": "task_observer",
+      "internal": true,
+      "label": "Task Observer",
+      "workspaceScoped": true,
+      "layer": "platform",
+      "fields": [
+        {
+          "name": "observer_user_id",
+          "type": "uuid",
+          "label": "Observer",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "task",
+          "type": "relation",
+          "label": "Task",
+          "cardinality": "many-to-one",
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        }
+      ]
+    },
+    {
+      "name": "task_priority_option",
+      "internal": false,
+      "label": "Task Priority Option",
+      "workspaceScoped": true,
+      "layer": "platform",
+      "fields": [
+        {
+          "name": "color",
+          "type": "text",
+          "label": "Color",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "is_active",
+          "type": "boolean",
+          "label": "Is Active",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "is_default",
+          "type": "boolean",
+          "label": "Is Default",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "label",
+          "type": "text",
+          "label": "Label",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "rank",
+          "type": "number",
+          "label": "Rank",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        }
+      ]
+    },
+    {
+      "name": "task_revision",
+      "internal": true,
+      "label": "Task Revision",
+      "workspaceScoped": true,
+      "layer": "platform",
+      "fields": [
+        {
+          "name": "author_id",
+          "type": "uuid",
+          "label": "Author",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "body",
+          "type": "richText",
+          "label": "Body",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": true,
+          "embeddable": true
+        },
+        {
+          "name": "content_hash",
+          "type": "text",
+          "label": "Content Hash",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "task",
+          "type": "relation",
+          "label": "Task",
+          "cardinality": "many-to-one",
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        }
+      ]
+    },
+    {
+      "name": "task_status_history",
+      "internal": true,
+      "label": "Task Status History",
+      "workspaceScoped": true,
+      "layer": "platform",
+      "fields": [
+        {
+          "name": "changed_by",
+          "type": "uuid",
+          "label": "Changed By",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "from_status_id",
+          "type": "uuid",
+          "label": "From Status",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "task",
+          "type": "relation",
+          "label": "Task",
+          "cardinality": "many-to-one",
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "to_status_id",
+          "type": "uuid",
+          "label": "To Status",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        }
+      ]
+    },
+    {
+      "name": "task_status_option",
+      "internal": false,
+      "label": "Task Status Option",
+      "workspaceScoped": true,
+      "layer": "platform",
+      "fields": [
+        {
+          "name": "category",
+          "type": "enum",
+          "label": "Category",
+          "cardinality": null,
+          "reporting_role": "dimension",
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "color",
+          "type": "text",
+          "label": "Color",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "is_active",
+          "type": "boolean",
+          "label": "Is Active",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "is_default",
+          "type": "boolean",
+          "label": "Is Default",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "label",
+          "type": "text",
+          "label": "Label",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "sort_order",
+          "type": "number",
+          "label": "Sort Order",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        }
+      ]
+    },
+    {
+      "name": "webhook_subscription",
+      "internal": false,
+      "label": "Webhook Subscription",
+      "workspaceScoped": true,
+      "layer": "platform",
+      "fields": [
+        {
+          "name": "active",
+          "type": "boolean",
+          "label": "Active",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "event_type",
+          "type": "relation",
+          "label": "Event Type",
+          "cardinality": "many-to-one",
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "filter",
+          "type": "json",
+          "label": "Filter",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "internal_webhook_id",
+          "type": "uuid",
+          "label": "Internal Webhook",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "secret_last_rotated_at",
+          "type": "datetime",
+          "label": "Secret Last Rotated At",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "secret_set",
+          "type": "boolean",
+          "label": "Secret Set",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "url",
+          "type": "text",
+          "label": "URL",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        }
+      ]
+    },
+    {
+      "name": "workflow_run",
+      "internal": false,
+      "label": "Workflow Run",
+      "workspaceScoped": true,
+      "layer": "platform",
+      "fields": [
+        {
+          "name": "action_type",
+          "type": "text",
+          "label": "Action Type",
+          "cardinality": null,
+          "reporting_role": "dimension",
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "automation_rule",
+          "type": "relation",
+          "label": "Automation Rule",
+          "cardinality": "many-to-one",
+          "reporting_role": "dimension",
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "error_code",
+          "type": "text",
+          "label": "Error Code",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "event_type",
+          "type": "text",
+          "label": "Event Type",
+          "cardinality": null,
+          "reporting_role": "dimension",
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "job_id",
+          "type": "uuid",
+          "label": "Job ID",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "matched",
+          "type": "boolean",
+          "label": "Matched",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "outcome",
+          "type": "enum",
+          "label": "Outcome",
+          "cardinality": null,
+          "reporting_role": "dimension",
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "source_event_id",
+          "type": "uuid",
+          "label": "Source Event ID",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "trace_id",
+          "type": "text",
+          "label": "Trace ID",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        }
+      ]
+    }
+  ]
+}
