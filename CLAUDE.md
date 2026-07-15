@@ -96,6 +96,17 @@
   Node typecheck cannot detect a missing Deno import-map entry.
 - `@movp/platform` validates the artifact root and migrations directory with `lstat` before any
   enumeration. Never move a `readdir` ahead of those guards or follow a symlinked migration root.
+- `create-movp` copies only guarded, bounded regular files into an absent target and performs declared-token
+  substitution without running installs or codegen. A scaffold bootstraps in the explicit order
+  `npm install` -> `npm run codegen` -> `supabase start` -> `supabase db reset`.
+- Project scaffolds must use `npm run codegen`; the installed `movp codegen` command refuses with
+  `project_codegen_use_project_bin` when `movp.deltas.json` is present so platform codegen cannot write into
+  a project or its `node_modules` tree.
+- `fixtures/verdaccio-crm-lite/gate.sh` is the C6d release boundary: it stages without mutating the source,
+  publishes real tarballs to a temporary registry, installs with no workspace links, resets an isolated stack,
+  and drives CLI, GraphQL, and MCP over their real runtimes. Keep its network probes and Docker startup retries
+  bounded and fail-loud. Any package imported through a Deno subpath must publish that subpath and its built
+  artifacts; `pnpm check:packages` pins `@movp/search/gte-small`.
 
 ## Task/CMS Agent Contracts
 

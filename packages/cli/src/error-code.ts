@@ -12,6 +12,7 @@ const STABLE_CLI_ERROR_CODES = new Set([
   'new_delta_migrations_dir_symlink_rejected',
   'new_generated_delta_required',
   'nothing_to_allocate',
+  'project_codegen_use_project_bin',
   'project_schema_removal_unsupported',
   'schema_runtime_mismatch',
   'unregistered_generated_delta_mismatch',

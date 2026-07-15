@@ -421,7 +421,100 @@ Both findings are defects in the round-9 fix itself. The CI-wiring checker was w
   Tests: real YAML → PASS; the same step with `id:`/`name:` added → PASS; setup-cli on `latest` with a
   decoy action owning `with: { version: 2.109.1 }` → **FAIL**.
 
+## Post-execution reconciliation — C6a–C6c SHIPPED (2026-07-14)
+
+C6a–C6c are MERGED (PR #16, `1fde559`). The implementation deviated from this contract during four
+adversarial fix rounds. **These are the SHIPPED signatures — they supersede anything above.** 06d–06f
+consume the code, not the pre-execution plan.
+
+- **`verifyPlatformArtifact(dir: string): PlatformManifest`** — it RETURNS the manifest (was `: void`).
+  The manifest carries `metadata: { collections: number, fields: number }`; `fixtures/platform-consumer/gate.sh`
+  derives its exact-equality counts from it. 06d/06e gates SHOULD use these rather than hardcoding.
+- **`runtimeFingerprint(schema)`** is what `movp verify-schema-runtime` compares — NOT `schemaFingerprint`.
+  `schemaFingerprint` is deliberately DB-exact and therefore BLIND to `internal` and `events`;
+  `runtimeFingerprint` covers both (a Node/Deno divergence in `internal` changes the exposed surface).
+  Both are exported from `@movp/core-schema`.
+- **`MovpSchema` gained `projectEvents` / `platformEvents`** (derived, layer-scoped) alongside
+  `projectCollections` / `platformCollections`. Project codegen emits `projectEvents` ONLY — a project
+  baseline must never re-seed the platform `event_type` catalog.
+- **v1 is ADDITIVE-ONLY.** `emitProjectMetadataPrune` was REMOVED (no consumer). Removing a project
+  collection or event now throws `project_schema_removal_unsupported`. Scaffold docs MUST state this.
+- **`newDelta` writes the migration BEFORE the registry** and carries a recovery path; a failed registry
+  write throws `delta_registry_update_failed: <file> is intact; rerun to reconcile`.
+- **Every generated write goes through `atomicWriteFile`** (0o600, `flag:'wx'` temp, lstat symlink
+  refusal, rename). No raw `writeFile` in `packages/codegen/src/`.
+- **`assertRealDirectory`** guards EVERY `readdir` in `@movp/platform` (symlinked dir roots rejected).
+- **Edge `deno.json` must map `@movp/core-schema`** for any function importing a schema-aware runtime.
+  Node typecheck CANNOT detect a missing Deno import-map entry — the five-entrypoint `deno check` graph
+  gate is the only thing that does.
+- **CI shape:** `c6-productization` (stack-bearing: platform tests, consumer fixture, built-runtime) and
+  `c6-surface-wiring` (stack-FREE: collection-tier, schema-injection, surface-wiring). 06d/06e slot into
+  these; do not invent a third shape. All `supabase/setup-cli` steps pin `2.109.1` (guarded by
+  `scripts/check-supabase-cli-pins.mjs`).
+
+## Post-execution round 12 — locked resolutions (2026-07-14)
+
+- **F1 (HIGH, safety) `movp codegen` is silently WRONG inside a scaffolded project, and destructive in
+  some layouts (06d).** The scaffold ships TWO codegen entrypoints: `npm run codegen` →
+  `bin/codegen.mjs` (project mode, CORRECT) and `bin/movp.mjs` = `buildProgram(projectSchema)` → the
+  CLI's DEFAULT `runCodegen`, which calls `generate({ schema })` — i.e. **PLATFORM mode**. Two commands,
+  adjacent in the docs; one always does the wrong thing.
+
+  **The effect is LAYOUT-DEPENDENT — this correction matters for the gate.** Platform-mode `generate()`
+  takes `root = defaultRoot()` = `../../../` relative to the **codegen module's own URL**, NOT the cwd:
+  - *Flat `npm install` scaffold* (`<proj>/node_modules/@movp/codegen/dist/index.js`): root resolves to
+    `<proj>/node_modules`. `movp codegen` **exits 0** and writes the platform baseline + deltas +
+    `types.ts` into `<proj>/node_modules/supabase/migrations/`. Silent garbage; the project baseline is
+    **intact**.
+  - *Linked / hoisted layout* (codegen exactly 3 levels under the project root): root resolves to the
+    project. The `rm` loop over `*_movp_generated.sql`, keyed on the PLATFORM keep-set, then **DELETES
+    the project's generated baseline** — and does not throw.
+  (An earlier note here claimed unconditional deletion. That repro passed `root:` explicitly, which the
+  real `runCodegen` never does. Corrected.)
+
+  Fix: the CLI's default `runCodegen` REFUSES in a project. If `movp.deltas.json` exists in cwd, throw
+  `project_codegen_use_project_bin` naming `npm run codegen`. **Deliberately a refusal, NOT a
+  mode-detector:** detecting project mode requires the project's baseline FILENAME, which would create a
+  SECOND authority for it (`bin/codegen.mjs` pins `20260715000000_movp_generated.sql`). Duplicate
+  authority over a frozen artifact name is how this whole bug class starts. Fail loud; point at the one
+  correct command. The new code must ALSO be added to `packages/cli/src/error-code.ts`'s
+  `STABLE_CLI_ERROR_CODES` allow-list, or obs emits it as a generic `cli_error`.
+
+  Gate — assertion ORDER is load-bearing:
+  1. **non-zero exit** (the only assertion that holds in EVERY layout — assert this FIRST),
+  2. the message names `project_codegen_use_project_bin` and `npm run codegen`,
+  3. the project baseline is **byte-unchanged** (the data-loss witness; alone it FALSE-GREENS on the
+     flat-npm layout, which is why it cannot be the primary assertion),
+  4. **no `node_modules/supabase/` tree was created** (catches the flat-npm variant).
+- **F2 (MEDIUM) `create-movp` is absent from `scripts/check-package-artifacts.mjs` (06d).** 06d PUBLISHES
+  it (unscoped), so the pack gate must cover it — the same gap `@movp/platform` had.
+- **CI shape — resolved (do not relitigate).** "Slot into the existing jobs" applies to C6d's ACCEPTANCE
+  GATES, not to Task 1's `publishable-versions` job. Final allocation:
+  - Task 1 KEEPS its own stack-free `publishable-versions` job + `check-ci-wiring.mjs` / `REQUIRED_JOBS`
+    (locked, hardened over rounds 9–11, and a distinct concern: version pinning + CI-wiring assertion).
+  - C6d's stack-free gate (the Task 5 codegen-refusal) → a step in **`c6-surface-wiring`**.
+  - C6d's stack-bearing acceptance gate (Verdaccio) → a step in **`c6-productization`**.
+  - NEITHER may add a `supabase/setup-cli` step of its own — `scripts/check-supabase-cli-pins.mjs`
+    (shipped) enforces `2.109.1` on every one that exists.
+  - `check-ci-wiring.mjs`'s `REQUIRED_JOBS` must ALSO cover the SHIPPED `c6-productization` and
+    `c6-surface-wiring` jobs, or it guards nothing that exists today.
+  - NOTE (harmless redundancy, keep): 06e's `template-smoke` `steps: [['uses: supabase/setup-cli@v2',
+    'with: { version: 2.109.1 }']]` now overlaps the shipped pin guard. Defense in depth; leave it.
+- **F3 (LOW) 06d's copier test fixture writes a hand-built `movp.config.mjs` schema literal.** It is
+  inert (never imported) but models the exact non-production-shaped fixture that HID the C6c event-catalog
+  bug, and it is now stale (`MovpSchema` gained `projectEvents`/`platformEvents`). Use
+  `defineSchema({ extends })` or drop the schema key entirely.
+
+- **06e / 06f were CHECKED against the shipped code and are CLEAN** (2026-07-14) — do not redo this:
+  06e's gallery templates declare ZERO events, so `projectEvents` does not affect them; 06f's
+  `SchemaManifest` shape matches `packages/codegen/src/emit-manifest.ts` field-for-field, and its use of
+  `schemaFingerprint` (NOT `runtimeFingerprint`) is CORRECT — the manifest is DB-facing. Neither
+  references the removed `emitProjectMetadataPrune`, and neither states the stale
+  `verifyPlatformArtifact(): void`. **The post-execution drift is contained to 06d.**
+
 ## Stable error codes (all parts)
 
 `schema_runtime_mismatch` · `new_generated_delta_required` · `platform_artifact_invalid` ·
-`platform_row_delete_forbidden`.
+`platform_row_delete_forbidden` · `project_schema_removal_unsupported` · `delta_registry_update_failed` ·
+`project_codegen_use_project_bin` · `safe_write_refused` · `invalid_deltas_registry` ·
+`supabase_cli_pin_missing`.

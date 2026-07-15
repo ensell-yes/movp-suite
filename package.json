@@ -7,6 +7,10 @@
     "codegen": "tsx scripts/codegen.ts",
     "check:docs": "pnpm check:task-cms-contracts && node scripts/check-docs-presence.mjs && node scripts/check-agent-configs.mjs",
     "check:packages": "node scripts/check-package-artifacts.mjs",
+    "check:publishable-versions": "node scripts/check-publishable-versions.mjs",
+    "check:ci-wiring": "node scripts/check-ci-wiring.mjs",
+    "check:verdaccio-crm": "bash fixtures/verdaccio-crm-lite/gate.sh",
+    "test:version-gate": "node --test scripts/test/guarded-read.test.mjs scripts/test/check-publishable-versions.test.mjs scripts/test/check-ci-wiring.test.mjs",
     "check:release-preflight": "node scripts/check-release-preflight.mjs",
     "check:demo-seed": "node scripts/check-demo-seed.mjs",
     "check:quickstart-docs": "node scripts/check-quickstart-docs.mjs",
@@ -31,11 +35,12 @@
     "@movp/codegen": "workspace:*",
     "@movp/core-schema": "workspace:*",
     "@supabase/supabase-js": "^2.45.0",
+    "@types/node": "^26.0.1",
     "tsup": "^8.5.1",
     "tsx": "^4.19.0",
     "turbo": "^2.1.0",
     "typescript": "^5.6.0",
-    "@types/node": "^26.0.1"
+    "verdaccio": "^6"
   },
   "pnpm": {
     "overrides": {

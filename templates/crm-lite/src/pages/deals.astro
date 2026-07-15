@@ -1,0 +1,28 @@
+---
+import Base from '../layouts/Base.astro'
+import { readServerEnv } from '../lib/env'
+import { postGraphql } from '../lib/graphql'
+
+type Deal = { id: string; name: string; amount: number | null; stage: string | null }
+type Data = { deals: { items: Deal[] } }
+const env = readServerEnv()
+const token = Astro.cookies.get('movp_token')?.value ?? env.supabaseAnonKey
+const result = await postGraphql<Data>(
+  env.graphqlEndpoint,
+  token,
+  `query Deals($workspaceId: ID!) {
+    deals(workspaceId: $workspaceId, first: 50) { items { id name amount stage } }
+  }`,
+  { workspaceId: env.workspaceId },
+)
+---
+
+<Base title="Deals">
+  {result.ok ? (
+    <table>
+      <thead><tr><th>Deal</th><th>Stage</th><th>Amount</th></tr></thead>
+      <tbody>{result.data.deals.items.map((row) => <tr><td>{row.name}</td><td>{row.stage ?? '-'}</td><td>{row.amount ?? '-'}</td></tr>)}</tbody>
+    </table>
+  ) : <p class="error">Could not load deals ({result.code}).</p>}
+</Base>
+

@@ -39,7 +39,7 @@ jobs:
 
   c6-productization:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v5
       - uses: pnpm/action-setup@v6
@@ -63,6 +63,7 @@ jobs:
           deno check --no-lock --config supabase/functions/index-embeddings/deno.json supabase/functions/index-embeddings/index.ts
           deno check --no-lock --config supabase/functions/mcp/deno.json supabase/functions/mcp/index.ts
           deno check --no-lock --config supabase/functions/segment-recompute/deno.json supabase/functions/segment-recompute/index.ts
+      - run: bash fixtures/verdaccio-crm-lite/gate.sh
 
   c6-surface-wiring:
     runs-on: ubuntu-latest
@@ -79,6 +80,8 @@ jobs:
         run: pnpm --filter @movp/flows exec vitest run test/schema-injection.test.ts
       - name: Run complete surface-wiring gate
         run: pnpm --filter @movp/mcp exec vitest run test/surface-wiring.test.ts
+      - name: Run project-codegen refusal gate
+        run: pnpm --filter @movp/cli exec vitest run test/codegen-refusal.test.ts
 
   metadata-consistency:
     runs-on: ubuntu-latest
@@ -109,6 +112,19 @@ jobs:
       - run: pnpm check:packages
       - run: pnpm check:release-preflight
 
+  publishable-versions:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v6
+        with: { version: 9.12.0 }
+      - uses: actions/setup-node@v6
+        with: { node-version: 22, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      # This dependency-free gate must remain runnable before packages are built.
+      - run: pnpm test:version-gate
+      - run: pnpm check:publishable-versions
+
   quickstart:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -130,6 +146,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+      - run: node --test scripts/test/check-boundary.test.mjs
       - run: bash scripts/check-boundary.sh
 
   definer-audit:

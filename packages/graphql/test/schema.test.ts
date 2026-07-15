@@ -48,6 +48,15 @@ const recursiveNode: CollectionDef = {
 }
 
 const recursive = defineSchema({ collections: [recursiveNode] })
+const companySchema = defineSchema({
+  collections: [{
+    name: 'company',
+    label: 'Company',
+    labelPlural: 'Companies',
+    workspaceScoped: true,
+    fields: { name: { type: 'text', label: 'Name' } as FieldDef },
+  }],
+})
 
 describe('buildSchema', () => {
   it('generates a type, queries, mutation, and search', () => {
@@ -62,6 +71,12 @@ describe('buildSchema', () => {
     expect(sdl).not.toContain('updateTask(')
     expect(sdl).toContain('search(')
     expect(sdl).toContain('tags: [Tag!]!')
+  })
+
+  it('uses the regular English plural for consonant-y collection queries', () => {
+    const sdl = printSchema(buildSchema(companySchema))
+    expect(sdl).toMatch(/companies\(/)
+    expect(sdl).not.toMatch(/companys\(/)
   })
 
   it('exposes the PAT surfaces (self-service, user-scoped)', () => {

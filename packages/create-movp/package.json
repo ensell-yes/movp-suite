@@ -1,0 +1,45 @@
+{
+  "name": "create-movp",
+  "version": "0.1.0",
+  "type": "module",
+  "bin": {
+    "create-movp": "./dist/cli.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "pretest": "pnpm build",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "build": "tsup src/index.ts src/cli.ts --format esm --dts --sourcemap --clean --target node20 --out-dir dist"
+  },
+  "devDependencies": {
+    "vitest": "^3.2.6",
+    "tsx": "^4.19.0",
+    "tsup": "^8.5.1",
+    "@types/node": "^26.0.1"
+  },
+  "dependencies": {
+    "@movp/codegen": "^0.1.0",
+    "@movp/core-schema": "^0.1.0",
+    "@movp/platform": "^0.1.0"
+  },
+  "publishConfig": {
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "bin": {
+      "create-movp": "./dist/cli.js"
+    }
+  },
+  "files": [
+    "dist",
+    "templates"
+  ]
+}

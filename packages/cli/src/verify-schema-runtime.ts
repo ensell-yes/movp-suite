@@ -15,6 +15,7 @@ export interface VerifySchemaRuntimeOpts {
   configPath: string
   denoConfigPath: string
   edgeSchemaSpecifier: string
+  denoMinimumDependencyAge?: string
   spawnDeno?: (args: string[]) => SpawnResult
   importConfig?: (path: string) => Promise<{ schema: MovpSchema }>
 }
@@ -45,6 +46,12 @@ const SAFE_DENO_FAILURES = new Set([
   'verify_schema_runtime_missing_specifier',
 ])
 
+function edgeSchemaUrl(specifier: string): string {
+  return /^[a-zA-Z][a-zA-Z\d+.-]*:/.test(specifier)
+    ? specifier
+    : pathToFileURL(resolve(specifier)).href
+}
+
 export async function runVerifySchemaRuntime(
   opts: VerifySchemaRuntimeOpts,
 ): Promise<VerifySchemaRuntimeResult> {
@@ -58,19 +65,22 @@ export async function runVerifySchemaRuntime(
   const scriptPath = fileURLToPath(new URL('./verify-schema-runtime.deno.ts', import.meta.url))
   const result = spawnDeno([
     'run',
+    ...(opts.denoMinimumDependencyAge === undefined
+      ? []
+      : ['--minimum-dependency-age', opts.denoMinimumDependencyAge]),
     '--allow-read',
     '--config',
     opts.denoConfigPath,
     scriptPath,
-    opts.edgeSchemaSpecifier,
+    edgeSchemaUrl(opts.edgeSchemaSpecifier),
   ])
 
   if (result.status !== 0) {
     if (result.errorCode) {
       throw new Error(`verify_schema_runtime_spawn_failed: deno spawn ${result.errorCode}`)
     }
-    const diagnostic = result.stderr.trim()
-    const safeDiagnostic = SAFE_DENO_FAILURES.has(diagnostic) ? ` (${diagnostic})` : ''
+    const diagnostic = result.stderr.trim().split(/\r?\n/).find((line) => SAFE_DENO_FAILURES.has(line))
+    const safeDiagnostic = diagnostic ? ` (${diagnostic})` : ''
     const signal = result.signal ? ` signal=${result.signal}` : ''
     throw new Error(
       `verify_schema_runtime_spawn_failed: deno exited ${result.status ?? 'null'}${signal}${safeDiagnostic}`,
