@@ -28,6 +28,12 @@ const TEMPLATES: TemplateSpec[] = [
     reusesPlatform: ['task', 'automation_rule', 'comment'],
     pages: ['src/pages/support/index.astro'],
   },
+  {
+    name: 'knowledge-base',
+    projectCollections: ['kb_article', 'kb_category'],
+    reusesPlatform: ['content_item', 'saved_item'],
+    pages: ['src/pages/kb/index.astro'],
+  },
 ]
 
 const DEFAULT_TEMPLATES_DIR = 'templates'

@@ -48,6 +48,12 @@ describe('parseCreateCliArgs', () => {
     })
   })
 
+  it('accepts the knowledge-base gallery template', () => {
+    expect(parseCreateCliArgs(['--template', 'knowledge-base'])).toMatchObject({
+      template: 'knowledge-base',
+    })
+  })
+
   it('rejects an unknown template', () => {
     expect(() => parseCreateCliArgs(['--template', 'unknown'])).toThrow(/unknown_template/)
   })
