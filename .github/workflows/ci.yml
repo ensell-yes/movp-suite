@@ -176,6 +176,7 @@ jobs:
       # This dependency-free gate must remain runnable before packages are built.
       - run: pnpm test:version-gate
       - run: pnpm check:publishable-versions
+      - run: pnpm check:ci-wiring
 
   quickstart:
     runs-on: ubuntu-latest

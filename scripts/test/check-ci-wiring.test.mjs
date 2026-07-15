@@ -35,6 +35,7 @@ const ARMED_JOB = `
       - run: pnpm install --frozen-lockfile
       - run: pnpm test:version-gate
       - run: pnpm check:publishable-versions
+      - run: pnpm check:ci-wiring
 `
 
 /** The real ci.yml shape: a top-level `jobs:`, a neighbouring job, and a job literally NAMED `jobs`. */
@@ -57,7 +58,7 @@ ${ARMED_JOB}
 `
 
 describe('checkCiWiring — the intended workflow', () => {
-  it('PASSES: the job exists under jobs: and invokes both commands', () => {
+  it('PASSES: the job exists under jobs: and invokes every required command', () => {
     assert.deepEqual(checkCiWiring(fixture('good', GOOD), SEED_REQUIREMENT), [])
   })
 
@@ -71,9 +72,42 @@ describe('checkCiWiring — the intended workflow', () => {
   })
 })
 
+describe('checkCiWiring — C6 productization gates stay armed', () => {
+  const workflow = `name: ci
+on: [push]
+jobs:
+  c6-productization:
+    runs-on: ubuntu-latest
+    steps:
+      - run: pnpm --filter @movp/platform test
+      - run: bash fixtures/platform-consumer/gate.sh
+      - run: pnpm --filter @movp/cli test:built-runtime
+      - run: bash fixtures/verdaccio-crm-lite/gate.sh
+  c6-surface-wiring:
+    runs-on: ubuntu-latest
+    steps:
+      - run: pnpm --filter @movp/domain exec vitest run --config vitest.unit.config.ts
+      - run: pnpm --filter @movp/flows exec vitest run test/schema-injection.test.ts
+      - run: pnpm --filter @movp/mcp exec vitest run test/surface-wiring.test.ts
+      - run: pnpm --filter @movp/cli exec vitest run test/codegen-refusal.test.ts
+`
+
+  it('fails when a load-bearing C6 productization invocation is removed', () => {
+    assert.ok(REQUIRED_JOBS['c6-productization'])
+    assert.ok(REQUIRED_JOBS['c6-surface-wiring'])
+    const withoutConsumerGate = workflow.replace('      - run: bash fixtures/platform-consumer/gate.sh\n', '')
+    const problems = checkCiWiring(fixture('c6-consumer-gate-missing', withoutConsumerGate), {
+      'c6-productization': REQUIRED_JOBS['c6-productization'],
+      'c6-surface-wiring': REQUIRED_JOBS['c6-surface-wiring'],
+    })
+    assert.equal(problems.length, 1)
+    assert.match(problems[0], /ci_wiring_run_missing: .* job "c6-productization" does not invoke `bash fixtures\/platform-consumer\/gate\.sh`/)
+  })
+})
+
 describe('checkCiWiring — hostile workflows that MUST fail (each false-greened the substring scan)', () => {
   // THE reproduced defect: `y.includes('publishable-versions:')` is true for a COMMENTED-OUT job.
-  it('FAILS: the job and both commands appear ONLY inside # comments', () => {
+  it('FAILS: the job and its commands appear ONLY inside # comments', () => {
     const commented = GOOD.replace(ARMED_JOB, `${ARMED_JOB.replace(/^(.*)$/gm, '#$1')}\n`)
     const problems = checkCiWiring(fixture('comments-only', commented), SEED_REQUIREMENT)
     assert.equal(problems.length, 1)
@@ -94,12 +128,14 @@ describe('checkCiWiring — hostile workflows that MUST fail (each false-greened
     steps:
       - run: pnpm test:version-gate
       - run: pnpm check:publishable-versions
+      - run: pnpm check:ci-wiring
 `,
     )
     const problems = checkCiWiring(fixture('wrong-job', wrongJob), SEED_REQUIREMENT)
-    assert.equal(problems.length, 2) // BOTH commands are outside the job's block
+    assert.equal(problems.length, 3) // All commands are outside the job's block.
     assert.match(problems[0], /ci_wiring_run_missing: .* job "publishable-versions" does not invoke `pnpm test:version-gate`/)
     assert.match(problems[1], /ci_wiring_run_missing: .* does not invoke `pnpm check:publishable-versions`/)
+    assert.match(problems[2], /ci_wiring_run_missing: .* does not invoke `pnpm check:ci-wiring`/)
   })
 
   it('FAILS: the job is present but ONE command is missing', () => {
@@ -332,6 +368,22 @@ on:
 
 jobs:
 ${ARMED_JOB}
+  c6-productization:
+    runs-on: ubuntu-latest
+    steps:
+      - run: pnpm --filter @movp/platform test
+      - run: bash fixtures/platform-consumer/gate.sh
+      - run: pnpm --filter @movp/cli test:built-runtime
+      - run: bash fixtures/verdaccio-crm-lite/gate.sh
+
+  c6-surface-wiring:
+    runs-on: ubuntu-latest
+    steps:
+      - run: pnpm --filter @movp/domain exec vitest run --config vitest.unit.config.ts
+      - run: pnpm --filter @movp/flows exec vitest run test/schema-injection.test.ts
+      - run: pnpm --filter @movp/mcp exec vitest run test/surface-wiring.test.ts
+      - run: pnpm --filter @movp/cli exec vitest run test/codegen-refusal.test.ts
+
   template-gallery:
     runs-on: ubuntu-latest
     steps:

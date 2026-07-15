@@ -63,7 +63,23 @@ import { MAX_WORKFLOW_BYTES, readTextGuarded } from './lib/guarded-read.mjs'
  */
 export const REQUIRED_JOBS = {
   'publishable-versions': {
-    runs: ['pnpm test:version-gate', 'pnpm check:publishable-versions'],
+    runs: ['pnpm test:version-gate', 'pnpm check:publishable-versions', 'pnpm check:ci-wiring'],
+  },
+  'c6-productization': {
+    runs: [
+      'pnpm --filter @movp/platform test',
+      'bash fixtures/platform-consumer/gate.sh',
+      'pnpm --filter @movp/cli test:built-runtime',
+      'bash fixtures/verdaccio-crm-lite/gate.sh',
+    ],
+  },
+  'c6-surface-wiring': {
+    runs: [
+      'pnpm --filter @movp/domain exec vitest run --config vitest.unit.config.ts',
+      'pnpm --filter @movp/flows exec vitest run test/schema-injection.test.ts',
+      'pnpm --filter @movp/mcp exec vitest run test/surface-wiring.test.ts',
+      'pnpm --filter @movp/cli exec vitest run test/codegen-refusal.test.ts',
+    ],
   },
   'pack-artifacts': {
     runs: ['bash fixtures/verdaccio-gallery/pack.sh ./artifacts'],
