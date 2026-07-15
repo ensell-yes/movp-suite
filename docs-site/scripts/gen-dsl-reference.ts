@@ -1,10 +1,11 @@
 // Reads docs-site/movp.schema.json and writes the reference pages. Run: pnpm docs:reference.
 // CI regenerates and runs `git diff --exit-code docs-site/src/content/docs/reference`.
-import { lstat, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, readFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { SchemaManifest } from '@movp/codegen'
 import { generateDslReference } from '../src/dsl-reference/generate.ts'
+import { atomicWriteFile } from '../src/dsl-reference/safe-write.ts'
 
 const MAX_MANIFEST_BYTES = 4 * 1024 * 1024
 const MANIFEST_PATH = fileURLToPath(new URL('../movp.schema.json', import.meta.url))
@@ -88,6 +89,6 @@ const pages = generateDslReference(await readManifest())
 for (const page of pages) {
   const target = `${DOCS_ROOT}${page.path}`
   await mkdir(dirname(target), { recursive: true })
-  await writeFile(target, page.content)
+  await atomicWriteFile(target, page.content)
 }
 console.log(`wrote ${pages.length} reference pages under docs-site/src/content/docs/reference/`)

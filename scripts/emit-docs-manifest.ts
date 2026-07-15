@@ -1,11 +1,13 @@
 // Emits docs-site/movp.schema.json from the live @movp/core-schema `schema`.
 // Run: pnpm docs:manifest. CI regenerates and runs `git diff --exit-code`.
-import { lstat, readFile, writeFile } from 'node:fs/promises'
+import { lstat, readFile } from 'node:fs/promises'
+import { fileURLToPath } from 'node:url'
 import { schema } from '@movp/core-schema'
 import { emitManifest, serializeManifest } from '@movp/codegen'
+import { atomicWriteFile } from '../docs-site/src/dsl-reference/safe-write.ts'
 
 const CODEGEN_PKG = new URL('../packages/codegen/package.json', import.meta.url)
-const MANIFEST_PATH = new URL('../docs-site/movp.schema.json', import.meta.url)
+const MANIFEST_PATH = fileURLToPath(new URL('../docs-site/movp.schema.json', import.meta.url))
 // Same bound as the other two manifest readers in this plan — keep the three values identical.
 const MAX_MANIFEST_BYTES = 4 * 1024 * 1024
 
@@ -39,5 +41,5 @@ async function generatorVersion(): Promise<string> {
 }
 
 const manifest = emitManifest(schema, { generatorVersion: await generatorVersion() })
-await writeFile(MANIFEST_PATH, serializeManifest(manifest))
+await atomicWriteFile(MANIFEST_PATH, serializeManifest(manifest))
 console.log(`wrote docs-site/movp.schema.json (${manifest.collections.length} collections)`)
