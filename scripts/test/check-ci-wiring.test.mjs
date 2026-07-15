@@ -6,6 +6,10 @@ import { after, before, describe, it } from 'node:test'
 import { MAX_WORKFLOW_BYTES } from '../lib/guarded-read.mjs'
 import { REQUIRED_JOBS, checkCiWiring } from '../check-ci-wiring.mjs'
 
+const SEED_REQUIREMENT = {
+  'publishable-versions': REQUIRED_JOBS['publishable-versions'],
+}
+
 // Synthetic fixtures under $TMPDIR only. NO writes under the real repository (INTERFACES round-5 F1);
 // the checker takes the workflow path as an argument so the hostile cases point at a temp file.
 let work = ''
@@ -54,14 +58,14 @@ ${ARMED_JOB}
 
 describe('checkCiWiring — the intended workflow', () => {
   it('PASSES: the job exists under jobs: and invokes both commands', () => {
-    assert.deepEqual(checkCiWiring(fixture('good', GOOD)), [])
+    assert.deepEqual(checkCiWiring(fixture('good', GOOD), SEED_REQUIREMENT), [])
   })
 
   // The real ci.yml contains a job literally NAMED `jobs:` (ci.yml:173). Matching the trimmed text
   // alone would anchor on it and scan the wrong block.
   it('anchors on the TOP-LEVEL jobs: mapping, not a job named "jobs"', () => {
     const noTopLevel = GOOD.replace(/^jobs:$/m, 'not-jobs:')
-    const problems = checkCiWiring(fixture('no-jobs', noTopLevel))
+    const problems = checkCiWiring(fixture('no-jobs', noTopLevel), SEED_REQUIREMENT)
     assert.equal(problems.length, 1)
     assert.match(problems[0], /ci_wiring_jobs_block_missing/)
   })
@@ -71,7 +75,7 @@ describe('checkCiWiring — hostile workflows that MUST fail (each false-greened
   // THE reproduced defect: `y.includes('publishable-versions:')` is true for a COMMENTED-OUT job.
   it('FAILS: the job and both commands appear ONLY inside # comments', () => {
     const commented = GOOD.replace(ARMED_JOB, `${ARMED_JOB.replace(/^(.*)$/gm, '#$1')}\n`)
-    const problems = checkCiWiring(fixture('comments-only', commented))
+    const problems = checkCiWiring(fixture('comments-only', commented), SEED_REQUIREMENT)
     assert.equal(problems.length, 1)
     assert.match(problems[0], /ci_wiring_job_missing: .* has no "publishable-versions:" job/)
   })
@@ -92,7 +96,7 @@ describe('checkCiWiring — hostile workflows that MUST fail (each false-greened
       - run: pnpm check:publishable-versions
 `,
     )
-    const problems = checkCiWiring(fixture('wrong-job', wrongJob))
+    const problems = checkCiWiring(fixture('wrong-job', wrongJob), SEED_REQUIREMENT)
     assert.equal(problems.length, 2) // BOTH commands are outside the job's block
     assert.match(problems[0], /ci_wiring_run_missing: .* job "publishable-versions" does not invoke `pnpm test:version-gate`/)
     assert.match(problems[1], /ci_wiring_run_missing: .* does not invoke `pnpm check:publishable-versions`/)
@@ -100,22 +104,21 @@ describe('checkCiWiring — hostile workflows that MUST fail (each false-greened
 
   it('FAILS: the job is present but ONE command is missing', () => {
     const oneMissing = GOOD.replace('      - run: pnpm check:publishable-versions\n', '')
-    const problems = checkCiWiring(fixture('one-missing', oneMissing))
+    const problems = checkCiWiring(fixture('one-missing', oneMissing), SEED_REQUIREMENT)
     assert.equal(problems.length, 1)
     assert.match(problems[0], /ci_wiring_run_missing: .* does not invoke `pnpm check:publishable-versions`/)
   })
 
   it('FAILS: the job name is DUPLICATED (never silently pick one)', () => {
     const duplicated = GOOD.replace(ARMED_JOB, `${ARMED_JOB}${ARMED_JOB}`)
-    const problems = checkCiWiring(fixture('duplicate', duplicated))
+    const problems = checkCiWiring(fixture('duplicate', duplicated), SEED_REQUIREMENT)
     assert.equal(problems.length, 1)
     assert.match(problems[0], /ci_wiring_job_duplicated: .* declares the "publishable-versions:" job 2 times/)
   })
 
   it('reports EVERY failing table entry, not just the first', () => {
     const problems = checkCiWiring(fixture('good-multi', GOOD), {
-      ...REQUIRED_JOBS,
-      // 06e's future entry, not wired yet
+      ...SEED_REQUIREMENT,
       'template-gallery': { runs: ['pnpm check:template-gallery'] },
     })
     assert.equal(problems.length, 1)
@@ -378,6 +381,9 @@ ${ARMED_JOB}
         with: { version: 2.109.1 }
       # fail loud if the pinned CLI drifts at runtime
       - run: supabase --version | grep -qF '2.109.1'
+      - uses: denoland/setup-deno@v2
+        with: { deno-version: v2.9.2 }
+      - run: deno --version | head -n 1 | grep -qF 'deno 2.9.2'
       - uses: actions/download-artifact@v4
         with: { name: movp-tarballs, path: ./artifacts }
       - run: pnpm install --frozen-lockfile
@@ -402,12 +408,16 @@ const FULL_TABLE = {
   'template-smoke': {
     runs: [
       "supabase --version | grep -qF '2.109.1'",
+      "deno --version | head -n 1 | grep -qF 'deno 2.9.2'",
       'bash fixtures/verdaccio-gallery/gate.sh ${{ matrix.template }}',   // multi-key `- env:` / `run:` step
     ],
     // The 4-way matrix sits under `strategy:`, NOT inside a step — so it stays a `lines` requirement.
     lines: ['template: [crm-lite, marketing-site, support-desk, knowledge-base]'],
     // OWNERSHIP: the pin must live in the SAME STEP as the setup-cli action (round-11 F1).
-    steps: [['uses: supabase/setup-cli@v2', 'with: { version: 2.109.1 }']],
+    steps: [
+      ['uses: supabase/setup-cli@v2', 'with: { version: 2.109.1 }'],
+      ['uses: denoland/setup-deno@v2', 'with: { deno-version: v2.9.2 }'],
+    ],
   },
 }
 
