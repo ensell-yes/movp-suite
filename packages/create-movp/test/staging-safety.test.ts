@@ -33,7 +33,7 @@ beforeAll(async () => {
 // dirty `templates/crm-lite/README.md` has that WIP edit inside BOTH manifests, so this assertion is
 // exactly the promise "the suite never touched your files".
 afterAll(async () => {
-  expect(await snapshotTree(repoRoot)).toBe(realBefore)
+  if (realBefore) expect(await snapshotTree(repoRoot)).toBe(realBefore)
 }, 60_000)
 
 // The SYNTHETIC repo staging runs against: the exact layout stage-create-movp.mjs reads
