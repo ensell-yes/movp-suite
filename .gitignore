@@ -1,6 +1,7 @@
 node_modules/
 dist/
 .turbo/
+docs-site/.astro/
 .claude/
 supabase/.branches/
 supabase/.temp/
