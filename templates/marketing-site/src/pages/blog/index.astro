@@ -1,0 +1,49 @@
+---
+import Base from '../../layouts/Base.astro'
+import { readServerEnv } from '../../lib/env.ts'
+import { postGraphql } from '../../lib/graphql.ts'
+
+const POSTS_QUERY = /* GraphQL */ `
+  query Posts($workspaceId: ID!, $first: Int) {
+    content(workspaceId: $workspaceId, status: "published", first: $first) { items { id slug } }
+  }`
+const AUTHORS_QUERY = /* GraphQL */ `
+  query Authors($workspaceId: ID!, $first: Int) {
+    authors(workspaceId: $workspaceId, first: $first) { items { id full_name } }
+  }`
+
+type PostRow = { id: string; slug: string | null }
+type AuthorRow = { id: string; full_name: string | null }
+
+const token = Astro.cookies.get('sb-access-token')?.value ?? ''
+let posts: PostRow[] = []
+let authors: AuthorRow[] = []
+let error = false
+if (token) {
+  const { graphqlEndpoint, workspaceId } = readServerEnv()
+  const [postResult, authorResult] = await Promise.all([
+    postGraphql<{ content: { items: PostRow[] } }>(graphqlEndpoint, token, POSTS_QUERY, { workspaceId, first: 50 }),
+    postGraphql<{ authors: { items: AuthorRow[] } }>(graphqlEndpoint, token, AUTHORS_QUERY, { workspaceId, first: 50 }),
+  ])
+  if (postResult.ok && authorResult.ok) {
+    posts = postResult.data.content.items
+    authors = authorResult.data.authors.items
+  } else {
+    error = true
+  }
+}
+---
+<Base title="Blog">
+  <h1 tabindex="-1" id="blog-heading">Blog</h1>
+  {!token && <p>Sign in to view the blog.</p>}
+  {error && <p role="alert">Could not load the blog.</p>}
+  {token && !error && posts.length === 0 && authors.length === 0 && <p>No published posts yet.</p>}
+  {token && !error && (posts.length > 0 || authors.length > 0) && (
+    <section aria-labelledby="posts-heading">
+      <h2 id="posts-heading">Published posts</h2>
+      <ul data-testid="blog-posts">{posts.map((post) => <li>{post.slug ?? post.id}</li>)}</ul>
+      <h2>Authors</h2>
+      <ul data-testid="blog-authors">{authors.map((author) => <li>{author.full_name ?? author.id}</li>)}</ul>
+    </section>
+  )}
+</Base>

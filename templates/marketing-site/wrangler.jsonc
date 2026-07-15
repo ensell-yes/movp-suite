@@ -1,0 +1,18 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "__PROJECT_NAME__",
+  "main": "./dist/_worker.js/index.js",
+  "compatibility_date": "2025-05-05",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": { "directory": "./dist", "binding": "ASSETS" },
+  "r2_buckets": [
+    { "binding": "MEDIA_BUCKET", "bucket_name": "movp-frontend-media" }
+  ],
+  "vars": {
+    "GRAPHQL_ENDPOINT": "http://127.0.0.1:64621/functions/v1/graphql",
+    "WORKSPACE_ID": "__WORKSPACE_ID__",
+    "SUPABASE_URL": "http://127.0.0.1:64621",
+    "SUPABASE_ANON_KEY": "replace-with-local-anon-key"
+  },
+  "observability": { "enabled": true }
+}
