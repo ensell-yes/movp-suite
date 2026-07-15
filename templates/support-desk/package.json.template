@@ -1,0 +1,32 @@
+{
+  "name": "__PROJECT_NAME__",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "npm@10.8.0",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "movp": "tsx bin/movp.mjs",
+    "codegen": "tsx bin/codegen.mjs",
+    "verify-schema-runtime": "tsx bin/movp.mjs verify-schema-runtime --config movp.config.mjs --deno-config supabase/functions/mcp/deno.json --edge-schema ./supabase/functions/_shared/schema.ts"
+  },
+  "dependencies": {
+    "@astrojs/cloudflare": "^13.1.10",
+    "@astrojs/react": "^4.0.0",
+    "@movp/cli": "^0.1.0",
+    "@movp/codegen": "^0.1.0",
+    "@movp/core-schema": "^0.1.0",
+    "astro": "^6.0.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0",
+    "wrangler": "^4.0.0"
+  }
+}

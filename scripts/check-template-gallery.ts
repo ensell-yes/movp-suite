@@ -22,6 +22,12 @@ const TEMPLATES: TemplateSpec[] = [
     reusesPlatform: ['content_item', 'content_seo', 'content_schedule'],
     pages: ['src/pages/blog/index.astro'],
   },
+  {
+    name: 'support-desk',
+    projectCollections: ['sla_policy', 'support_ticket'],
+    reusesPlatform: ['task', 'automation_rule', 'comment'],
+    pages: ['src/pages/support/index.astro'],
+  },
 ]
 
 const DEFAULT_TEMPLATES_DIR = 'templates'

@@ -42,6 +42,12 @@ describe('parseCreateCliArgs', () => {
     })
   })
 
+  it('accepts the support-desk gallery template', () => {
+    expect(parseCreateCliArgs(['--template', 'support-desk'])).toMatchObject({
+      template: 'support-desk',
+    })
+  })
+
   it('rejects an unknown template', () => {
     expect(() => parseCreateCliArgs(['--template', 'unknown'])).toThrow(/unknown_template/)
   })
