@@ -6,15 +6,16 @@ insert into public.workspace_membership (workspace_id, user_id, role)
   values ('__WORKSPACE_ID__', 'b0000000-0000-0000-0000-0000000000aa', 'owner')
   on conflict (workspace_id, user_id) do nothing;
 
-insert into public.task_status_option (id, workspace_id, label, category, sort_order, is_default, is_active)
-  values ('b1000000-0000-0000-0000-000000000001', '__WORKSPACE_ID__', 'Open', 'active', 1, true, true)
-  on conflict (id) do nothing;
-insert into public.task_priority_option (id, workspace_id, label, rank, is_default, is_active)
-  values ('b1000000-0000-0000-0000-000000000002', '__WORKSPACE_ID__', 'Normal', 100, true, true)
-  on conflict (id) do nothing;
+-- The workspace insert trigger owns task option defaults; reuse them so this seed remains reset-safe.
 insert into public.task (id, workspace_id, title, status_id, priority_id, due_date)
   values ('b2000000-0000-0000-0000-000000000001', '__WORKSPACE_ID__', 'Login button is broken',
-          'b1000000-0000-0000-0000-000000000001', 'b1000000-0000-0000-0000-000000000002', current_date + 1)
+          (select id from public.task_status_option
+           where workspace_id = '__WORKSPACE_ID__' and category = 'active' and is_active
+           order by sort_order, id limit 1),
+          (select id from public.task_priority_option
+           where workspace_id = '__WORKSPACE_ID__' and is_default and is_active
+           order by rank desc, id limit 1),
+          current_date + 1)
   on conflict (id) do nothing;
 
 insert into public.sla_policy (id, workspace_id, name, first_response_minutes, resolution_minutes)

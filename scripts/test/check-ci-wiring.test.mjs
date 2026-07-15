@@ -436,7 +436,7 @@ ${ARMED_JOB}
       - uses: denoland/setup-deno@v2
         with: { deno-version: v2.9.2 }
       - run: deno --version | head -n 1 | grep -qF 'deno 2.9.2'
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v5
         with: { name: movp-tarballs, path: ./artifacts }
       - run: pnpm install --frozen-lockfile
       - env:
@@ -469,6 +469,7 @@ const FULL_TABLE = {
     steps: [
       ['uses: supabase/setup-cli@v2', 'with: { version: 2.109.1 }'],
       ['uses: denoland/setup-deno@v2', 'with: { deno-version: v2.9.2 }'],
+      ['uses: actions/download-artifact@v5', 'with: { name: movp-tarballs, path: ./artifacts }'],
     ],
   },
 }
@@ -491,6 +492,13 @@ describe("checkCiWiring — 06e's REAL workflow, pasted verbatim (round-10 F1 ac
     const problems = checkCiWiring(fixture('real-no-gate', withoutGate), FULL_TABLE)
     assert.equal(problems.length, 1)
     assert.match(problems[0], /ci_wiring_run_missing: .* job "template-smoke" does not invoke `bash fixtures\/verdaccio-gallery\/gate\.sh \$\{\{ matrix\.template \}\}`/)
+  })
+
+  it('FAILS when template-smoke downgrades download-artifact from Node 24', () => {
+    const downgraded = REAL_CI.replace('actions/download-artifact@v5', 'actions/download-artifact@v4')
+    const problems = checkCiWiring(fixture('real-old-download-artifact', downgraded), FULL_TABLE)
+    assert.equal(problems.length, 1)
+    assert.match(problems[0], /ci_wiring_step_missing: .*actions\/download-artifact@v5/)
   })
 })
 

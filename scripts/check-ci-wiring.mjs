@@ -101,6 +101,7 @@ export const REQUIRED_JOBS = {
     steps: [
       ['uses: supabase/setup-cli@v2', 'with: { version: 2.109.1 }'],
       ['uses: denoland/setup-deno@v2', 'with: { deno-version: v2.9.2 }'],
+      ['uses: actions/download-artifact@v5', 'with: { name: movp-tarballs, path: ./artifacts }'],
     ],
   },
 }

@@ -167,11 +167,27 @@ function assertAssets(name: string, dir: string, spec: TemplateSpec): void {
   if (existsSync(join(dir, 'package.json'))) fail(name, 'committed a bare package.json (must be package.json.template)')
 }
 
+function assertRuntimeGate(): void {
+  const gatePath = join('fixtures', 'verdaccio-gallery', 'gate.sh')
+  const source = readTemplateText('runtime-gate', gatePath, 'gallery runtime gate')
+  if (!source.includes('PLATFORM_DIST="$PLATFORM_CHECK/node_modules/@movp/platform/dist"')) {
+    fail('runtime-gate', 'does not inspect the published @movp/platform artifact')
+  }
+  if (!source.includes('npm install --prefix "$PLATFORM_CHECK"')) {
+    fail('runtime-gate', 'does not install a separate published platform verifier')
+  }
+  if (source.includes('PLATFORM_DIST="$REPO_ROOT/packages/platform/dist"')) {
+    fail('runtime-gate', 'depends on an unbuilt monorepo platform artifact')
+  }
+  console.log('template-gallery: published @movp/platform verifier path pinned')
+}
+
 async function main(): Promise<void> {
   const only = argValue('--template')
   const templatesDir = argValue('--templates-dir') ?? DEFAULT_TEMPLATES_DIR
   const selected = only ? TEMPLATES.filter((template) => template.name === only) : TEMPLATES
   if (only && selected.length === 0) throw new Error(`unknown template: ${only}`)
+  assertRuntimeGate()
   console.log(`template-gallery: templates-dir=${templatesDir}`)
   for (const spec of selected) {
     const dir = join(templatesDir, spec.name)

@@ -5,7 +5,7 @@ import { postGraphql } from '../../lib/graphql.ts'
 
 const TICKETS_QUERY = /* GraphQL */ `
   query SupportTickets($workspaceId: ID!, $first: Int) {
-    supportTickets(workspaceId: $workspaceId, first: $first) {
+    supportTickets: support_tickets(workspaceId: $workspaceId, first: $first) {
       items { id subject requester_email channel sla_due_at }
     }
   }`

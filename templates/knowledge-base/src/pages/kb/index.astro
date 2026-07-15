@@ -5,7 +5,7 @@ import { postGraphql } from '../../lib/graphql.ts'
 
 const ARTICLES_QUERY = /* GraphQL */ `
   query KbArticles($workspaceId: ID!, $first: Int) {
-    kbArticles(workspaceId: $workspaceId, first: $first) { items { id title } }
+    kbArticles: kb_articles(workspaceId: $workspaceId, first: $first) { items { id title } }
   }`
 const SEARCH_QUERY = /* GraphQL */ `
   query Search($workspaceId: ID!, $query: String!) {

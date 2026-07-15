@@ -157,7 +157,7 @@ jobs:
       - uses: denoland/setup-deno@v2
         with: { deno-version: v2.9.2 }
       - run: deno --version | head -n 1 | grep -qF 'deno 2.9.2'
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v5
         with: { name: movp-tarballs, path: ./artifacts }
       - run: pnpm install --frozen-lockfile
       - env:

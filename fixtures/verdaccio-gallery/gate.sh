@@ -14,9 +14,9 @@ case "$TEMPLATE" in
   marketing-site)
     DB_PORT=64622; GQL_FIELD=authors; MCP_TOOL=author.list; PROJECT_COLLECTION_COUNT=2 ;;
   support-desk)
-    DB_PORT=64722; GQL_FIELD=supportTickets; MCP_TOOL=support_ticket.list; PROJECT_COLLECTION_COUNT=2 ;;
+    DB_PORT=64722; GQL_FIELD=support_tickets; MCP_TOOL=support_ticket.list; PROJECT_COLLECTION_COUNT=2 ;;
   knowledge-base)
-    DB_PORT=64822; GQL_FIELD=kbArticles; MCP_TOOL=kb_article.list; PROJECT_COLLECTION_COUNT=2 ;;
+    DB_PORT=64822; GQL_FIELD=kb_articles; MCP_TOOL=kb_article.list; PROJECT_COLLECTION_COUNT=2 ;;
   *) echo "usage: gate.sh <crm-lite|marketing-site|support-desk|knowledge-base>" >&2; exit 2 ;;
 esac
 DB_URL="postgresql://postgres:postgres@127.0.0.1:${DB_PORT}/postgres"
@@ -48,10 +48,35 @@ graphql_post() {
 mcp_post() {
   payload="$1"
   for attempt in 1 2 3; do
-    if curl -sS --connect-timeout 2 --max-time 20 "$API_URL/functions/v1/mcp" \
+    if curl -sS --connect-timeout 2 --max-time 60 "$API_URL/functions/v1/mcp" \
       -H "Authorization: Bearer $TOKEN" -H "apikey: $ANON_KEY" \
       -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' \
       -d "$payload"; then
+      return 0
+    fi
+    sleep "$attempt"
+  done
+  return 1
+}
+
+auth_admin_post() {
+  for attempt in 1 2 3; do
+    if curl -sS --connect-timeout 2 --max-time 10 "$API_URL/auth/v1/admin/users" \
+      -H "Authorization: Bearer $SERVICE_ROLE_KEY" -H "apikey: $SERVICE_ROLE_KEY" \
+      -H 'content-type: application/json' \
+      -d '{"email":"gallery@example.test","password":"Passw0rd!1","email_confirm":true}' >/dev/null; then
+      return 0
+    fi
+    sleep "$attempt"
+  done
+  return 1
+}
+
+auth_token_post() {
+  for attempt in 1 2 3; do
+    if curl -sS --connect-timeout 2 --max-time 10 "$API_URL/auth/v1/token?grant_type=password" \
+      -H "apikey: $ANON_KEY" -H 'content-type: application/json' \
+      -d '{"email":"gallery@example.test","password":"Passw0rd!1"}'; then
       return 0
     fi
     sleep "$attempt"
@@ -101,6 +126,15 @@ for tarball in "$PACK_DIR"/*.tgz; do
     exit 1
   }
 done
+
+PLATFORM_CHECK="$WORK/platform-check"
+npm install --prefix "$PLATFORM_CHECK" --registry "$REGISTRY" --ignore-scripts --no-package-lock \
+  @movp/platform@0.1.0 >/dev/null
+PLATFORM_DIST="$PLATFORM_CHECK/node_modules/@movp/platform/dist"
+[ -f "$PLATFORM_DIST/index.js" ] || {
+  echo "published @movp/platform artifact is missing dist/index.js" >&2
+  exit 1
+}
 
 cd "$WORK"
 printf '%s\n%s\n%s\n' "$TEMPLATE" "$PROJECT" "$WS" >"$WORK/scaffold-input"
@@ -153,7 +187,6 @@ for attempt in 1 2 3; do
 done
 [ "$DB_RESET" = 1 ] || { echo "Supabase reset failed after 3 attempts" >&2; exit 1; }
 
-PLATFORM_DIST="$REPO_ROOT/packages/platform/dist"
 EXPECTED_COUNTS="$(node --input-type=module -e "import { verifyPlatformArtifact } from '$PLATFORM_DIST/index.js'; const m = verifyPlatformArtifact('$PLATFORM_DIST'); process.stdout.write(m.metadata.collections + '|' + m.metadata.fields)")"
 IFS='|' read -r EXPECT_COLLECTIONS EXPECT_FIELDS <<<"$EXPECTED_COUNTS"
 [[ "$EXPECT_COLLECTIONS" =~ ^[1-9][0-9]*$ && "$EXPECT_FIELDS" =~ ^[1-9][0-9]*$ ]] || {
@@ -199,13 +232,8 @@ if [ -z "$STACK_ENV" ]; then
 fi
 eval "$(printf '%s\n' "$STACK_ENV" | sed 's/^\([A-Z_]*\)=/export \1=/')"
 : "${API_URL:?}"; : "${ANON_KEY:?}"; : "${SERVICE_ROLE_KEY:?}"
-curl -sS --connect-timeout 2 --max-time 10 "$API_URL/auth/v1/admin/users" \
-  -H "Authorization: Bearer $SERVICE_ROLE_KEY" -H "apikey: $SERVICE_ROLE_KEY" \
-  -H 'content-type: application/json' \
-  -d '{"email":"gallery@example.test","password":"Passw0rd!1","email_confirm":true}' >/dev/null
-TOKEN="$(curl -sS --connect-timeout 2 --max-time 10 "$API_URL/auth/v1/token?grant_type=password" \
-  -H "apikey: $ANON_KEY" -H 'content-type: application/json' \
-  -d '{"email":"gallery@example.test","password":"Passw0rd!1"}' \
+auth_admin_post || { echo "failed to create gallery user after 3 transport attempts" >&2; exit 1; }
+TOKEN="$(auth_token_post \
   | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>process.stdout.write(JSON.parse(d).access_token))')"
 [ -n "$TOKEN" ] || { echo "failed to mint member token" >&2; exit 1; }
 USER_ID="$(node -e 'const t=process.argv[1].split(".")[1];process.stdout.write(JSON.parse(Buffer.from(t,"base64url")).sub)' "$TOKEN")"
