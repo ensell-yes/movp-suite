@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { SEED_RECORD } from '@spike/fixture'
 import {
   hashOnce,
   makeLifecycleOracle,
@@ -8,6 +9,7 @@ import {
 } from '../src/index.ts'
 
 const rec = (body: string) => ({ title: 'T', body, meta: { a: 1 } })
+const EXPECTED_SEED_HASH = '10e3192be44ac32be5873b0853ef8994b70f2f9f3300e0ab6967159ac59d9c94'
 const bodyOf = (value: unknown): string => {
   if (
     typeof value !== 'object' ||
@@ -27,7 +29,8 @@ const bodyOf = (value: unknown): string => {
 }
 
 describe('lifecycle oracle', () => {
-  it('hashOnce is deterministic and content-sensitive', async () => {
+  it('pins the production seed hash and remains deterministic and content-sensitive', async () => {
+    expect(await hashOnce(SEED_RECORD)).toBe(EXPECTED_SEED_HASH)
     const h1 = await hashOnce(rec('x'))
     expect(h1).toMatch(/^[0-9a-f]{64}$/)
     expect(await hashOnce(rec('x'))).toBe(h1)
@@ -65,9 +68,45 @@ describe('lifecycle oracle', () => {
     expect(bodyOf(stale)).toBe('v1')
   })
 
-  it('rejects malformed RPC bodies without unchecked casts', () => {
+  it('rejects invalid JSON RPC bodies', () => {
     expect(() => parseRpcBody({ body: '{not json' })).toThrow(/oracle_invalid_rpc_body/)
-    expect(() => requireRevisionFields({ p_data: 'nope' })).toThrow(/oracle_invalid_rpc_body/)
+  })
+
+  it('rejects parsed array RPC bodies', () => {
+    expect(() => parseRpcBody({ body: '[]' })).toThrow(/oracle_invalid_rpc_body/)
+  })
+
+  it('rejects parsed null RPC bodies', () => {
+    expect(() => parseRpcBody({ body: 'null' })).toThrow(/oracle_invalid_rpc_body/)
+  })
+
+  it('rejects revision fields missing p_data', () => {
+    expect(() => requireRevisionFields({ p_content_hash: 'hash' })).toThrow(
+      /oracle_invalid_rpc_body/,
+    )
+  })
+
+  it('rejects a wrong-typed p_data', () => {
+    expect(() => requireRevisionFields({ p_data: 'nope', p_content_hash: 'hash' })).toThrow(
+      /oracle_invalid_rpc_body/,
+    )
+  })
+
+  it('rejects revision fields missing p_content_hash', () => {
+    expect(() => requireRevisionFields({ p_data: {} })).toThrow(/oracle_invalid_rpc_body/)
+  })
+
+  it('rejects a wrong-typed p_content_hash', () => {
+    expect(() => requireRevisionFields({ p_data: {}, p_content_hash: false })).toThrow(
+      /oracle_invalid_rpc_body/,
+    )
+  })
+
+  it('rejects a missing p_expected_revision_id', () => {
+    expect(() => requireExpectedRevisionId({})).toThrow(/oracle_invalid_rpc_body/)
+  })
+
+  it('rejects a wrong-typed p_expected_revision_id', () => {
     expect(() => requireExpectedRevisionId({ p_expected_revision_id: false })).toThrow(
       /oracle_invalid_rpc_body/,
     )
