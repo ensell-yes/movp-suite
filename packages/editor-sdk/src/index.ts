@@ -1,1 +1,6 @@
-export {}
+export { canonicalizeInnerJson } from './canonical.ts'
+export { INNER_CANONICAL_VERSION, tipTapAdapter, type EditorAdapter, type TipTapDoc } from './adapter.ts'
+export { classifySaveOutcome, type SaveHandler, type SaveResult } from './save.ts'
+export { Toolbar, type ToolbarCommands } from './toolbar.tsx'
+export { ConflictSurface } from './conflict-surface.tsx'
+export { MovpEditor, type EditorStatus, type MovpEditorProps } from './editor.tsx'

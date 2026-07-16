@@ -2,6 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 import { Toolbar } from '../src/toolbar.tsx'
 import { ConflictSurface } from '../src/conflict-surface.tsx'
+import { MovpEditor } from '../src/editor.tsx'
 
 const noopCommands = { bold: vi.fn(), h1: vi.fn(), bullet: vi.fn(), undo: vi.fn(), redo: vi.fn() }
 
@@ -21,5 +22,23 @@ describe('ConflictSurface', () => {
     const html = renderToStaticMarkup(<ConflictSurface onRefresh={() => {}} />)
     expect(html).toContain('role="alert"')
     expect(html).toContain('aria-label="Refresh and reload latest content"')
+  })
+})
+
+describe('MovpEditor SSR safety', () => {
+  it('server-renders without TipTap SSR warnings (immediatelyRender:false)', () => {
+    const errors: string[] = []
+    const spy = vi.spyOn(console, 'error').mockImplementation((m: unknown) => { errors.push(String(m)) })
+    const warns: string[] = []
+    const wspy = vi.spyOn(console, 'warn').mockImplementation((m: unknown) => { warns.push(String(m)) })
+    try {
+      renderToStaticMarkup(
+        <MovpEditor initialBody="" onSave={async () => ({ status: 'saved', revisionId: 'r1' })} onRefresh={() => {}} />,
+      )
+    } finally {
+      spy.mockRestore()
+      wspy.mockRestore()
+    }
+    expect([...errors, ...warns].some((m) => m.includes('SSR'))).toBe(false)
   })
 })
