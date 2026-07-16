@@ -240,18 +240,35 @@ describe('gates fail red on sabotage', () => {
     expect(statSync(target).mode & 0o777).toBe(0o600)
     expect(readdirSync(d).filter((name) => name.endsWith('.tmp'))).toEqual([])
   })
-  it('runtime preflight parser accepts only Node 22 and the signed Chrome channel', async () => {
+  it('runtime preflight parser accepts only the exact pinned Node and signed Chrome channel', async () => {
     const { validateRuntime } = await import('../runtime-preflight.mjs')
-    expect(validateRuntime('22.23.0', 'chrome', 'Google Chrome 138.0.0.0')).toEqual({
+    expect(validateRuntime('22.23.0', '22.23.0', 'chrome', 'Google Chrome 138.0.0.0')).toEqual({
       node: '22.23.0', browserChannel: 'chrome', browserVersion: 'Google Chrome 138.0.0.0',
     })
-    expect(() => validateRuntime('21.7.0', 'chrome', 'Google Chrome 138.0.0.0')).toThrow('runtime-preflight:E_NODE_MAJOR')
-    expect(() => validateRuntime('23.0.0', 'chrome', 'Google Chrome 138.0.0.0')).toThrow('runtime-preflight:E_NODE_MAJOR')
+    for (const node of ['22.23.1', '21.7.0', '23.0.0']) {
+      expect(() => validateRuntime('22.23.0', node, 'chrome', 'Google Chrome 138.0.0.0')).toThrow('runtime-preflight:E_NODE_MISMATCH')
+    }
   })
   it('runtime preflight parser rejects unsupported or malformed browser evidence without launching', async () => {
     const { validateRuntime } = await import('../runtime-preflight.mjs')
-    expect(() => validateRuntime('22.23.0', 'chromium', '138.0.0.0')).toThrow('runtime-preflight:E_BROWSER_CHANNEL')
-    expect(() => validateRuntime('22.23.0', 'chrome', '')).toThrow('runtime-preflight:E_BROWSER_VERSION')
-    expect(() => validateRuntime('22.23.0', 'chrome', 'x'.repeat(129))).toThrow('runtime-preflight:E_BROWSER_VERSION')
+    expect(() => validateRuntime('22.23.0', '22.23.0', 'chromium', '138.0.0.0')).toThrow('runtime-preflight:E_BROWSER_CHANNEL')
+    expect(() => validateRuntime('22.23.0', '22.23.0', 'chrome', '')).toThrow('runtime-preflight:E_BROWSER_VERSION')
+    expect(() => validateRuntime('22.23.0', '22.23.0', 'chrome', 'x'.repeat(129))).toThrow('runtime-preflight:E_BROWSER_VERSION')
+  })
+  it('guardedly treats .node-version as authoritative without leaking malformed content', () => {
+    const d = mkdtempSync(join(tmpdir(), 'spk-runtime-')); const pin = join(d, '.node-version')
+    writeFileSync(pin, '22.23.0\n')
+    expect(run('runtime-preflight.mjs', '--check-node-only', '--pin', pin)).toBe(0)
+    writeFileSync(pin, 'SECRET_PAYLOAD\n')
+    const malformed = failure('runtime-preflight.mjs', '--check-node-only', '--pin', pin)
+    expect(malformed.status).toBe(1)
+    expect(malformed.stderr).toContain('runtime-preflight:E_PIN_SHAPE')
+    expect(malformed.stderr).not.toContain('SECRET_PAYLOAD')
+    const victim = join(d, 'victim'); const symlink = join(d, 'pin-link')
+    writeFileSync(victim, '22.23.0\n'); symlinkSync(victim, symlink)
+    const linked = failure('runtime-preflight.mjs', '--check-node-only', '--pin', symlink)
+    expect(linked.status).toBe(1)
+    expect(linked.stderr).toContain('safe-io:E_SYMLINK')
+    expect(linked.stderr).not.toContain('22.23.0')
   })
 })

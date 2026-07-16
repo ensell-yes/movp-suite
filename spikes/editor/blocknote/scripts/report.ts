@@ -14,6 +14,7 @@ import type { CandidateResult, LicenseEntry, NoticeEvidence, RuntimeEvidence } f
 
 const workspace = fileURLToPath(new URL('../../', import.meta.url))
 const candidateDir = join(workspace, 'blocknote')
+const nodePinPath = join(workspace, '.node-version')
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
@@ -82,9 +83,15 @@ function licenseEvidence(raw: string): {
   return { entries, prodHasCopyleft: value.prodHasCopyleft, noticeEvidence }
 }
 
-function runtimeEvidence(value: unknown): RuntimeEvidence {
+function pinnedNodeVersion(): string {
+  const pin = readTextBounded(nodePinPath, 64).trim()
+  if (!/^\d+\.\d+\.\d+$/.test(pin)) throw new Error(`report: invalid node pin path=${nodePinPath}`)
+  return pin
+}
+
+function runtimeEvidence(value: unknown, pin: string): RuntimeEvidence {
   if (!isRecord(value) || !isRecord(value.runtime) ||
-      typeof value.runtime.node !== 'string' || !/^22\.\d+\.\d+$/.test(value.runtime.node) ||
+      value.runtime.node !== pin ||
       value.runtime.browserChannel !== 'chrome' ||
       typeof value.runtime.browserVersion !== 'string' || value.runtime.browserVersion.length === 0 ||
       value.runtime.browserVersion.length > 128 || !/^[\x20-\x7e]+$/.test(value.runtime.browserVersion)) {
@@ -157,7 +164,7 @@ const result: CandidateResult = {
   prodLicenses: prod.entries,
   fullLicenses: full.entries,
   noticeEvidence: mergeNoticeEvidence(prod.noticeEvidence, full.noticeEvidence),
-  runtime: runtimeEvidence(a11yJson),
+  runtime: runtimeEvidence(a11yJson, pinnedNodeVersion()),
   bundle: bundle(join(candidateDir, 'dist')),
 }
 
