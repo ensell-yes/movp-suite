@@ -5,12 +5,12 @@
   "type": "module",
   "scripts": {
     "dev": "astro dev",
-    "build": "node scripts/build.mjs",
-    "typecheck": "node scripts/typecheck.mjs",
+    "build": "astro build",
+    "typecheck": "astro check && tsc --noEmit",
     "test": "vitest run",
     "e2e": "playwright test",
     "e2e:gotrue": "node scripts/run-gotrue-login-e2e.mjs",
-    "preview": "wrangler dev"
+    "preview": "astro preview"
   },
   "dependencies": {
     "@astrojs/cloudflare": "^13.1.10",

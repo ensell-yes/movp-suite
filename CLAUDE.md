@@ -73,6 +73,17 @@
 - Agent-facing auth codes are `missing_token`, `invalid_token`, `expired_token`, and
   `invalid_claims`. A revoked PAT maps to `invalid_token` at every public boundary.
 
+## Astro Cloudflare Templates
+
+- Astro 6 source configs use `@astrojs/cloudflare/entrypoints/server`. Never point source
+  `wrangler.jsonc` at generated `dist/server/entry.mjs` or the removed `dist/_worker.js` layout.
+- `astro build` owns `dist/server/wrangler.json` and Wrangler's redirected deploy config; the deploy
+  gate is build first, then `wrangler deploy --dry-run`.
+- The adapter requires `SESSION` KV. Keep the ID-less binding in source so Wrangler auto-provisions
+  it; do not manually create or commit an account-specific namespace id.
+- Frontend bindings are the four public vars plus `SESSION`/adapter-generated `ASSETS`. Do not add an
+  R2 binding until code has a real runtime consumer. Regenerate binding types after config changes.
+
 ## Schema Productization
 
 - `defineSchema({ extends })` is the ownership boundary: a root schema is `platform`, locally
