@@ -119,7 +119,7 @@ test('idempotent create -> editor edit -> publish -> published read', async ({ p
   await page.evaluate((body) => window.__spike!.load(body), zeroEdit)
   const repeatedStable = await page.evaluate((body) => window.__spike!.serialize() === body, zeroEdit)
   expect(repeatedStable).toBe(true)
-  const blockIdPreserved = true
+  const blockIdPreserved = null
 
   const beforeText = await page.locator('[contenteditable="true"]').innerText()
   await selectWord(page, 'world')

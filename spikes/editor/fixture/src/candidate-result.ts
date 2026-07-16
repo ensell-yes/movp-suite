@@ -31,7 +31,7 @@ export interface CandidateResult {
   fullLicenses: LicenseEntry[]
   noticeEvidence: NoticeEvidence[]
   runtime: RuntimeEvidence
-  blockIdPreserved: boolean
+  blockIdPreserved: boolean | null
   bundle: { jsRaw: number; jsGzip: number; cssRaw: number; cssGzip: number }
   toolbarLoc?: number
 }

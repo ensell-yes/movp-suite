@@ -7,7 +7,7 @@
   "scripts": {
     "build": "vite build",
     "preflight": "node ../scripts/runtime-preflight.mjs .",
-    "test": "pnpm run preflight && vitest run test/boundary.test.ts && playwright test",
+    "test": "pnpm run preflight && vitest run test/boundary.test.ts test/report.test.ts && playwright test",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "report": "pnpm run preflight && tsx scripts/report.ts"
   },

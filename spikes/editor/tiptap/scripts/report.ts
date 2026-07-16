@@ -11,6 +11,7 @@ import {
   walkRegularFiles,
   writeJsonAtomic,
 } from '../../scripts/lib/safe-io.mjs'
+import { physicalLineCount } from './report-lib.ts'
 
 const workspace = fileURLToPath(new URL('../../', import.meta.url))
 const candidateDir = join(workspace, 'tiptap')
@@ -41,6 +42,13 @@ function bundle(dir: string) {
 
 function reqBool(value: unknown, key: string): boolean {
   if (!isRecord(value) || typeof value[key] !== 'boolean') throw new Error(`report: ${key} missing`)
+  return value[key]
+}
+
+function reqNullableBool(value: unknown, key: string): boolean | null {
+  if (!isRecord(value) || (typeof value[key] !== 'boolean' && value[key] !== null)) {
+    throw new Error(`report: ${key} missing`)
+  }
   return value[key]
 }
 
@@ -145,7 +153,7 @@ const full = licenseEvidence(execFileSync(
   ['scripts/license-gate.mjs', 'tiptap', 'full', 'tiptap'],
   { cwd: workspace, encoding: 'utf8' },
 ))
-const toolbarLoc = readTextBounded(join(candidateDir, 'src/toolbar.tsx')).split('\n').length
+const toolbarLoc = physicalLineCount(readTextBounded(join(candidateDir, 'src/toolbar.tsx')))
 
 const result: CandidateResult = {
   schemaVersion: 1,
@@ -156,7 +164,7 @@ const result: CandidateResult = {
   lifecycleOrder: reqBool(life, 'lifecycleOrder'),
   publishedRead: reqBool(life, 'publishedRead'),
   staleSabotage: reqBool(life, 'staleSabotage'),
-  blockIdPreserved: reqBool(life, 'blockIdPreserved'),
+  blockIdPreserved: reqNullableBool(life, 'blockIdPreserved'),
   boundary: reqBool(boundaryJson, 'boundary'),
   a11y: reqBool(a11yJson, 'a11y'),
   license: 'pass',

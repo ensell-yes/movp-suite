@@ -26,6 +26,15 @@ const tiptapLicenseFixture = (root, license, missingNoticeAt = -1) => {
   const file = join(root, 'licenses.json'); writeFileSync(file, JSON.stringify({ [license]: packages }))
   return { file, packages, paths: packages.map((pkg) => pkg.paths[0]) }
 }
+const tiptapGraph = (paths, extraDependencies = {}) => {
+  const names = ['@tiptap/core', '@tiptap/react', '@tiptap/pm', '@tiptap/starter-kit']
+  return [{ dependencies: {
+    ...Object.fromEntries(names.map((name, index) => [name, {
+      version: '1.0.0', resolved: `https://registry.npmjs.org/${name}`, path: paths[index],
+    }])),
+    ...extraDependencies,
+  } }]
+}
 
 describe('gates fail red on sabotage', () => {
   it('source-boundary catches a forbidden client import', () => {
@@ -146,6 +155,84 @@ describe('gates fail red on sabotage', () => {
     const graph = join(d, 'graph.json'); writeFileSync(graph, JSON.stringify([{ dependencies }]))
     const raw = execFileSync('node', [join('scripts', 'license-gate.mjs'), d, 'prod', 'tiptap', '--graph-input', graph], { cwd: workspace, encoding: 'utf8' })
     expect(JSON.parse(raw).entries).toContainEqual({ name: 'nested-registry-child', versions: ['2.0.0'], license: 'MIT' })
+  })
+  it('merges a guarded graph child omitted by a successful base license report', () => {
+    const d = mkdtempSync(join(tmpdir(), 'spk-tiptap-'))
+    const { file, paths } = tiptapLicenseFixture(d, 'MIT')
+    const childPath = join(d, 'nested-child'); mkdirSync(childPath)
+    writeFileSync(join(childPath, 'package.json'), JSON.stringify({ name: 'nested-registry-child', version: '2.0.0', license: 'MIT' }))
+    const graph = join(d, 'graph.json')
+    writeFileSync(graph, JSON.stringify(tiptapGraph(paths, {
+      '@spike/workspace-parent': { version: '0.0.0', dependencies: {
+        'nested-registry-child': { version: '2.0.0', resolved: 'https://registry.npmjs.org/nested-registry-child', path: childPath },
+      } },
+    })))
+    const raw = execFileSync('node', [join('scripts', 'license-gate.mjs'), d, 'prod', 'tiptap', '--input', file, '--graph-input', graph], { cwd: workspace, encoding: 'utf8' })
+    expect(JSON.parse(raw).entries).toContainEqual({ name: 'nested-registry-child', versions: ['2.0.0'], license: 'MIT' })
+  })
+  it.each(['SECRET_PAYLOAD', 'GPL-3.0-only'])('rejects omitted graph child with %s even when the base license report succeeds', (license) => {
+    const d = mkdtempSync(join(tmpdir(), 'spk-tiptap-'))
+    const { file, paths } = tiptapLicenseFixture(d, 'MIT')
+    const childPath = join(d, 'nested-child'); mkdirSync(childPath)
+    writeFileSync(join(childPath, 'package.json'), JSON.stringify({ name: 'nested-registry-child', version: '2.0.0', license }))
+    const graph = join(d, 'graph.json')
+    writeFileSync(graph, JSON.stringify(tiptapGraph(paths, {
+      '@spike/workspace-parent': { version: '0.0.0', dependencies: {
+        'nested-registry-child': { version: '2.0.0', resolved: 'https://registry.npmjs.org/nested-registry-child', path: childPath },
+      } },
+    })))
+    expect(run('license-gate.mjs', d, 'prod', 'tiptap', '--input', file, '--graph-input', graph)).toBe(1)
+  })
+  it('rejects a base-versus-graph license conflict for the same installed package version', () => {
+    const d = mkdtempSync(join(tmpdir(), 'spk-tiptap-'))
+    const { file, paths } = tiptapLicenseFixture(d, 'MIT')
+    const childPath = join(d, 'nested-child'); mkdirSync(childPath)
+    writeFileSync(join(childPath, 'package.json'), JSON.stringify({ name: 'nested-registry-child', version: '2.0.0', license: 'MIT' }))
+    const base = JSON.parse(readFileSync(file, 'utf8'))
+    base['MPL-2.0'] = [{ name: 'nested-registry-child', versions: ['2.0.0'], paths: [childPath] }]
+    writeFileSync(file, JSON.stringify(base))
+    const graph = join(d, 'graph.json')
+    writeFileSync(graph, JSON.stringify(tiptapGraph(paths, {
+      'nested-registry-child': { version: '2.0.0', resolved: 'https://registry.npmjs.org/nested-registry-child', path: childPath },
+    })))
+    expect(run('license-gate.mjs', d, 'prod', 'tiptap', '--input', file, '--graph-input', graph)).toBe(1)
+  })
+  it('skips an actually absent optional-platform package without inventing evidence', () => {
+    const d = mkdtempSync(join(tmpdir(), 'spk-tiptap-'))
+    const { file, paths } = tiptapLicenseFixture(d, 'MIT')
+    const missing = join(d, 'absent-optional')
+    const base = JSON.parse(readFileSync(file, 'utf8'))
+    base.MIT.push({ name: 'optional-platform', versions: ['1.0.0'], paths: [null] })
+    writeFileSync(file, JSON.stringify(base))
+    const graph = join(d, 'graph.json')
+    writeFileSync(graph, JSON.stringify(tiptapGraph(paths, {
+      '@spike/workspace-parent': { version: '0.0.0', optionalDependencies: {
+        'optional-platform': { version: '1.0.0', resolved: 'https://registry.npmjs.org/optional-platform', path: missing },
+      } },
+    })))
+    const raw = execFileSync('node', [join('scripts', 'license-gate.mjs'), d, 'prod', 'tiptap', '--input', file, '--graph-input', graph], { cwd: workspace, encoding: 'utf8' })
+    expect(JSON.parse(raw).entries.some((entry) => entry.name === 'optional-platform')).toBe(false)
+  })
+  it('fails when a required resolved graph package root is absent', () => {
+    const d = mkdtempSync(join(tmpdir(), 'spk-tiptap-'))
+    const { file, paths } = tiptapLicenseFixture(d, 'MIT')
+    const graph = join(d, 'graph.json')
+    writeFileSync(graph, JSON.stringify(tiptapGraph(paths, {
+      'required-child': { version: '1.0.0', resolved: 'https://registry.npmjs.org/required-child', path: join(d, 'absent-required') },
+    })))
+    expect(run('license-gate.mjs', d, 'prod', 'tiptap', '--input', file, '--graph-input', graph)).toBe(1)
+  })
+  it('fails when the two guarded graph depths disagree', () => {
+    const d = mkdtempSync(join(tmpdir(), 'spk-tiptap-'))
+    const { file, paths } = tiptapLicenseFixture(d, 'MIT')
+    const childPath = join(d, 'deep-child'); mkdirSync(childPath)
+    writeFileSync(join(childPath, 'package.json'), JSON.stringify({ name: 'deep-child', version: '1.0.0', license: 'MIT' }))
+    const shallow = join(d, 'shallow.json'); const deep = join(d, 'deep.json')
+    writeFileSync(shallow, JSON.stringify(tiptapGraph(paths)))
+    writeFileSync(deep, JSON.stringify(tiptapGraph(paths, {
+      'deep-child': { version: '1.0.0', resolved: 'https://registry.npmjs.org/deep-child', path: childPath },
+    })))
+    expect(run('license-gate.mjs', d, 'prod', 'tiptap', '--input', file, '--graph-input', shallow, '--graph-compare', deep)).toBe(1)
   })
   it.each(['SECRET_PAYLOAD', 'GPL-3.0-only'])('rejects %s on a registry child beneath an unresolved workspace node', (license) => {
     const d = mkdtempSync(join(tmpdir(), 'spk-tiptap-'))
