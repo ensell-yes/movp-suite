@@ -1,9 +1,10 @@
 import { execFileSync, spawnSync } from 'node:child_process'
-import { mkdtempSync, writeFileSync, mkdirSync, symlinkSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
+import { writeTextAtomic } from '../lib/safe-io.mjs'
 
 const workspace = fileURLToPath(new URL('../../', import.meta.url))
 const run = (script, ...args) => {
@@ -23,35 +24,49 @@ const tiptapLicenseFixture = (root, license, missingNoticeAt = -1) => {
     return { name, versions: ['1.0.0'], paths: [path] }
   })
   const file = join(root, 'licenses.json'); writeFileSync(file, JSON.stringify({ [license]: packages }))
-  return file
+  return { file, packages, paths: packages.map((pkg) => pkg.paths[0]) }
 }
 
 describe('gates fail red on sabotage', () => {
   it('source-boundary catches a forbidden client import', () => {
     const d = mkdtempSync(join(tmpdir(), 'spk-'))
     writeFileSync(join(d, 'bad.ts'), "import { hashOnce } from '@spike/oracle'\n")
-    expect(run('source-boundary.mjs', d, d)).toBe(1)
+    expect(run('source-boundary.mjs', d, d, join(d, 'bad.ts'))).toBe(1)
   })
   it('source-boundary catches a relative import escaping the browser root', () => {
     const d = mkdtempSync(join(tmpdir(), 'spk-')); const client = join(d, 'src'); mkdirSync(client)
     writeFileSync(join(d, 'server.ts'), 'export const secret = 1\n')
     writeFileSync(join(client, 'bad.ts'), "import { secret } from '../server.ts'\n")
-    expect(run('source-boundary.mjs', client, d)).toBe(1)
+    expect(run('source-boundary.mjs', client, d, join(client, 'bad.ts'))).toBe(1)
+  })
+  it('source-boundary catches a dynamic literal import escaping the browser root', () => {
+    const d = mkdtempSync(join(tmpdir(), 'spk-')); const client = join(d, 'src'); mkdirSync(client)
+    writeFileSync(join(d, 'server.ts'), 'export const secret = 1\n')
+    writeFileSync(join(client, 'main.ts'), "void import('../server.ts')\n")
+    expect(run('source-boundary.mjs', client, d, join(client, 'main.ts'))).toBe(1)
   })
   it('source-boundary rejects a symlinked source file (untrusted-io)', () => {
     const d = mkdtempSync(join(tmpdir(), 'spk-'))
+    writeFileSync(join(d, 'main.ts'), 'export {}\n')
     symlinkSync('/etc/hosts', join(d, 'evil.ts'))
-    expect(run('source-boundary.mjs', d, d)).toBe(1)
+    expect(run('source-boundary.mjs', d, d, join(d, 'main.ts'))).toBe(1)
   })
-  it('source-boundary rejects explicit any outside the browser directory', () => {
+  it('source-boundary rejects every AST any keyword across authored extensions', () => {
     const d = mkdtempSync(join(tmpdir(), 'spk-')); const client = join(d, 'client'); mkdirSync(client)
-    writeFileSync(join(d, 'node-test.ts'), 'const unsafe: any = 1\n')
-    expect(run('source-boundary.mjs', client, d)).toBe(1)
+    writeFileSync(join(client, 'main.ts'), 'export {}\n')
+    writeFileSync(join(d, 'node-test.mts'), 'type Unsafe = any[]\n')
+    expect(run('source-boundary.mjs', client, d, join(client, 'main.ts'))).toBe(1)
   })
   it('source-boundary rejects a symlinked source root before enumeration', () => {
     const d = mkdtempSync(join(tmpdir(), 'spk-'))
     const root = join(d, 'root'); symlinkSync('/etc', root)
-    expect(run('source-boundary.mjs', root, root)).toBe(1)
+    expect(run('source-boundary.mjs', root, root, join(root, 'main.ts'))).toBe(1)
+  })
+  it('source-boundary rejects a Vite entry outside the client root', () => {
+    const d = mkdtempSync(join(tmpdir(), 'spk-')); const client = join(d, 'src'); mkdirSync(client)
+    writeFileSync(join(client, 'main.ts'), 'export {}\n')
+    writeFileSync(join(d, 'outside.ts'), 'export {}\n')
+    expect(run('source-boundary.mjs', client, d, join(d, 'outside.ts'))).toBe(1)
   })
   it('guarded JSON rejects oversized and malformed files without echoing bytes', () => {
     const d = mkdtempSync(join(tmpdir(), 'spk-')); mkdirSync(join(d, 'dist'))
@@ -63,19 +78,42 @@ describe('gates fail red on sabotage', () => {
     expect(result.stderr).not.toContain('SECRET_PAYLOAD')
   })
   it('license evidence derives copyleft from the measured graph', () => {
-    const d = mkdtempSync(join(tmpdir(), 'spk-tiptap-')); const fixture = tiptapLicenseFixture(d, 'MPL-2.0')
-    const raw = execFileSync('node', [join('scripts', 'license-gate.mjs'), d, 'prod', 'tiptap', '--input', fixture], { cwd: workspace, encoding: 'utf8' })
+    const d = mkdtempSync(join(tmpdir(), 'spk-tiptap-')); const { file } = tiptapLicenseFixture(d, 'MPL-2.0')
+    const raw = execFileSync('node', [join('scripts', 'license-gate.mjs'), d, 'prod', 'tiptap', '--input', file], { cwd: workspace, encoding: 'utf8' })
     expect(JSON.parse(raw).prodHasCopyleft).toBe(true)
   })
   it('full license graph fails closed on an unknown SPDX value', () => {
-    const d = mkdtempSync(join(tmpdir(), 'spk-tiptap-')); const fixture = tiptapLicenseFixture(d, 'Mystery-1.0')
-    expect(run('license-gate.mjs', d, 'full', 'tiptap', '--input', fixture)).toBe(1)
+    const d = mkdtempSync(join(tmpdir(), 'spk-tiptap-')); const { file } = tiptapLicenseFixture(d, 'SECRET_PAYLOAD')
+    const result = failure('license-gate.mjs', d, 'full', 'tiptap', '--input', file)
+    expect(result.status).toBe(1)
+    expect(result.stderr).not.toContain('SECRET_PAYLOAD')
   })
   it('records a declared-only notice gap without rejecting the candidate', () => {
-    const d = mkdtempSync(join(tmpdir(), 'spk-tiptap-')); const fixture = tiptapLicenseFixture(d, 'MIT', 0)
-    const raw = execFileSync('node', [join('scripts', 'license-gate.mjs'), d, 'prod', 'tiptap', '--input', fixture], { cwd: workspace, encoding: 'utf8' })
+    const d = mkdtempSync(join(tmpdir(), 'spk-tiptap-')); const { file } = tiptapLicenseFixture(d, 'MIT', 0)
+    const raw = execFileSync('node', [join('scripts', 'license-gate.mjs'), d, 'prod', 'tiptap', '--input', file], { cwd: workspace, encoding: 'utf8' })
     const evidence = JSON.parse(raw).noticeEvidence
     expect(evidence).toContainEqual({ package: '@tiptap/core', status: 'declared_only', declaredLicense: 'MIT' })
+  })
+  it('rejects a denied declared license hidden under an allowed bucket', () => {
+    const d = mkdtempSync(join(tmpdir(), 'spk-tiptap-')); const { file, paths } = tiptapLicenseFixture(d, 'MIT', 0)
+    writeFileSync(join(paths[0], 'package.json'), JSON.stringify({ name: '@tiptap/core', version: '1.0.0', license: 'GPL-3.0-only' }))
+    expect(run('license-gate.mjs', d, 'prod', 'tiptap', '--input', file)).toBe(1)
+  })
+  it('rejects direct manifests whose name or version disagrees with measured evidence', () => {
+    for (const mismatch of [{ name: 'wrong-name', version: '1.0.0' }, { name: '@tiptap/core', version: '9.9.9' }]) {
+      const d = mkdtempSync(join(tmpdir(), 'spk-tiptap-')); const { file, paths } = tiptapLicenseFixture(d, 'MIT')
+      writeFileSync(join(paths[0], 'package.json'), JSON.stringify({ ...mismatch, license: 'MIT' }))
+      expect(run('license-gate.mjs', d, 'prod', 'tiptap', '--input', file)).toBe(1)
+    }
+  })
+  it('rejects empty normalized package names, versions, and paths', () => {
+    for (const field of ['name', 'versions', 'paths']) {
+      const d = mkdtempSync(join(tmpdir(), 'spk-tiptap-')); const { file, packages } = tiptapLicenseFixture(d, 'MIT')
+      const replacement = field === 'name' ? '' : []
+      packages[0] = { ...packages[0], [field]: replacement }
+      writeFileSync(file, JSON.stringify({ MIT: packages }))
+      expect(run('license-gate.mjs', d, 'prod', 'tiptap', '--input', file)).toBe(1)
+    }
   })
   it('module-graph gate fails when artifact missing', () => {
     const d = mkdtempSync(join(tmpdir(), 'spk-')); mkdirSync(join(d, 'dist'), { recursive: true })
@@ -83,7 +121,28 @@ describe('gates fail red on sabotage', () => {
   })
   it('module-graph gate fails on a forbidden module id', () => {
     const d = mkdtempSync(join(tmpdir(), 'spk-')); mkdirSync(join(d, 'dist'), { recursive: true })
-    writeFileSync(join(d, 'dist', 'module-ids.json'), JSON.stringify(['/x/packages/domain/src/content.ts']))
-    expect(run('module-graph-gate.mjs', join(d, 'dist'))).toBe(1)
+    writeFileSync(join(d, 'dist', 'module-ids.json'), JSON.stringify(['/SECRET_PAYLOAD/@spike/oracle']))
+    const result = failure('module-graph-gate.mjs', join(d, 'dist'))
+    expect(result.status).toBe(1)
+    expect(result.stderr).not.toContain('SECRET_PAYLOAD')
+  })
+  it('atomic writes produce the requested final modes', () => {
+    const d = mkdtempSync(join(tmpdir(), 'spk-')); const privateFile = join(d, 'private.json'); const publicFile = join(d, 'public.md')
+    writeTextAtomic(privateFile, '{}\n')
+    writeTextAtomic(publicFile, '# report\n', 0o644)
+    expect(statSync(privateFile).mode & 0o777).toBe(0o600)
+    expect(statSync(publicFile).mode & 0o777).toBe(0o644)
+  })
+  it('atomic writes reject a symlink target', () => {
+    const d = mkdtempSync(join(tmpdir(), 'spk-')); const victim = join(d, 'victim'); const target = join(d, 'target')
+    writeFileSync(victim, 'safe\n'); symlinkSync(victim, target)
+    expect(() => writeTextAtomic(target, 'unsafe\n')).toThrow()
+    expect(readFileSync(victim, 'utf8')).toBe('safe\n')
+  })
+  it('atomic write failure leaves no temporary file', () => {
+    const d = mkdtempSync(join(tmpdir(), 'spk-')); const target = join(d, 'target')
+    expect(() => writeTextAtomic(target, 'owner-only\n', -1)).toThrow()
+    expect(statSync(target).mode & 0o777).toBe(0o600)
+    expect(readdirSync(d).filter((name) => name.endsWith('.tmp'))).toEqual([])
   })
 })
