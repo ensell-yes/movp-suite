@@ -1,0 +1,17 @@
+{
+  "name": "@spike/oracle",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./boundary-sentinel": "./src/boundary-sentinel.ts"
+  },
+  "scripts": { "test": "vitest run", "typecheck": "tsc --noEmit -p tsconfig.json" },
+  "dependencies": {
+    "@movp/domain": "link:../../../packages/domain",
+    "@supabase/supabase-js": "2.110.0",
+    "@spike/fixture": "workspace:*"
+  },
+  "devDependencies": { "typescript": "5.6.3", "vitest": "3.2.6" }
+}
