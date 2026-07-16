@@ -1,0 +1,5 @@
+packages:
+  - fixture
+  - oracle
+  - blocknote
+  - tiptap
