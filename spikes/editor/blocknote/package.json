@@ -3,12 +3,13 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
-  "engines": { "node": ">=22 <26" },
+  "engines": { "node": ">=22 <23" },
   "scripts": {
     "build": "vite build",
-    "test": "vitest run test/boundary.test.ts && playwright test",
+    "preflight": "node ../scripts/runtime-preflight.mjs .",
+    "test": "pnpm run preflight && vitest run test/boundary.test.ts && playwright test",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "report": "tsx scripts/report.ts"
+    "report": "pnpm run preflight && tsx scripts/report.ts"
   },
   "dependencies": {
     "@blocknote/core": "0.31.1",

@@ -126,6 +126,69 @@ describe('gates fail red on sabotage', () => {
     const raw = execFileSync('node', [join('scripts', 'license-gate.mjs'), d, 'prod', 'tiptap', '--graph-input', graph], { cwd: workspace, encoding: 'utf8' })
     expect(JSON.parse(raw).entries.map((entry) => entry.name).sort()).toEqual(names.sort())
   })
+  it('walks resolved registry children beneath an unresolved workspace graph node', () => {
+    const d = mkdtempSync(join(tmpdir(), 'spk-tiptap-'))
+    const { paths } = tiptapLicenseFixture(d, 'MIT')
+    const names = ['@tiptap/core', '@tiptap/react', '@tiptap/pm', '@tiptap/starter-kit']
+    const childPath = join(d, 'nested-child'); mkdirSync(childPath)
+    writeFileSync(join(childPath, 'package.json'), JSON.stringify({ name: 'nested-registry-child', version: '2.0.0', license: 'MIT' }))
+    const dependencies = Object.fromEntries(names.map((name, index) => [name, {
+      version: '1.0.0', resolved: `https://registry.npmjs.org/${name}`, path: paths[index],
+    }]))
+    dependencies['@spike/workspace-parent'] = {
+      version: '0.0.0',
+      dependencies: {
+        'nested-registry-child': {
+          version: '2.0.0', resolved: 'https://registry.npmjs.org/nested-registry-child', path: childPath,
+        },
+      },
+    }
+    const graph = join(d, 'graph.json'); writeFileSync(graph, JSON.stringify([{ dependencies }]))
+    const raw = execFileSync('node', [join('scripts', 'license-gate.mjs'), d, 'prod', 'tiptap', '--graph-input', graph], { cwd: workspace, encoding: 'utf8' })
+    expect(JSON.parse(raw).entries).toContainEqual({ name: 'nested-registry-child', versions: ['2.0.0'], license: 'MIT' })
+  })
+  it.each(['SECRET_PAYLOAD', 'GPL-3.0-only'])('rejects %s on a registry child beneath an unresolved workspace node', (license) => {
+    const d = mkdtempSync(join(tmpdir(), 'spk-tiptap-'))
+    const { paths } = tiptapLicenseFixture(d, 'MIT')
+    const names = ['@tiptap/core', '@tiptap/react', '@tiptap/pm', '@tiptap/starter-kit']
+    const childPath = join(d, 'nested-child'); mkdirSync(childPath)
+    writeFileSync(join(childPath, 'package.json'), JSON.stringify({ name: 'nested-registry-child', version: '2.0.0', license }))
+    const dependencies = Object.fromEntries(names.map((name, index) => [name, {
+      version: '1.0.0', resolved: `https://registry.npmjs.org/${name}`, path: paths[index],
+    }]))
+    dependencies['@spike/workspace-parent'] = {
+      version: '0.0.0',
+      optionalDependencies: {
+        'nested-registry-child': {
+          version: '2.0.0', resolved: 'https://registry.npmjs.org/nested-registry-child', path: childPath,
+        },
+      },
+    }
+    const graph = join(d, 'graph.json'); writeFileSync(graph, JSON.stringify([{ dependencies }]))
+    expect(run('license-gate.mjs', d, 'prod', 'tiptap', '--graph-input', graph)).toBe(1)
+  })
+  it('retains guarded notice evidence for a full-graph attribution license', () => {
+    const d = mkdtempSync(join(tmpdir(), 'spk-tiptap-')); const { file } = tiptapLicenseFixture(d, 'MIT')
+    const attributionPath = join(d, 'caniuse-lite'); mkdirSync(attributionPath)
+    writeFileSync(join(attributionPath, 'package.json'), JSON.stringify({ name: 'caniuse-lite', version: '1.0.0', license: 'CC-BY-4.0' }))
+    writeFileSync(join(attributionPath, 'LICENSE'), 'CC-BY-4.0\n')
+    const report = JSON.parse(readFileSync(file, 'utf8'))
+    report['CC-BY-4.0'] = [{ name: 'caniuse-lite', versions: ['1.0.0'], paths: [attributionPath] }]
+    writeFileSync(file, JSON.stringify(report))
+    const raw = execFileSync('node', [join('scripts', 'license-gate.mjs'), d, 'full', 'tiptap', '--input', file], { cwd: workspace, encoding: 'utf8' })
+    expect(JSON.parse(raw).noticeEvidence).toContainEqual(expect.objectContaining({
+      package: 'caniuse-lite', status: 'file', path: 'caniuse-lite/LICENSE',
+    }))
+  })
+  it('fails a full attribution license package without guarded notice evidence', () => {
+    const d = mkdtempSync(join(tmpdir(), 'spk-tiptap-')); const { file } = tiptapLicenseFixture(d, 'MIT')
+    const attributionPath = join(d, 'caniuse-lite'); mkdirSync(attributionPath)
+    writeFileSync(join(attributionPath, 'package.json'), JSON.stringify({ name: 'caniuse-lite', version: '1.0.0', license: 'CC-BY-4.0' }))
+    const report = JSON.parse(readFileSync(file, 'utf8'))
+    report['CC-BY-4.0'] = [{ name: 'caniuse-lite', versions: ['1.0.0'], paths: [attributionPath] }]
+    writeFileSync(file, JSON.stringify(report))
+    expect(run('license-gate.mjs', d, 'full', 'tiptap', '--input', file)).toBe(1)
+  })
   it('rejects a denied declared license hidden under an allowed bucket', () => {
     const d = mkdtempSync(join(tmpdir(), 'spk-tiptap-')); const { file, paths } = tiptapLicenseFixture(d, 'MIT', 0)
     writeFileSync(join(paths[0], 'package.json'), JSON.stringify({ name: '@tiptap/core', version: '1.0.0', license: 'GPL-3.0-only' }))
@@ -176,5 +239,19 @@ describe('gates fail red on sabotage', () => {
     expect(() => writeTextAtomic(target, 'owner-only\n', -1)).toThrow()
     expect(statSync(target).mode & 0o777).toBe(0o600)
     expect(readdirSync(d).filter((name) => name.endsWith('.tmp'))).toEqual([])
+  })
+  it('runtime preflight parser accepts only Node 22 and the signed Chrome channel', async () => {
+    const { validateRuntime } = await import('../runtime-preflight.mjs')
+    expect(validateRuntime('22.23.0', 'chrome', 'Google Chrome 138.0.0.0')).toEqual({
+      node: '22.23.0', browserChannel: 'chrome', browserVersion: 'Google Chrome 138.0.0.0',
+    })
+    expect(() => validateRuntime('21.7.0', 'chrome', 'Google Chrome 138.0.0.0')).toThrow('runtime-preflight:E_NODE_MAJOR')
+    expect(() => validateRuntime('23.0.0', 'chrome', 'Google Chrome 138.0.0.0')).toThrow('runtime-preflight:E_NODE_MAJOR')
+  })
+  it('runtime preflight parser rejects unsupported or malformed browser evidence without launching', async () => {
+    const { validateRuntime } = await import('../runtime-preflight.mjs')
+    expect(() => validateRuntime('22.23.0', 'chromium', '138.0.0.0')).toThrow('runtime-preflight:E_BROWSER_CHANNEL')
+    expect(() => validateRuntime('22.23.0', 'chrome', '')).toThrow('runtime-preflight:E_BROWSER_VERSION')
+    expect(() => validateRuntime('22.23.0', 'chrome', 'x'.repeat(129))).toThrow('runtime-preflight:E_BROWSER_VERSION')
   })
 })

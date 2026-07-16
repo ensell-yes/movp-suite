@@ -23,6 +23,7 @@ if (!pkgDir || !['prod', 'full'].includes(mode) || !['blocknote', 'tiptap'].incl
 
 const PROD_ALLOW = new Set(['MIT', 'Apache-2.0', 'BSD-2-Clause', 'BSD-3-Clause', 'ISC', '0BSD', 'MPL-2.0', 'Python-2.0', '(MIT OR CC0-1.0)'])
 const FULL_ALLOW = new Set([...PROD_ALLOW, 'CC0-1.0', 'CC-BY-4.0', 'Unlicense'])
+const ATTRIBUTION_LICENSES = new Set(['CC-BY-4.0'])
 const COPYLEFT = new Set(['MPL-2.0', 'EPL-2.0', 'GPL-2.0-only', 'GPL-3.0-only', 'AGPL-3.0-only', 'LGPL-2.1-only', 'LGPL-3.0-only'])
 const DENY_SUBSTR = ['GPL', 'AGPL', 'LGPL', 'SSPL', 'UNLICENSED', 'PROPRIETARY']
 const DIRECT_EDITOR = candidate === 'blocknote'
@@ -53,24 +54,25 @@ const graphToLicenseReport = (value) => {
     if (!isRecord(dependencies)) return
     for (const [expectedName, node] of Object.entries(dependencies)) {
       if (!isRecord(node) || typeof node.version !== 'string') fail('E_GRAPH_NODE')
-      if (typeof node.resolved !== 'string') continue
-      if (typeof node.path !== 'string' || !roots.some((root) => !escapes(root, node.path))) fail('E_GRAPH_PATH')
-      const packagePath = resolve(node.path)
-      if (!seen.has(packagePath)) {
-        seen.add(packagePath)
-        try { assertSafeDirectory(packagePath) } catch { fail('E_GRAPH_ROOT', packagePath) }
-        const manifestPath = join(packagePath, 'package.json')
-        let manifest
-        try { manifest = readJsonBounded(manifestPath) } catch { fail('E_GRAPH_MANIFEST', manifestPath) }
-        if (!isRecord(manifest) || manifest.name !== expectedName || manifest.version !== node.version ||
-            typeof manifest.license !== 'string' || manifest.license.trim().length === 0) fail('E_GRAPH_MANIFEST_SHAPE', manifestPath)
-        const license = manifest.license
-        const byName = grouped.get(license) ?? new Map()
-        const prior = byName.get(expectedName) ?? { name: expectedName, versions: new Set(), paths: new Set() }
-        prior.versions.add(node.version)
-        prior.paths.add(packagePath)
-        byName.set(expectedName, prior)
-        grouped.set(license, byName)
+      if (typeof node.resolved === 'string') {
+        if (typeof node.path !== 'string' || !roots.some((root) => !escapes(root, node.path))) fail('E_GRAPH_PATH')
+        const packagePath = resolve(node.path)
+        if (!seen.has(packagePath)) {
+          seen.add(packagePath)
+          try { assertSafeDirectory(packagePath) } catch { fail('E_GRAPH_ROOT', packagePath) }
+          const manifestPath = join(packagePath, 'package.json')
+          let manifest
+          try { manifest = readJsonBounded(manifestPath) } catch { fail('E_GRAPH_MANIFEST', manifestPath) }
+          if (!isRecord(manifest) || manifest.name !== expectedName || manifest.version !== node.version ||
+              typeof manifest.license !== 'string' || manifest.license.trim().length === 0) fail('E_GRAPH_MANIFEST_SHAPE', manifestPath)
+          const license = manifest.license
+          const byName = grouped.get(license) ?? new Map()
+          const prior = byName.get(expectedName) ?? { name: expectedName, versions: new Set(), paths: new Set() }
+          prior.versions.add(node.version)
+          prior.paths.add(packagePath)
+          byName.set(expectedName, prior)
+          grouped.set(license, byName)
+        }
       }
       visit(node.dependencies)
       visit(node.optionalDependencies)
@@ -141,6 +143,7 @@ if (typeof byLicense !== 'object' || byLicense === null || Array.isArray(byLicen
 }
 const entries = []
 const directReports = []
+const packageReports = []
 for (const [license, packages] of Object.entries(byLicense)) {
   if (!nonEmpty(license) || !Array.isArray(packages) || packages.length === 0) fail('E_PACKAGE_LIST')
   for (const pkg of packages) {
@@ -151,6 +154,7 @@ for (const [license, packages] of Object.entries(byLicense)) {
       fail('E_PACKAGE_ENTRY')
     }
     entries.push({ name: pkg.name, versions: [...pkg.versions].sort(), license })
+    packageReports.push({ name: pkg.name, versions: [...pkg.versions], license, roots: pkg.paths.filter(nonEmpty) })
     if (DIRECT_EDITOR.includes(pkg.name)) {
       directReports.push({ name: pkg.name, versions: [...pkg.versions], license, roots: pkg.paths.filter(nonEmpty) })
     }
@@ -209,6 +213,35 @@ for (const name of DIRECT_EDITOR) {
   }
   for (const item of evidence) {
     if (!noticeEvidence.some((seen) => seen.package === item.package && seen.path === item.path && seen.sha256 === item.sha256)) noticeEvidence.push(item)
+  }
+}
+if (mode === 'full') {
+  for (const report of packageReports.filter((item) => ATTRIBUTION_LICENSES.has(item.license))) {
+    if (report.roots.length === 0) fail('E_ATTRIBUTION_PATHS', reportPath)
+    let evidence = []
+    for (const root of report.roots) {
+      try { assertSafeDirectory(root) } catch { fail('E_ATTRIBUTION_ROOT', root) }
+      const manifestPath = join(root, 'package.json')
+      let manifest
+      try { manifest = readJsonBounded(manifestPath) } catch { fail('E_ATTRIBUTION_MANIFEST', manifestPath) }
+      if (!isRecord(manifest) || manifest.name !== report.name ||
+          typeof manifest.version !== 'string' || !report.versions.includes(manifest.version) ||
+          manifest.license !== report.license) fail('E_ATTRIBUTION_MANIFEST_SHAPE', manifestPath)
+      try {
+        evidence = evidence.concat(walkRegularFiles(root)
+          .filter((path) => /^(LICENSE|NOTICE)/i.test(basename(path)))
+          .map((path) => ({
+            package: report.name,
+            status: 'file',
+            path: `${report.name}/${relative(root, path)}`,
+            sha256: createHash('sha256').update(readTextBounded(path)).digest('hex'),
+          })))
+      } catch { fail('E_ATTRIBUTION_IO', root) }
+    }
+    if (evidence.length === 0) fail('E_ATTRIBUTION_NOTICE', reportPath)
+    for (const item of evidence) {
+      if (!noticeEvidence.some((seen) => seen.package === item.package && seen.path === item.path && seen.sha256 === item.sha256)) noticeEvidence.push(item)
+    }
   }
 }
 noticeEvidence.sort((a, b) => a.package.localeCompare(b.package) || (a.path ?? a.declaredLicense).localeCompare(b.path ?? b.declaredLicense))

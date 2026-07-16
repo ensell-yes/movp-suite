@@ -10,7 +10,7 @@ import {
   walkRegularFiles,
   writeJsonAtomic,
 } from '../../scripts/lib/safe-io.mjs'
-import type { CandidateResult, LicenseEntry, NoticeEvidence } from '@spike/fixture'
+import type { CandidateResult, LicenseEntry, NoticeEvidence, RuntimeEvidence } from '@spike/fixture'
 
 const workspace = fileURLToPath(new URL('../../', import.meta.url))
 const candidateDir = join(workspace, 'blocknote')
@@ -82,6 +82,33 @@ function licenseEvidence(raw: string): {
   return { entries, prodHasCopyleft: value.prodHasCopyleft, noticeEvidence }
 }
 
+function runtimeEvidence(value: unknown): RuntimeEvidence {
+  if (!isRecord(value) || !isRecord(value.runtime) ||
+      typeof value.runtime.node !== 'string' || !/^22\.\d+\.\d+$/.test(value.runtime.node) ||
+      value.runtime.browserChannel !== 'chrome' ||
+      typeof value.runtime.browserVersion !== 'string' || value.runtime.browserVersion.length === 0 ||
+      value.runtime.browserVersion.length > 128 || !/^[\x20-\x7e]+$/.test(value.runtime.browserVersion)) {
+    throw new Error('report: malformed runtime evidence')
+  }
+  return {
+    node: value.runtime.node,
+    browserChannel: value.runtime.browserChannel,
+    browserVersion: value.runtime.browserVersion,
+  }
+}
+
+function mergeNoticeEvidence(...groups: NoticeEvidence[][]): NoticeEvidence[] {
+  const notices = new Map<string, NoticeEvidence>()
+  for (const item of groups.flat()) {
+    const key = item.status === 'file'
+      ? `${item.package}\0file\0${item.path}\0${item.sha256}`
+      : `${item.package}\0declared_only\0${item.declaredLicense}`
+    notices.set(key, item)
+  }
+  return [...notices.values()].sort((left, right) =>
+    left.package.localeCompare(right.package) || JSON.stringify(left).localeCompare(JSON.stringify(right)))
+}
+
 function resolvedVersions(): Record<string, string> {
   const pkg = readJsonBounded(join(candidateDir, 'package.json'))
   if (!isRecord(pkg) || !isRecord(pkg.dependencies)) throw new Error('report: malformed package.json')
@@ -129,7 +156,8 @@ const result: CandidateResult = {
   prodHasCopyleft: prod.prodHasCopyleft,
   prodLicenses: prod.entries,
   fullLicenses: full.entries,
-  noticeEvidence: prod.noticeEvidence,
+  noticeEvidence: mergeNoticeEvidence(prod.noticeEvidence, full.noticeEvidence),
+  runtime: runtimeEvidence(a11yJson),
   bundle: bundle(join(candidateDir, 'dist')),
 }
 

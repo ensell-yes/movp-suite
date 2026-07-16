@@ -8,6 +8,12 @@ export type NoticeEvidence =
   | { package: string; status: 'file'; path: string; sha256: string }
   | { package: string; status: 'declared_only'; declaredLicense: string }
 
+export interface RuntimeEvidence {
+  node: string
+  browserChannel: 'chrome'
+  browserVersion: string
+}
+
 export interface CandidateResult {
   schemaVersion: 1
   candidate: 'blocknote' | 'tiptap'
@@ -24,6 +30,7 @@ export interface CandidateResult {
   prodLicenses: LicenseEntry[]
   fullLicenses: LicenseEntry[]
   noticeEvidence: NoticeEvidence[]
+  runtime: RuntimeEvidence
   blockIdPreserved: boolean
   bundle: { jsRaw: number; jsGzip: number; cssRaw: number; cssGzip: number }
   toolbarLoc?: number

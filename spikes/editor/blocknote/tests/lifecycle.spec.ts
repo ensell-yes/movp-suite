@@ -135,10 +135,12 @@ test('idempotent create -> editor edit -> publish -> published read', async ({ p
   await o.service.update({ itemId: 'item', expectedRevisionId: r1, data: { ...SEED_RECORD, body: editedBody } })
   const r2 = o.currentRevisionId()
   await o.service.publish({ itemId: 'item' })
+  const expectedRevisionPinned = o.captures[1]?.p_expected_revision_id === r1
+  const updateHashPinned = o.captures[1]?.p_content_hash === H2
   const lifecycleOrder =
     JSON.stringify(o.captures.map((capture) => capture.rpc)) ===
       JSON.stringify(['create_content_with_revision', 'update_content', 'publish_content']) &&
-    o.captures[1]?.p_content_hash === H2
+    updateHashPinned && expectedRevisionPinned
   expect(lifecycleOrder).toBe(true)
 
   const delivered = publishedBody(await o.service.getPublished('item'))
@@ -159,6 +161,7 @@ test('idempotent create -> editor edit -> publish -> published read', async ({ p
     renderedGolden: true,
     readonlyPreserved: true,
   })
+  expect(publishedRead).toBe(false)
 
   o.forcePublishedRevision(r1)
   const stale = publishedBody(await o.service.getPublished('item'))
@@ -176,6 +179,7 @@ test('idempotent create -> editor edit -> publish -> published read', async ({ p
     publishedRead,
     staleSabotage,
     blockIdPreserved,
+    lifecycleOrderEvidence: { expectedRevisionPinned, updateHashPinned },
     publishedReadEvidence: { revisionPinned, headingVisible, listVisible, renderedGolden, readonlyPreserved },
   })
 })
