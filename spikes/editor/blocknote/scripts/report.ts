@@ -1,0 +1,138 @@
+import { execFileSync } from 'node:child_process'
+import { gzipSync } from 'node:zlib'
+import { mkdirSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+import { join } from 'node:path'
+import {
+  assertSafeDirectory,
+  readJsonBounded,
+  readTextBounded,
+  walkRegularFiles,
+  writeJsonAtomic,
+} from '../../scripts/lib/safe-io.mjs'
+import type { CandidateResult, LicenseEntry, NoticeEvidence } from '@spike/fixture'
+
+const workspace = fileURLToPath(new URL('../../', import.meta.url))
+const candidateDir = join(workspace, 'blocknote')
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
+function bundle(dir: string) {
+  let jsRaw = 0
+  let cssRaw = 0
+  let jsGzip = 0
+  let cssGzip = 0
+  for (const path of walkRegularFiles(dir)) {
+    if (path.endsWith('.js')) {
+      const bytes = Buffer.from(readTextBounded(path))
+      jsRaw += bytes.length
+      jsGzip += gzipSync(bytes).length
+    }
+    if (path.endsWith('.css')) {
+      const bytes = Buffer.from(readTextBounded(path))
+      cssRaw += bytes.length
+      cssGzip += gzipSync(bytes).length
+    }
+  }
+  if (jsRaw === 0 || jsGzip === 0) throw new Error('report: bundle JS measurement missing')
+  return { jsRaw, cssRaw, jsGzip, cssGzip }
+}
+
+function reqBool(value: unknown, key: string): boolean {
+  if (!isRecord(value) || typeof value[key] !== 'boolean') throw new Error(`report: ${key} missing`)
+  return value[key]
+}
+
+function licenseEvidence(raw: string): {
+  entries: LicenseEntry[]
+  prodHasCopyleft: boolean
+  noticeEvidence: NoticeEvidence[]
+} {
+  let value: unknown
+  try {
+    value = JSON.parse(raw)
+  } catch {
+    throw new Error('report: malformed license JSON')
+  }
+  if (!isRecord(value) || typeof value.prodHasCopyleft !== 'boolean' ||
+      !Array.isArray(value.entries) || value.entries.length === 0 ||
+      !Array.isArray(value.noticeEvidence) || value.noticeEvidence.length === 0) {
+    throw new Error('report: malformed license evidence')
+  }
+  const entries: LicenseEntry[] = value.entries.map((entry) => {
+    if (!isRecord(entry) || typeof entry.name !== 'string' || typeof entry.license !== 'string' ||
+        !Array.isArray(entry.versions) || !entry.versions.every((version) => typeof version === 'string')) {
+      throw new Error('report: malformed license entry')
+    }
+    return { name: entry.name, license: entry.license, versions: entry.versions }
+  })
+  const noticeEvidence = value.noticeEvidence.map<NoticeEvidence>((entry) => {
+    if (!isRecord(entry) || typeof entry.package !== 'string') {
+      throw new Error('report: malformed notice evidence')
+    }
+    if (entry.status === 'file' && typeof entry.path === 'string' &&
+        typeof entry.sha256 === 'string' && /^[0-9a-f]{64}$/.test(entry.sha256)) {
+      return { package: entry.package, status: 'file', path: entry.path, sha256: entry.sha256 }
+    }
+    if (entry.status === 'declared_only' && typeof entry.declaredLicense === 'string') {
+      return { package: entry.package, status: 'declared_only', declaredLicense: entry.declaredLicense }
+    }
+    throw new Error('report: malformed notice evidence')
+  })
+  return { entries, prodHasCopyleft: value.prodHasCopyleft, noticeEvidence }
+}
+
+function resolvedVersions(): Record<string, string> {
+  const pkg = readJsonBounded(join(candidateDir, 'package.json'))
+  if (!isRecord(pkg) || !isRecord(pkg.dependencies)) throw new Error('report: malformed package.json')
+  const dependencies = pkg.dependencies
+  const names = ['@blocknote/core', '@blocknote/react', '@blocknote/mantine', '@mantine/core', '@mantine/hooks']
+  return Object.fromEntries(names.map((name) => {
+    const version = dependencies[name]
+    if (typeof version !== 'string' || !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version)) {
+      throw new Error(`report: non-exact dependency ${name}`)
+    }
+    return [name, version]
+  }))
+}
+
+execFileSync('pnpm', ['--filter', '@spike/blocknote', 'build'], { cwd: workspace, stdio: 'inherit' })
+const candidateReportDir = join(candidateDir, '.report')
+assertSafeDirectory(candidateReportDir)
+const life = readJsonBounded(join(candidateReportDir, 'blocknote.lifecycle.json'))
+const a11yJson = readJsonBounded(join(candidateReportDir, 'blocknote.a11y.json'))
+const boundaryJson = readJsonBounded(join(candidateReportDir, 'blocknote.boundary.json'))
+const prod = licenseEvidence(execFileSync(
+  'node',
+  ['scripts/license-gate.mjs', 'blocknote', 'prod', 'blocknote'],
+  { cwd: workspace, encoding: 'utf8' },
+))
+const full = licenseEvidence(execFileSync(
+  'node',
+  ['scripts/license-gate.mjs', 'blocknote', 'full', 'blocknote'],
+  { cwd: workspace, encoding: 'utf8' },
+))
+
+const result: CandidateResult = {
+  schemaVersion: 1,
+  candidate: 'blocknote',
+  resolvedVersions: resolvedVersions(),
+  idempotent: reqBool(life, 'idempotent'),
+  exactEdit: reqBool(life, 'exactEdit'),
+  lifecycleOrder: reqBool(life, 'lifecycleOrder'),
+  publishedRead: reqBool(life, 'publishedRead'),
+  staleSabotage: reqBool(life, 'staleSabotage'),
+  blockIdPreserved: reqBool(life, 'blockIdPreserved'),
+  boundary: reqBool(boundaryJson, 'boundary'),
+  a11y: reqBool(a11yJson, 'a11y'),
+  license: 'pass',
+  prodHasCopyleft: prod.prodHasCopyleft,
+  prodLicenses: prod.entries,
+  fullLicenses: full.entries,
+  noticeEvidence: prod.noticeEvidence,
+  bundle: bundle(join(candidateDir, 'dist')),
+}
+
+mkdirSync(join(workspace, '.report'), { recursive: true })
+writeJsonAtomic(join(workspace, '.report/blocknote.json'), result)
+console.log('wrote .report/blocknote.json')

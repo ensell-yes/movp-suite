@@ -82,17 +82,49 @@ describe('gates fail red on sabotage', () => {
     const raw = execFileSync('node', [join('scripts', 'license-gate.mjs'), d, 'prod', 'tiptap', '--input', file], { cwd: workspace, encoding: 'utf8' })
     expect(JSON.parse(raw).prodHasCopyleft).toBe(true)
   })
+  it.each(['Python-2.0', '(MIT OR CC0-1.0)'])('accepts reviewed permissive SPDX value %s', (license) => {
+    const d = mkdtempSync(join(tmpdir(), 'spk-tiptap-')); const { file } = tiptapLicenseFixture(d, license)
+    const raw = execFileSync('node', [join('scripts', 'license-gate.mjs'), d, 'prod', 'tiptap', '--input', file], { cwd: workspace, encoding: 'utf8' })
+    expect(JSON.parse(raw).entries.every((entry) => entry.license === license)).toBe(true)
+  })
+  it('accepts reviewed CC-BY-4.0 browser data in the full development graph only', () => {
+    const d = mkdtempSync(join(tmpdir(), 'spk-tiptap-')); const { file } = tiptapLicenseFixture(d, 'CC-BY-4.0')
+    expect(run('license-gate.mjs', d, 'prod', 'tiptap', '--input', file)).toBe(1)
+    const raw = execFileSync('node', [join('scripts', 'license-gate.mjs'), d, 'full', 'tiptap', '--input', file], { cwd: workspace, encoding: 'utf8' })
+    expect(JSON.parse(raw).entries.every((entry) => entry.license === 'CC-BY-4.0')).toBe(true)
+  })
   it('full license graph fails closed on an unknown SPDX value', () => {
     const d = mkdtempSync(join(tmpdir(), 'spk-tiptap-')); const { file } = tiptapLicenseFixture(d, 'SECRET_PAYLOAD')
-    const result = failure('license-gate.mjs', d, 'full', 'tiptap', '--input', file)
+    const audit = join(d, 'audit.json')
+    const result = failure('license-gate.mjs', d, 'full', 'tiptap', '--input', file, '--audit-output', audit)
     expect(result.status).toBe(1)
     expect(result.stderr).not.toContain('SECRET_PAYLOAD')
+    const evidence = JSON.parse(readFileSync(audit, 'utf8'))
+    expect(evidence.rejectedEntries).toEqual([
+      { name: '@tiptap/core', versions: ['1.0.0'], license: 'SECRET_PAYLOAD' },
+      { name: '@tiptap/pm', versions: ['1.0.0'], license: 'SECRET_PAYLOAD' },
+      { name: '@tiptap/react', versions: ['1.0.0'], license: 'SECRET_PAYLOAD' },
+      { name: '@tiptap/starter-kit', versions: ['1.0.0'], license: 'SECRET_PAYLOAD' },
+    ])
+    expect(statSync(audit).mode & 0o777).toBe(0o600)
   })
   it('records a declared-only notice gap without rejecting the candidate', () => {
     const d = mkdtempSync(join(tmpdir(), 'spk-tiptap-')); const { file } = tiptapLicenseFixture(d, 'MIT', 0)
     const raw = execFileSync('node', [join('scripts', 'license-gate.mjs'), d, 'prod', 'tiptap', '--input', file], { cwd: workspace, encoding: 'utf8' })
     const evidence = JSON.parse(raw).noticeEvidence
     expect(evidence).toContainEqual({ package: '@tiptap/core', status: 'declared_only', declaredLicense: 'MIT' })
+  })
+  it('derives guarded license evidence from a pnpm dependency graph fallback', () => {
+    const d = mkdtempSync(join(tmpdir(), 'spk-tiptap-'))
+    const { paths } = tiptapLicenseFixture(d, 'MIT')
+    const names = ['@tiptap/core', '@tiptap/react', '@tiptap/pm', '@tiptap/starter-kit']
+    const dependencies = Object.fromEntries(names.map((name, index) => [name, {
+      version: '1.0.0', resolved: `https://registry.npmjs.org/${name}`, path: paths[index],
+    }]))
+    const graph = join(d, 'graph.json')
+    writeFileSync(graph, JSON.stringify([{ dependencies }]))
+    const raw = execFileSync('node', [join('scripts', 'license-gate.mjs'), d, 'prod', 'tiptap', '--graph-input', graph], { cwd: workspace, encoding: 'utf8' })
+    expect(JSON.parse(raw).entries.map((entry) => entry.name).sort()).toEqual(names.sort())
   })
   it('rejects a denied declared license hidden under an allowed bucket', () => {
     const d = mkdtempSync(join(tmpdir(), 'spk-tiptap-')); const { file, paths } = tiptapLicenseFixture(d, 'MIT', 0)
