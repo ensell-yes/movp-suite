@@ -1,0 +1,32 @@
+const command = (id, cwd, args, rendered) => Object.freeze({
+  id,
+  cwd,
+  executable: 'pnpm',
+  args: Object.freeze(args),
+  rendered,
+})
+
+export const EXPECTED_COMMANDS = Object.freeze([
+  command('root_install', 'repo', ['install', '--frozen-lockfile'],
+    'CI=1 NPM_CONFIG_USERCONFIG=/dev/null pnpm install --frozen-lockfile'),
+  command('spike_install', 'repo', ['--dir', 'spikes/editor', 'install', '--frozen-lockfile'],
+    'CI=1 NPM_CONFIG_USERCONFIG=/dev/null pnpm --dir spikes/editor install --frozen-lockfile'),
+  command('typecheck', 'repo', ['--dir', 'spikes/editor', '-r', 'run', 'typecheck'],
+    'NPM_CONFIG_USERCONFIG=/dev/null pnpm --dir spikes/editor -r run typecheck'),
+  command('fixture_test', 'repo', ['--dir', 'spikes/editor', '--filter', '@spike/fixture', 'test'],
+    'NPM_CONFIG_USERCONFIG=/dev/null pnpm --dir spikes/editor --filter @spike/fixture test'),
+  command('oracle_test', 'repo', ['--dir', 'spikes/editor', '--filter', '@spike/oracle', 'test'],
+    'NPM_CONFIG_USERCONFIG=/dev/null pnpm --dir spikes/editor --filter @spike/oracle test'),
+  command('shared_tests', 'repo', ['--dir', 'spikes/editor', 'exec', 'vitest', 'run', 'scripts/__test__'],
+    'NPM_CONFIG_USERCONFIG=/dev/null pnpm --dir spikes/editor exec vitest run scripts/__test__'),
+  command('blocknote_test', 'repo', ['--dir', 'spikes/editor', '--filter', '@spike/blocknote', 'test'],
+    'NPM_CONFIG_USERCONFIG=/dev/null pnpm --dir spikes/editor --filter @spike/blocknote test'),
+  command('blocknote_report', 'repo', ['--dir', 'spikes/editor', '--filter', '@spike/blocknote', 'run', 'report'],
+    'NPM_CONFIG_USERCONFIG=/dev/null pnpm --dir spikes/editor --filter @spike/blocknote run report'),
+  command('tiptap_test', 'repo', ['--dir', 'spikes/editor', '--filter', '@spike/tiptap', 'test'],
+    'NPM_CONFIG_USERCONFIG=/dev/null pnpm --dir spikes/editor --filter @spike/tiptap test'),
+  command('tiptap_report', 'repo', ['--dir', 'spikes/editor', '--filter', '@spike/tiptap', 'run', 'report'],
+    'NPM_CONFIG_USERCONFIG=/dev/null pnpm --dir spikes/editor --filter @spike/tiptap run report'),
+  command('aggregate_report', 'repo', ['--dir', 'spikes/editor', 'run', 'report', '--', '--bootstrap'],
+    'NPM_CONFIG_USERCONFIG=/dev/null pnpm --dir spikes/editor run report -- --bootstrap'),
+])

@@ -2,6 +2,9 @@
   "name": "@spike/editor-root",
   "private": true,
   "version": "0.0.0",
-  "scripts": { "report": "node scripts/report.mjs" },
+  "scripts": {
+    "clean-run": "node scripts/clean-run.mjs",
+    "report": "node scripts/report.mjs"
+  },
   "devDependencies": { "typescript": "5.6.3", "vitest": "3.2.6" }
 }
