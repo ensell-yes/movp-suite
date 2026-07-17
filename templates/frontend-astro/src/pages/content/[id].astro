@@ -326,7 +326,7 @@ const checklist = seo?.checklist ? (() => {
         {fields.some((field) => (field.type ?? 'text') === 'richtext') && (
           <RichTextFieldsIsland
             client:load
-            itemId={id}
+            itemId={item.id}
             initialRevisionId={item.current_revision_id ?? ''}
             fields={fields.filter((field) => (field.type ?? 'text') === 'richtext').map((field) => ({
               key: keyFor(field),
