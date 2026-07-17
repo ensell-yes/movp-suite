@@ -68,6 +68,7 @@ describe('gqlRequest', () => {
       ok: false,
       code: 'graphql_error',
       message: 'Could not load this report.',
+      errorCode: 'INTERNAL_SERVER_ERROR',
     })
 
     const partial = await gqlRequest(
@@ -102,7 +103,12 @@ describe('gqlRequest', () => {
       NOTES_QUERY,
       { workspaceId: 'w', first: 20 },
     )
-    expect(r).toEqual({ ok: false, code: 'graphql_error', message: 'At least one workspace owner must remain.' })
+    expect(r).toEqual({
+      ok: false,
+      code: 'graphql_error',
+      message: 'At least one workspace owner must remain.',
+      errorCode: 'CONFLICT',
+    })
   })
 
   it('maps PAT reason codes to member-facing copy (reason wins over generic code)', async () => {
@@ -123,7 +129,7 @@ describe('gqlRequest', () => {
         NOTES_QUERY,
         { workspaceId: 'w', first: 20 },
       )
-      expect(r).toEqual({ ok: false, code: 'graphql_error', message: copy })
+      expect(r).toEqual({ ok: false, code: 'graphql_error', message: copy, errorCode: code })
     }
   })
 

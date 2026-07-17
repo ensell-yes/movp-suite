@@ -121,9 +121,8 @@ function collectFieldData(form: FormData, schemaFields: FieldDescriptor[]): Reco
   return data
 }
 
-function saveErrorMessage(result: { code: string; message?: string }): string {
-  const detail = result.message ?? ''
-  if (detail.includes('content_update_conflict') || detail.includes('40001')) {
+function saveErrorMessage(result: { code: string; message?: string; errorCode?: string }): string {
+  if (result.errorCode === 'CONFLICT') {
     return 'This content was changed by someone else. Reload to see the latest, then reapply your edits.'
   }
   return 'Could not save. Try again.'
