@@ -109,9 +109,18 @@
   artifacts; `pnpm check:packages` pins `@movp/search/gte-small`.
 - `@movp/editor-sdk` is the client-safe embeddable rich-text editor (TipTap, permissive-only). It NEVER imports
   `@movp/domain`/`@movp/auth`/`@movp/graphql`/`@supabase`; the host injects `onSave`, maps transport conflicts
-  to `{ status: 'conflict' }`, and retains `onSaved(revisionId)` for the next expected revision. The SDK recognizes
-  a domain-direct `content_update_conflict` by string shape only. `packages/editor-sdk/test/boundary.test.ts` is
-  the seam audit, and the required `c7-editor-sdk` CI job runs the complete package suite.
+  to `{ status: 'conflict' }`, retains `onSaved(revisionId)` for the next expected revision, and receives
+  non-destructive refresh/destructive load-latest callbacks from its host. Its `onDirtyChange` signal is
+  `docChanged`-gated and protects in-flight edits. The SDK's domain-direct classifier recognizes
+  `content_update_conflict` by string shape; the GraphQL/frontend path classifies only the sanitized
+  `extensions.code = CONFLICT` contract. `packages/editor-sdk/test/boundary.test.ts` is the seam audit, and the
+  required `c7-editor-sdk` CI job runs the complete package suite.
+- `@movp/richtext` is the client/server-safe canonical doc-JSON leaf. Domain `prepare()` normalizes rich-text
+  before hashing and derives human-only `search_body`; legacy HTML remains literal text pending explicit cleanup.
+- The Astro CMS mounts one client-safe `RichTextFieldsIsland` over all rich-text fields and one shared revision.
+  It reaches the server only through the bounded `/api/content/[id]/richtext` route, which resolves request-bound
+  env/token state at call time, validates the field schema, merges one field, and emits one content-disciplined
+  event. Form saves still reload the page, so save rich-text first; the dirty-only `beforeunload` guard protects drafts.
 
 ## Task/CMS Agent Contracts
 
