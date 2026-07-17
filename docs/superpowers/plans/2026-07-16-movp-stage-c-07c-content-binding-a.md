@@ -208,16 +208,24 @@ describe('isDocShape', () => {
 })
 
 describe('docToPlainText', () => {
-  it('concatenates text nodes depth-first, not markup', () => {
+  it('concatenates text nodes, not markup', () => {
     const doc = { type: 'doc', content: [
       { type: 'heading', content: [{ type: 'text', text: 'Title' }] },
       { type: 'paragraph', content: [{ type: 'text', text: 'Hello ' }, { type: 'text', text: 'world' }] },
     ] }
     const out = docToPlainText(doc)
     expect(out).toContain('Title')
-    expect(out).toContain('Hello world')
+    expect(out).toContain('Hello world')       // adjacent inline text concatenated, no injected space
     expect(out).not.toContain('"type"')
-    expect(out).not.toContain('doc')
+  })
+  it('separates blocks by exactly one space and concatenates adjacent inline text', () => {
+    // Rule: adjacent text nodes within a block concatenate with no separator; each block-level node
+    // (paragraph/heading/blockquote/listItem/codeBlock/horizontalRule) is separated by one space.
+    const doc = { type: 'doc', content: [
+      { type: 'paragraph', content: [{ type: 'text', text: 'a' }, { type: 'text', text: 'b' }] },
+      { type: 'paragraph', content: [{ type: 'text', text: 'c' }] },
+    ] }
+    expect(docToPlainText(doc)).toBe('ab c')
   })
 })
 
@@ -263,17 +271,24 @@ export function isDocShape(v: unknown): v is { type: 'doc'; content: unknown[] }
   )
 }
 
-/** Concatenate text nodes depth-first. Never emits node/markup keys. */
+const BLOCK_TYPES = new Set(['paragraph', 'heading', 'blockquote', 'listItem', 'codeBlock', 'horizontalRule'])
+
+/**
+ * Plain text for search. Rule: adjacent inline text nodes concatenate with NO separator; each
+ * block-level node is separated by exactly one space. (A naive `parts.join(' ')` would double-space
+ * adjacent text like `['Hello ', 'world']` → `'Hello  world'`.) Never emits node/markup keys.
+ */
 export function docToPlainText(doc: unknown): string {
-  const parts: string[] = []
+  let out = ''
   const walk = (node: unknown): void => {
     if (typeof node !== 'object' || node === null) return
     const n = node as { type?: unknown; text?: unknown; content?: unknown }
-    if (n.type === 'text' && typeof n.text === 'string') parts.push(n.text)
+    if (n.type === 'text' && typeof n.text === 'string') { out += n.text; return }
+    if (typeof n.type === 'string' && BLOCK_TYPES.has(n.type) && out !== '' && !out.endsWith(' ')) out += ' '
     if (Array.isArray(n.content)) for (const child of n.content) walk(child)
   }
   walk(doc)
-  return parts.join(' ')
+  return out.trim()
 }
 
 const emptyDoc = () => canonicalizeInnerJson({ type: 'doc', content: [] })
@@ -325,11 +340,11 @@ git commit -m "feat(richtext): add normalizeToCanonicalDoc + docToPlainText"
 
 **Files:**
 - Modify: `packages/domain/package.json` (add dep), `packages/domain/src/content.ts` (`prepare()`)
-- Test: `packages/domain/test/content.integration.test.ts` (add cases) or a new `packages/domain/test/richtext-prepare.test.ts`
+- Modify (test): `packages/domain/test/content.integration.test.ts` (update one existing assertion + add one test)
 
 **Interfaces:**
 - Consumes: `normalizeToCanonicalDoc`, `docToPlainText` from `@movp/richtext`.
-- Produces: the persisted richtext value is canonical doc-JSON; `search_body` is human text.
+- Produces: the persisted richtext value is canonical doc-JSON; `search_body` is human text. **Note:** the pure normalization/extraction logic is unit-tested in `@movp/richtext` (Task 2); this task verifies the domain *wiring* through the DB-backed integration test.
 
 - [ ] **Step 1: Add the dependency** to `packages/domain/package.json` `dependencies`:
 ```json
@@ -337,36 +352,64 @@ git commit -m "feat(richtext): add normalizeToCanonicalDoc + docToPlainText"
 ```
 Run: `pnpm install`
 
-- [ ] **Step 2: Write the failing test.** Use the existing test's real-schema, real-DB pattern (`packages/domain/test/content.integration.test.ts` shows the `{name:'body', type:'richtext'}` type + `create`/`update` through the public service). Add a test that a plain-text richtext value is persisted as canonical doc-JSON and produces human `search_body`:
+- [ ] **Step 2: Write the failing tests by editing the existing integration test** `packages/domain/test/content.integration.test.ts`. Normalization changes the stored richtext representation, so an existing assertion must be updated AND a focused new test added. This file needs a running Supabase (it reads `SUPABASE_URL`/`SUPABASE_ANON_KEY`/`SUPABASE_SERVICE_ROLE_KEY` and uses the module-level helpers `makeWorkspace`, `makeUser`, `addMember`, `userClient`, `serviceClient`, `createDomain`, `schema`).
 
+**2a. Add the import** at the top of the file (after the existing imports):
 ```ts
-// in packages/domain/test/content.integration.test.ts (or a sibling using the same harness/ctx)
 import { canonicalizeInnerJson, docToPlainText } from '@movp/richtext'
-
-it('persists richtext as canonical doc-JSON and derives human search_body', async () => {
-  // ...create a content type with a { name: 'body', type: 'richtext' } field via the existing harness...
-  const created = await content.create({
-    workspaceId, contentTypeId, slug: 'rt-1', data: { body: 'hello world' },
-  })
-  const detail = await content.getDetail(created.id)
-  const stored = JSON.parse(String((detail!.currentRevision as { data: Record<string, string> }).data.body))
-  expect(stored.type).toBe('doc')                                   // canonical doc, not raw 'hello world'
-  expect(docToPlainText(stored)).toBe('hello world')                // round-trips to human text
-  const expected = canonicalizeInnerJson({
-    type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'hello world' }] }],
-  })
-  expect((detail!.currentRevision as { data: Record<string, string> }).data.body).toBe(expected)
-  // search_body holds human text, never markup:
-  expect((detail!.currentRevision as { data: unknown } & { }).data).toBeDefined()
-})
 ```
 
-> **Note for the implementer:** match the exact harness this file already uses to obtain `content`, `workspaceId`, and a created `contentTypeId` (do not invent a new DB fixture). The assertion that matters: stored `body` is canonical doc-JSON and `docToPlainText(stored) === 'hello world'`. If `search_body` is queryable in the harness, also assert it contains `hello world` and not `"type"`.
+**2b. Update the existing `getDetail` assertion.** The item is created/updated with `body: '<p>Hi</p>'`; after normalization the stored value is that HTML as *literal text* inside a canonical doc. Change the current assertion (`content.integration.test.ts:146`) from:
+```ts
+    expect(detail?.currentRevision?.data).toEqual({ title: 'Hello 2', body: '<p>Hi</p>', rank: 2 })
+```
+to (the exact canonical string — verified byte-for-byte):
+```ts
+    expect(detail?.currentRevision?.data).toEqual({
+      title: 'Hello 2',
+      body: '{"content":[{"content":[{"text":"<p>Hi</p>","type":"text"}],"type":"paragraph"}],"type":"doc"}',
+      rank: 2,
+    })
+```
+> **Why:** `normalizeToCanonicalDoc('<p>Hi</p>')` treats HTML as literal text (spec §3.2/§3.4) → a single-paragraph doc. Dedup (the `deduped`/identical-body update earlier in the test) still holds because normalization is deterministic: identical input → identical canonical → identical `content_hash`. No other existing assertion changes.
 
-- [ ] **Step 3: Run test to verify it fails**
+**2c. Add a focused new test** inside the same `describe('content integration', ...)` block, using the module helpers:
+```ts
+  it('stores richtext as canonical doc-JSON and derives human search_body', async () => {
+    const ws = await makeWorkspace('RichText WS')
+    const owner = await makeUser()
+    await addMember(ws, owner.id)
+    const domain = createDomain({ db: userClient(owner.token), userId: owner.id }, { schema })
+    const adminDb = serviceClient()
 
-Run: `pnpm --filter @movp/domain test` (or the file-scoped `exec vitest run test/content.integration.test.ts`)
-Expected: FAIL — stored `body` is the raw string `"hello world"`, not a canonical doc; `stored.type` is undefined.
+    const ct = await domain.content.createType({
+      workspaceId: ws, key: 'post', label: 'Post',
+      fieldSchema: [{ name: 'body', type: 'richtext' }],
+    })
+    const created = await domain.content.create({
+      workspaceId: ws, contentTypeId: ct.id, slug: 'rt', data: { body: 'hello world' },
+    })
+
+    const expectedBody = canonicalizeInnerJson({
+      type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'hello world' }] }],
+    })
+    const detail = await domain.content.getDetail(created.id)
+    const storedBody = (detail!.currentRevision!.data as Record<string, string>).body
+    expect(storedBody).toBe(expectedBody)                    // canonical doc-JSON, NOT raw 'hello world'
+    expect(docToPlainText(JSON.parse(storedBody))).toBe('hello world')
+
+    const row = await adminDb.from('content_item').select('search_body').eq('id', created.id).single()
+    const searchBody = (row.data as { search_body: string }).search_body
+    expect(searchBody).toContain('hello world')              // human text is searchable
+    expect(searchBody).not.toContain('"type"')               // never the doc markup
+  })
+```
+
+- [ ] **Step 3: Run tests to verify they fail (clean assertion failures, not errors)**
+
+Requires a running local stack (`supabase start`) with the integration env set. Run:
+`pnpm --filter @movp/domain exec vitest run test/content.integration.test.ts`
+Expected: FAIL — the updated `toEqual` (2b) fails because the code still stores raw `'<p>Hi</p>'`, and the new test's `expect(storedBody).toBe(expectedBody)` fails because `storedBody` is still the raw `'hello world'`. Both are clean assertion failures (no thrown `JSON.parse`).
 
 - [ ] **Step 4: Implement — two edits in `packages/domain/src/content.ts`.**
 
@@ -397,12 +440,14 @@ to:
 
 > **Gotcha:** `parsed` is the object that becomes `canonical` (persisted `p_data`) and is hashed. Normalizing it in place (before `canonicalize`) is what makes the stored value AND the `content_hash` canonical. Deriving `search_body` from the already-normalized value keeps markup out of full-text search.
 
-- [ ] **Step 5: Run test to verify it passes**
+- [ ] **Step 5: Run tests to verify they pass**
 
-Run: `pnpm --filter @movp/domain test`
-Expected: PASS — including the new case; existing content tests still green.
+With the stack up, run: `pnpm --filter @movp/domain exec vitest run test/content.integration.test.ts`
+Expected: PASS — the updated `toEqual` and the new richtext test are green; dedup/conflict/isolation assertions still green.
 Run: `pnpm --filter @movp/domain typecheck`
 Expected: PASS.
+
+> **Gate placement:** this is a DB-backed integration test; CI runs it under the `slice-e2e` job (with Supabase up), not the `c6-surface-wiring` unit config. Do not move it into the unit config.
 
 - [ ] **Step 6: Commit**
 
@@ -495,52 +540,61 @@ $$;
 Run: `pnpm test:forward-only-migrations`
 Expected: PASS — reports the new migration as an addition; no merged migration rewritten.
 
-- [ ] **Step 3: Add the failing pgTAP assertions** to `supabase/tests/cms_content_rpcs_test.sql` (extend the existing file; match its `plan(...)` count and its fixture/seed helpers). Add, in a workspace/user context that owns a seeded content item:
+- [ ] **Step 3: Add the pgTAP assertions** to `supabase/tests/cms_content_rpcs_test.sql`. The file already seeds workspace `77777777-…`, user `aaaaaaaa-…`, and item `slug='about'`, and by the end of the existing assertions `about` has **2 revisions** with the current one carrying `content_hash = 'hash-B'`. Two edits:
 
+**3a. Bump the plan count** (line 2): change `select plan(16);` to `select plan(23);` (7 new assertions below).
+
+**3b. Append these assertions immediately BEFORE `select * from finish();`** (after the existing workspace-scoped assertion, so the revision count is still 2 when they start). `00000000-…` is a guaranteed-stale expected revision (the real current id is a random uuid):
 ```sql
--- Case 1: stale expected revision + IDENTICAL hash -> idempotent success, no new revision.
---   Capture current revision id + revision count, call update_content with the SAME data/hash and a
---   deliberately stale p_expected_revision_id (e.g. gen_random_uuid()), then assert:
+-- C7.3a hash-first: an identical effective payload is idempotent even with a stale expected revision.
+select public.update_content(
+  (select id from public.content_item where slug = 'about'),
+  '{"title":"About Us"}'::jsonb, 'hash-B', 'About Us', '',
+  '00000000-0000-0000-0000-000000000000');
 select is(
-  (select current_revision_id from public.content_item where id = :item_id),
-  :rev_before,
-  'identical-hash retry with stale expected revision does not advance the revision'
-);
+  (select count(*)::int from public.content_revision r
+     join public.content_item ci on ci.id = r.content_item_id where ci.slug = 'about'),
+  2, 'identical-hash retry with a stale expected revision adds no revision');
 select is(
-  (select count(*) from public.content_revision where content_item_id = :item_id),
-  :count_before,
-  'identical-hash retry inserts no new revision'
-);
+  (select r.revision_number::int from public.content_item ci
+     join public.content_revision r on r.id = ci.current_revision_id where ci.slug = 'about'),
+  2, 'identical-hash retry leaves current at revision #2');
 
--- Case 2: stale expected revision + DIFFERENT hash -> conflict.
+-- A DIFFERING payload on a stale expected revision is a conflict (raise_exception -> SQLSTATE P0001).
 select throws_ok(
-  $$ select public.update_content(:item_id, :different_data, :different_hash, '', '', gen_random_uuid()) $$,
-  'content_update_conflict',
-  'differing payload on a stale expected revision raises content_update_conflict'
-);
+  $$ select public.update_content(
+       (select id from public.content_item where slug = 'about'),
+       '{"title":"Different"}'::jsonb, 'hash-C', 'Different', '',
+       '00000000-0000-0000-0000-000000000000') $$,
+  'P0001', 'content_update_conflict',
+  'differing payload on a stale expected revision raises content_update_conflict');
 
--- Case 3: the rejected call in Case 2 mutated nothing.
+-- The rejected conflict mutated nothing.
 select is(
-  (select current_revision_id from public.content_item where id = :item_id),
-  :rev_before,
-  'a rejected conflict changes neither the current revision'
-);
+  (select count(*)::int from public.content_revision r
+     join public.content_item ci on ci.id = r.content_item_id where ci.slug = 'about'),
+  2, 'a rejected conflict adds no revision');
 select is(
-  (select count(*) from public.content_revision where content_item_id = :item_id),
-  :count_before,
-  'nor the revision count'
-);
+  (select r.revision_number::int from public.content_item ci
+     join public.content_revision r on r.id = ci.current_revision_id where ci.slug = 'about'),
+  2, 'a rejected conflict leaves current at revision #2');
 
--- Case 4 (regression): matching base + different hash -> new revision (existing behavior preserved).
+-- Regression: matching expected revision + a changed hash still creates a new revision.
+select public.update_content(
+  (select id from public.content_item where slug = 'about'),
+  '{"title":"Third"}'::jsonb, 'hash-D', 'Third', '',
+  (select ci.current_revision_id from public.content_item ci where ci.slug = 'about'));
+select is(
+  (select count(*)::int from public.content_revision r
+     join public.content_item ci on ci.id = r.content_item_id where ci.slug = 'about'),
+  3, 'matching expected + changed hash adds revision #3');
 ```
 
-> **Implementer note:** replace `:item_id`, `:rev_before`, `:count_before`, `:different_data`, `:different_hash` with the file's existing seed variables/values; keep Case 4 as an explicit new-revision assertion using the *current* (matching) revision as `p_expected_revision_id`. Update the `plan(N)` count at the top of the file to include the added assertions.
+- [ ] **Step 4: Run the DB gate (RED before the migration is applied, GREEN after)**
 
-- [ ] **Step 4: Run the DB gate to verify RED then GREEN**
-
-Run (before writing the migration's reorder, to confirm the tests are load-bearing — optional sabotage check): temporarily point at the old function → Case 1 FAILS with a raised `content_update_conflict`.
-Run the real gate: `bash scripts/slice-e2e.sh` (or the repo's `supabase test db` path used in CI for pgTAP).
-Expected: PASS — all four new assertions green; existing `cms_content_rpcs_test.sql` assertions still green.
+The repo runs pgTAP via the local slice with Supabase up. Sabotage/RED check: with only the OLD `20260701000012` function loaded (i.e. before adding the new migration), the "identical-hash retry with a stale expected revision" case FAILS because the old order raises `content_update_conflict` before the hash shortcut.
+Real gate (new migration present): `bash scripts/slice-e2e.sh` (or the repo's `supabase test db` path CI uses for pgTAP).
+Expected: PASS — all 7 new assertions green (plan now 23); existing 16 assertions still green.
 
 - [ ] **Step 5: Commit**
 
@@ -614,11 +668,16 @@ git commit -m "chore(richtext): register @movp/richtext across release/CI/Deno g
 C7.3a is DONE only when all of the following are green (spec §2.1):
 
 ```bash
-pnpm --filter @movp/richtext test && pnpm --filter @movp/editor-sdk test && pnpm --filter @movp/domain test
+# Pure unit gates (no stack):
+pnpm --filter @movp/richtext test && pnpm --filter @movp/editor-sdk test
 pnpm typecheck
 pnpm check:packages && pnpm test:version-gate && pnpm check:publishable-versions && pnpm check:ci-wiring
 pnpm test:forward-only-migrations
-# pgTAP (4 new assertions) via the repo's DB test path; five-entrypoint deno check; verdaccio crm+gallery.
+# DB-backed gates (require `supabase start`): domain integration test + pgTAP (7 new assertions, plan 23),
+#   both run under the slice-e2e path in CI:
+#   pnpm --filter @movp/domain exec vitest run test/content.integration.test.ts
+#   bash scripts/slice-e2e.sh
+# Five-entrypoint `deno check`; verdaccio crm+gallery (local edge-serve stage may flake — trust publish/install/reset).
 ```
 
 Then update the Stage C EXECUTION STATUS table in `docs/superpowers/plans/README.md` for C7.3a. **Do NOT mark C7.3 (or C7) complete** — C7.3b (SDK/frontend binding and conflict UX) must land next.
