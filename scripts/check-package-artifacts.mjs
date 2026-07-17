@@ -10,6 +10,7 @@ const publishable = [
   'core-schema',
   'create-movp',
   'domain',
+  'editor-sdk',
   'flows',
   'graphql',
   'mcp',

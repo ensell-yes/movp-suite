@@ -61,7 +61,7 @@ bite-sized TDD plan (as C1 was) before building.
 > | C4 Reporting Views & Dashboards | `2026-07-11-movp-stage-c-04{a,b,c}-*.md` | ✅ EXECUTED (`169757e`…`14b27b8`; 666 pgTAP assertions / 33 files; local `slice-e2e: PASS`; reviewed 9.30) |
 > | C5 Integration Fabric | `2026-07-11-movp-stage-c-05{a,b,c}-*.md` (+ design spec) | ✅ EXECUTED (C5a delta-owned external records + idempotent ingest; C5b PostgREST RLS audit/docs; C5c CRM worker/templates/integration slice; 719 pgTAP assertions, direct HTTP/edge integration checks) |
 > | C6 Templates & Scaffolding | `2026-07-12-movp-stage-c-06{a,b,c,d,e,f}-*.md` (+ design/interfaces) | ✅ C6a–C6f EXECUTED (platform/composition + schema injection/runtime guard + immutable project codegen/manifest/live consistency + safe `create-movp` scaffolder + CRM-lite/marketing/support/knowledge-base gallery + four-way Verdaccio real-runtime matrix + Starlight docs and generated DSL reference) |
-> | C7 Inline Editing & Delivery | breakdown only | ⬜ expand before build (needs C1) |
+> | C7 Inline Editing & Delivery | breakdown + `2026-07-15-c7.1-editor-dependency-spike.md` + `2026-07-16-movp-stage-c-07b-editor-sdk.md` | 🟡 C7.1–C7.2 EXECUTED (`@movp/editor-sdk` client-safe TipTap editor; C7.1 harness retired; C7.3–C7.7 pending) |
 > | C8 Retrieval & RAG | breakdown only | ⬜ expand before build (needs C3) |
 
 **Phase C2 — Admin Console is EXPANDED and EXECUTABLE** (bite-sized TDD; precondition: C1

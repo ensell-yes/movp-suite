@@ -107,6 +107,11 @@
   and drives CLI, GraphQL, and MCP over their real runtimes. Keep its network probes and Docker startup retries
   bounded and fail-loud. Any package imported through a Deno subpath must publish that subpath and its built
   artifacts; `pnpm check:packages` pins `@movp/search/gte-small`.
+- `@movp/editor-sdk` is the client-safe embeddable rich-text editor (TipTap, permissive-only). It NEVER imports
+  `@movp/domain`/`@movp/auth`/`@movp/graphql`/`@supabase`; the host injects `onSave`, maps transport conflicts
+  to `{ status: 'conflict' }`, and retains `onSaved(revisionId)` for the next expected revision. The SDK recognizes
+  a domain-direct `content_update_conflict` by string shape only. `packages/editor-sdk/test/boundary.test.ts` is
+  the seam audit, and the required `c7-editor-sdk` CI job runs the complete package suite.
 
 ## Task/CMS Agent Contracts
 

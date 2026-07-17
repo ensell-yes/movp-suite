@@ -9,7 +9,7 @@ import { readJsonGuarded } from './lib/guarded-read.mjs'
 /** The set Verdaccio publishes and scaffolds pin at ^0.1.0. `mcp-bridge` is private/unpublished and
  *  intentionally excluded (it stays 0.0.0). */
 export const PUBLISHABLE = [
-  'auth', 'cli', 'codegen', 'core-schema', 'domain', 'flows',
+  'auth', 'cli', 'codegen', 'core-schema', 'domain', 'editor-sdk', 'flows',
   'graphql', 'mcp', 'notifications', 'obs', 'platform', 'search',
 ]
 export const EXPECTED_VERSION = '0.1.0'
