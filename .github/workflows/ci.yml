@@ -34,6 +34,7 @@ jobs:
         with: { node-version: 22, cache: pnpm }
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @movp/editor-sdk test
+      - run: pnpm --filter @movp/richtext test
 
   schema-codegen-unit:
     runs-on: ubuntu-latest

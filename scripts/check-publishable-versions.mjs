@@ -10,7 +10,7 @@ import { readJsonGuarded } from './lib/guarded-read.mjs'
  *  intentionally excluded (it stays 0.0.0). */
 export const PUBLISHABLE = [
   'auth', 'cli', 'codegen', 'core-schema', 'domain', 'editor-sdk', 'flows',
-  'graphql', 'mcp', 'notifications', 'obs', 'platform', 'search',
+  'graphql', 'mcp', 'notifications', 'obs', 'platform', 'richtext', 'search',
 ]
 export const EXPECTED_VERSION = '0.1.0'
 /** POSIX ERE for `git grep -E`. `workspace:*` is fine — only a literal 0.0.0 version pin is a hit. */
@@ -61,7 +61,7 @@ export function checkPublishableVersions(repoRoot, runGit = runGitGrep) {
   /** @type {string[]} */
   const problems = []
   for (const name of PUBLISHABLE) {
-    // readJsonGuarded, NEVER `JSON.parse(readFileSync(...))`: these twelve paths are worktree files, and
+    // readJsonGuarded, NEVER `JSON.parse(readFileSync(...))`: these publishable manifests are worktree files, and
     // a symlinked one would be followed straight out of the repo — with the parse error printing its bytes.
     const pkg = readJsonGuarded(join(repoRoot, 'packages', name, 'package.json'))
     if (pkg.version !== EXPECTED_VERSION) {

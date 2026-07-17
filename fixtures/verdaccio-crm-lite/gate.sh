@@ -90,7 +90,7 @@ export NPM_CONFIG_USERCONFIG="$WORK/npmrc"
 export npm_config_cache="$WORK/npm-cache"
 export DENO_DIR="$WORK/deno-cache"
 printf '//127.0.0.1:4873/:_authToken=fake-token\n' >"$NPM_CONFIG_USERCONFIG"
-for pkg in auth cli codegen core-schema domain flows graphql mcp notifications obs platform search; do
+for pkg in auth cli codegen core-schema domain editor-sdk flows graphql mcp notifications obs platform richtext search; do
   # pnpm rewrites workspace:* to concrete package versions in the published manifest. npm publish
   # preserves workspace:* and an external npm install then fails with EUNSUPPORTEDPROTOCOL.
   ( cd "$REPO_ROOT/packages/$pkg" && pnpm publish --no-git-checks ) || { echo "publish @movp/$pkg failed"; exit 1; }

@@ -3,6 +3,7 @@
     "@movp/mcp": "../../../packages/mcp/src/index.ts",
     "@movp/core-schema": "../../../packages/core-schema/src/index.ts",
     "@movp/domain": "../../../packages/domain/src/index.ts",
+    "@movp/richtext": "../../../packages/richtext/src/index.ts",
     "@movp/auth": "../../../packages/auth/src/index.ts",
     "@movp/obs": "../../../packages/obs/src/index.ts",
     "@movp/search": "../../../packages/search/src/index.ts",

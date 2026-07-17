@@ -17,6 +17,7 @@ const publishable = [
   'notifications',
   'obs',
   'platform',
+  'richtext',
   'search',
 ]
 

@@ -4,6 +4,7 @@
     "@movp/core-schema": "../../../packages/core-schema/src/index.ts",
     "@movp/search": "../../../packages/search/src/index.ts",
     "@movp/domain": "../../../packages/domain/src/index.ts",
+    "@movp/richtext": "../../../packages/richtext/src/index.ts",
     "@movp/notifications": "../../../packages/notifications/src/index.ts",
     "zod": "npm:zod@^3.23.8",
     "@supabase/supabase-js": "npm:@supabase/supabase-js@2"
