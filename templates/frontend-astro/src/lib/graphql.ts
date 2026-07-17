@@ -27,7 +27,7 @@ export type GqlFieldError = {
 }
 export type GqlResult<T> =
   | { ok: true; data: T; errors?: GqlFieldError[] }
-  | { ok: false; code: GqlErrorCode; message?: string }
+  | { ok: false; code: GqlErrorCode; message?: string; errorCode?: string }
 
 export type GqlClientOpts = {
   endpoint: string
@@ -145,7 +145,12 @@ export async function gqlRequest<T>(
       return { ok: true, data: json.data, errors }
     }
     const message = errors.map((error) => error.message).filter(Boolean).join('; ')
-    return { ok: false, code: 'graphql_error', message: message || undefined }
+    return {
+      ok: false,
+      code: 'graphql_error',
+      message: message || undefined,
+      errorCode: errors.find((error) => error.code)?.code,
+    }
   }
   if (json.data === undefined) return { ok: false, code: 'graphql_error' }
   return { ok: true, data: json.data }

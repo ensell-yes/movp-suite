@@ -113,9 +113,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - run: pnpm --filter @movp/editor-sdk test
+      - run: pnpm --filter @movp/richtext test
 `
 
-  it('registers the job and fails when its package test invocation is removed', () => {
+  it('registers the job and fails when either package test invocation is removed', () => {
     const requirement = REQUIRED_JOBS['c7-editor-sdk']
     assert.ok(requirement)
     assert.deepEqual(checkCiWiring(fixture('c7-editor-sdk', workflow), {
@@ -131,6 +132,16 @@ jobs:
     })
     assert.equal(problems.length, 1)
     assert.match(problems[0], /ci_wiring_run_missing: .*pnpm --filter @movp\/editor-sdk test/)
+
+    const withoutRichtextTests = workflow.replace(
+      '      - run: pnpm --filter @movp/richtext test\n',
+      '',
+    )
+    const richtextProblems = checkCiWiring(fixture('c7-richtext-missing-tests', withoutRichtextTests), {
+      'c7-editor-sdk': requirement,
+    })
+    assert.equal(richtextProblems.length, 1)
+    assert.match(richtextProblems[0], /ci_wiring_run_missing: .*pnpm --filter @movp\/richtext test/)
   })
 })
 
@@ -417,6 +428,7 @@ ${ARMED_JOB}
     runs-on: ubuntu-latest
     steps:
       - run: pnpm --filter @movp/editor-sdk test
+      - run: pnpm --filter @movp/richtext test
 
   template-gallery:
     runs-on: ubuntu-latest

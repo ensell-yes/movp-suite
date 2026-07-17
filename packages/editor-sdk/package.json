@@ -12,6 +12,7 @@
     "build": "tsup src/index.ts --format esm --dts --sourcemap --clean --target es2020 --out-dir dist"
   },
   "dependencies": {
+    "@movp/richtext": "workspace:*",
     "@tiptap/core": "2.27.2",
     "@tiptap/react": "2.27.2",
     "@tiptap/pm": "2.27.2",

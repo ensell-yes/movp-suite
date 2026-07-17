@@ -4,7 +4,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 OUT_DIR="${1:-}"
 TEMPLATES=(crm-lite marketing-site support-desk knowledge-base)
-PUBLISHABLE=(auth cli codegen core-schema domain flows graphql mcp notifications obs platform search)
+PUBLISHABLE=(auth cli codegen core-schema domain editor-sdk flows graphql mcp notifications obs platform richtext search)
 
 if [ -z "$OUT_DIR" ]; then
   echo "usage: pack.sh <outdir>" >&2

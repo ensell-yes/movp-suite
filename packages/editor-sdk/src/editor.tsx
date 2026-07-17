@@ -17,12 +17,42 @@ export interface MovpEditorProps {
   onSaved?(revisionId: string): void
   /** host-provided reload of the latest content (wired to the conflict Refresh control) */
   onRefresh(): void
+  /** optional destructive reload action, wired by the host in conflict recovery */
+  onLoadLatest?(): void
+  /** reports whether the live editor document differs from the last loaded or saved document */
+  onDirtyChange?(dirty: boolean): void
   readOnly?: boolean
 }
 
-export function MovpEditor({ initialBody, onSave, onSaved, onRefresh, readOnly = false }: MovpEditorProps) {
+export function MovpEditor({
+  initialBody,
+  onSave,
+  onSaved,
+  onRefresh,
+  onLoadLatest,
+  onDirtyChange,
+  readOnly = false,
+}: MovpEditorProps) {
   const [status, setStatus] = useState<EditorStatus>('idle')
+  const [hostActionError, setHostActionError] = useState(false)
   const savingRef = useRef(false)
+  const baselineRef = useRef('')
+  const dirtyRef = useRef<boolean | null>(null)
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const editorRef = useRef<ReturnType<typeof useEditor>>(null)
+  const onDirtyChangeRef = useRef(onDirtyChange)
+  onDirtyChangeRef.current = onDirtyChange
+
+  const emitDirty = useCallback((next: boolean) => {
+    if (dirtyRef.current === next) return
+    dirtyRef.current = next
+    try {
+      onDirtyChangeRef.current?.(next)
+    } catch {
+      /* host callback fault — contained by design */
+    }
+  }, [])
+
   const editor = useEditor({
     extensions: [StarterKit],
     editable: !readOnly,
@@ -30,33 +60,97 @@ export function MovpEditor({ initialBody, onSave, onSaved, onRefresh, readOnly =
     editorProps: {
       attributes: { role: 'textbox', 'aria-label': 'Rich text editor', 'aria-multiline': 'true' },
     },
+    onUpdate: ({ transaction }) => {
+      if (!transaction.docChanged) return
+      emitDirty(true)
+      if (timerRef.current) clearTimeout(timerRef.current)
+      timerRef.current = setTimeout(() => {
+        timerRef.current = null
+        if (!editorRef.current) return
+        emitDirty(tipTapAdapter.encode(editorRef.current.getJSON()) !== baselineRef.current)
+      }, 150)
+    },
   })
+  editorRef.current = editor
 
   // The host refreshes and supplies a new body; TipTap does not react to content prop changes.
   useEffect(() => {
     if (!editor) return
-    editor.commands.setContent(tipTapAdapter.decode(initialBody))
+    if (timerRef.current) {
+      clearTimeout(timerRef.current)
+      timerRef.current = null
+    }
+    editor.chain()
+      .setContent(tipTapAdapter.decode(initialBody), false)
+      // A host load establishes the undo baseline; it must not become an undoable user edit.
+      .command(({ tr }) => {
+        tr.setMeta('addToHistory', false)
+        return true
+      })
+      .run()
+    baselineRef.current = tipTapAdapter.encode(editor.getJSON())
+    emitDirty(false)
     setStatus('idle')
-  }, [editor, initialBody])
+  }, [editor, emitDirty, initialBody])
+
+  useEffect(() => () => {
+    if (timerRef.current) clearTimeout(timerRef.current)
+  }, [])
 
   useEffect(() => {
     editor?.setEditable(!readOnly)
   }, [editor, readOnly])
 
+  const safeRefresh = useCallback(() => {
+    setHostActionError(false)
+    try {
+      onRefresh()
+    } catch {
+      setHostActionError(true)
+    }
+  }, [onRefresh])
+
+  const safeLoadLatest = useCallback(() => {
+    setHostActionError(false)
+    try {
+      onLoadLatest?.()
+    } catch {
+      setHostActionError(true)
+    }
+  }, [onLoadLatest])
+
+  useEffect(() => {
+    if (status !== 'conflict') setHostActionError(false)
+  }, [status])
+
   const save = useCallback(async () => {
     if (!editor || savingRef.current) return
     savingRef.current = true
     setStatus('saving')
+    const submittedBody = tipTapAdapter.encode(editor.getJSON())
     let result: SaveResult
     try {
-      result = await onSave(tipTapAdapter.encode(editor.getJSON()))
-      if (result.status === 'saved') onSaved?.(result.revisionId)
+      result = await onSave(submittedBody)
     } catch (err) {
       result = classifySaveOutcome(err)
     }
     savingRef.current = false
     setStatus(result.status)
-  }, [editor, onSave, onSaved])
+    // onSaved is host-owned advisory revision feedback. Isolate it: a throwing host callback must
+    // neither repaint a committed save as an error (hence: after setStatus) nor dangle an unhandled
+    // rejection. The host owns error handling inside its own callback.
+    if (result.status === 'saved') {
+      baselineRef.current = submittedBody
+      emitDirty(editorRef.current
+        ? tipTapAdapter.encode(editorRef.current.getJSON()) !== submittedBody
+        : false)
+      try {
+        onSaved?.(result.revisionId)
+      } catch {
+        /* host callback fault — contained by design */
+      }
+    }
+  }, [editor, emitDirty, onSave, onSaved])
 
   if (!editor) return null
 
@@ -76,7 +170,15 @@ export function MovpEditor({ initialBody, onSave, onSaved, onRefresh, readOnly =
   return (
     <div>
       {!readOnly && <Toolbar commands={commands} active={active} />}
-      {status === 'conflict' && <ConflictSurface onRefresh={onRefresh} />}
+      {status === 'conflict' && (
+        <ConflictSurface
+          onRefresh={safeRefresh}
+          onLoadLatest={onLoadLatest ? safeLoadLatest : undefined}
+        />
+      )}
+      {hostActionError && (
+        <div role="alert">Could not refresh or load latest. Your draft is unchanged.</div>
+      )}
       {status === 'error' && <div role="alert">Save failed. Please try again.</div>}
       <EditorContent editor={editor} />
       {!readOnly && (

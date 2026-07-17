@@ -5,7 +5,7 @@ description: Generated DSL reference for every MOVP collection.
 
 <!-- Generated from movp.schema.json by `pnpm docs:reference`. Do not edit by hand. -->
 
-Generated from manifest version 1 (generator 0.1.0).
+Generated from manifest version 1 (generator 0.1.1).
 
 | Collection | Name | Layer | Fields |
 | --- | --- | --- | --- |

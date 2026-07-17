@@ -164,6 +164,9 @@ importers:
 
   packages/domain:
     dependencies:
+      '@movp/richtext':
+        specifier: workspace:*
+        version: link:../richtext
       '@supabase/supabase-js':
         specifier: ^2.45.0
         version: 2.110.0
@@ -177,6 +180,9 @@ importers:
 
   packages/editor-sdk:
     dependencies:
+      '@movp/richtext':
+        specifier: workspace:*
+        version: link:../richtext
       '@tiptap/core':
         specifier: 2.27.2
         version: 2.27.2(@tiptap/pm@2.27.2)
@@ -327,6 +333,12 @@ importers:
         specifier: ^3.2.6
         version: 3.2.6(@types/debug@4.1.13)(@types/node@26.0.1)(jsdom@25.0.1)(msw@2.14.6(@types/node@26.0.1)(typescript@5.9.3))(tsx@4.22.4)(yaml@2.9.0)
 
+  packages/richtext:
+    devDependencies:
+      vitest:
+        specifier: ^3.2.6
+        version: 3.2.6(@types/debug@4.1.13)(@types/node@26.0.1)(jsdom@25.0.1)(msw@2.14.6(@types/node@26.0.1)(typescript@5.9.3))(tsx@4.22.4)(yaml@2.9.0)
+
   packages/search:
     dependencies:
       '@movp/domain':
@@ -345,6 +357,12 @@ importers:
       '@astrojs/react':
         specifier: ^4.0.0
         version: 4.4.2(@types/node@26.0.1)(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(tsx@4.22.4)(yaml@2.9.0)
+      '@movp/editor-sdk':
+        specifier: workspace:*
+        version: link:../../packages/editor-sdk
+      '@movp/richtext':
+        specifier: workspace:*
+        version: link:../../packages/richtext
       astro:
         specifier: ^6.0.0
         version: 6.4.8(@types/node@26.0.1)(rollup@4.62.2)(tsx@4.22.4)(yaml@2.9.0)
@@ -364,12 +382,21 @@ importers:
       '@playwright/test':
         specifier: ^1.48.0
         version: 1.61.1
+      '@testing-library/dom':
+        specifier: ^10.4.0
+        version: 10.4.1
+      '@testing-library/react':
+        specifier: ^16.1.0
+        version: 16.3.2(@testing-library/dom@10.4.1)(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
       '@types/react':
         specifier: ^18.3.12
         version: 18.3.31
       '@types/react-dom':
         specifier: ^18.3.1
         version: 18.3.7(@types/react@18.3.31)
+      jsdom:
+        specifier: ^25.0.0
+        version: 25.0.1
       typescript:
         specifier: ^5.6.0
         version: 5.9.3
@@ -6270,6 +6297,16 @@ snapshots:
     optionalDependencies:
       '@types/react': 18.3.3
       '@types/react-dom': 18.3.0
+
+  '@testing-library/react@16.3.2(@testing-library/dom@10.4.1)(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)':
+    dependencies:
+      '@babel/runtime': 7.29.7
+      '@testing-library/dom': 10.4.1
+      react: 18.3.1
+      react-dom: 18.3.1(react@18.3.1)
+    optionalDependencies:
+      '@types/react': 18.3.31
+      '@types/react-dom': 18.3.7(@types/react@18.3.31)
 
   '@tiptap/core@2.27.2(@tiptap/pm@2.27.2)':
     dependencies:

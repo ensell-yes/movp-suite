@@ -158,6 +158,61 @@ const contentTypes = [
     ]),
   },
 ]
+const rtContentType = {
+  id: 'ct-rt',
+  key: 'note',
+  label: 'Note',
+  field_schema: JSON.stringify([
+    { name: 'body', type: 'richtext', label: 'Body' },
+    { name: 'summary', type: 'richtext', label: 'Summary' },
+  ]),
+}
+contentTypes.push(rtContentType)
+
+const RT_ITEM_ID = 'd1000000-0000-4000-8000-000000000001'
+const rtRevId = (revisionNumber) => `d2000000-0000-4000-8000-${String(revisionNumber).padStart(12, '0')}`
+
+function freshRtState() {
+  const data = JSON.stringify({ body: '', summary: '' })
+  const item = {
+    id: RT_ITEM_ID,
+    slug: 'note-1',
+    status: 'draft',
+    content_type_id: 'ct-rt',
+    data,
+    current_revision_id: rtRevId(1),
+    approved_revision_id: null,
+    published_revision_id: null,
+    updated_at: '2026-07-02T00:00:00Z',
+    content_type: rtContentType,
+  }
+  return {
+    item,
+    revSeq: 1,
+    revisions: [
+      {
+        id: rtRevId(1),
+        parent_id: null,
+        revision_number: 1,
+        data,
+        author_id: 'u1',
+        created_at: '2026-07-01T00:00:00Z',
+      },
+    ],
+  }
+}
+
+const rtStates = new Map()
+
+function rtStateFor(token) {
+  let state = rtStates.get(token)
+  if (!state) {
+    state = freshRtState()
+    rtStates.set(token, state)
+  }
+  return state
+}
+
 const contentItems = [
   {
     id: 'ci1',
@@ -348,14 +403,12 @@ createServer(async (req, res) => {
   }
   if (url.pathname === '/scenario') {
     const next = url.searchParams.get('name') ?? 'ok'
-    const token = url.searchParams.get('token')
-    if (token) {
-      scenarios.set(token, next)
-      counts.set(token, {})
-    } else {
-      fallbackScenario = next
-      counts.set('fallback', {})
-    }
+    const requestedToken = url.searchParams.get('token')
+    const stateKey = requestedToken ?? 'fallback'
+    if (requestedToken) scenarios.set(requestedToken, next)
+    else fallbackScenario = next
+    counts.set(stateKey, {})
+    rtStates.set(stateKey, freshRtState())
     return json(res, 200, { scenario: next })
   }
   if (url.pathname === '/counts') {
@@ -412,13 +465,20 @@ createServer(async (req, res) => {
     return json(res, 200, { data: { contentTypes: scenario === 'empty' ? [] : contentTypes } })
   }
   if (query.includes('query Content(')) {
-    return json(res, 200, { data: { content: { items: scenario === 'empty' ? [] : contentItems, nextCursor: null } } })
+    const items = scenario === 'empty' ? [] : [...contentItems, rtStateFor(token).item]
+    return json(res, 200, { data: { content: { items, nextCursor: null } } })
   }
   if (query.includes('query ContentItem')) {
-    return json(res, 200, { data: { contentItem: scenario === 'empty' ? null : contentItems.find((item) => item.id === parsed.variables?.id) ?? null } })
+    bump(token, 'contentItemRead')
+    const requested = parsed.variables?.id
+    const item = requested === RT_ITEM_ID
+      ? rtStateFor(token).item
+      : contentItems.find((candidate) => candidate.id === requested) ?? null
+    return json(res, 200, { data: { contentItem: scenario === 'empty' ? null : item } })
   }
   if (query.includes('query ContentRevisions')) {
-    return json(res, 200, { data: { contentRevisions: scenario === 'empty' ? [] : contentRevisions } })
+    const revisions = parsed.variables?.itemId === RT_ITEM_ID ? rtStateFor(token).revisions : contentRevisions
+    return json(res, 200, { data: { contentRevisions: scenario === 'empty' ? [] : revisions } })
   }
   if (query.includes('query ContentComments')) {
     return json(res, 200, { data: { comments: scenario === 'empty' ? [] : [{ ...comments[0], body: 'Editorial note' }] } })
@@ -438,14 +498,58 @@ createServer(async (req, res) => {
     return json(res, 200, { data: { runSeoAudit: { score: 87, checklist: JSON.stringify([{ rule: 'headline', pass: true }]) } } })
   }
   if (query.includes('mutation UpdateContent')) {
-    if (scenario === 'conflict') {
-      return json(res, 200, { errors: [{ message: 'domain.content.update failed [40001] content_update_conflict' }] })
+    const vid = parsed.variables?.id
+    if (scenario === 'conflict' && vid === 'ci1') {
+      return json(res, 200, { errors: [{ message: 'This content was updated by someone else.', extensions: { code: 'CONFLICT' } }] })
+    }
+    if (vid === RT_ITEM_ID) {
+      const state = rtStateFor(token)
+      const item = state.item
+      const expected = parsed.variables?.expectedRevisionId
+      const submitted = JSON.parse(parsed.variables?.data ?? '{}')
+      const submittedHash = JSON.stringify(submitted)
+      const currentRevision = state.revisions.find((revision) => revision.id === item.current_revision_id)
+      if (currentRevision && currentRevision.data === submittedHash) {
+        return json(res, 200, {
+          data: {
+            updateContent: {
+              id: vid,
+              status: item.status,
+              current_revision_id: item.current_revision_id,
+            },
+          },
+        })
+      }
+      if (expected && expected !== item.current_revision_id) {
+        return json(res, 200, { errors: [{ message: 'This content was updated by someone else.', extensions: { code: 'CONFLICT' } }] })
+      }
+      state.revSeq += 1
+      const newRevision = {
+        id: rtRevId(state.revSeq),
+        parent_id: item.current_revision_id,
+        revision_number: state.revSeq,
+        data: submittedHash,
+        author_id: 'u1',
+        created_at: '2026-07-02T00:00:00Z',
+      }
+      state.revisions.push(newRevision)
+      item.current_revision_id = newRevision.id
+      item.data = submittedHash
+      return json(res, 200, {
+        data: {
+          updateContent: {
+            id: vid,
+            status: item.status,
+            current_revision_id: newRevision.id,
+          },
+        },
+      })
     }
     const data = JSON.parse(parsed.variables?.data ?? '{}')
     if (typeof data.priority !== 'number' || typeof data.featured !== 'boolean' || !['news', 'guide'].includes(data.category) || !data.hero) {
       return json(res, 200, { errors: [{ message: 'invalid content data' }] })
     }
-    return json(res, 200, { data: { updateContent: { id: parsed.variables?.id, status: 'draft' } } })
+    return json(res, 200, { data: { updateContent: { id: vid, status: 'draft' } } })
   }
   if (query.includes('mutation SubmitContent')) {
     return json(res, 200, { data: { submitForApproval: { id: parsed.variables?.itemId, status: 'in_review' } } })

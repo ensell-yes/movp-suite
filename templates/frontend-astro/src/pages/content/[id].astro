@@ -3,6 +3,7 @@ import Base from '../../layouts/Base.astro'
 import AuthFailure from '../../components/states/AuthFailure.astro'
 import ErrorRetry from '../../components/states/ErrorRetry.astro'
 import EmptyState from '../../components/states/EmptyState.astro'
+import RichTextFieldsIsland from '../../components/content/RichTextFieldsIsland.tsx'
 import { readServerEnv } from '../../lib/env.ts'
 import { getSessionToken } from '../../lib/session.ts'
 import { gqlRequest } from '../../lib/graphql.ts'
@@ -121,9 +122,8 @@ function collectFieldData(form: FormData, schemaFields: FieldDescriptor[]): Reco
   return data
 }
 
-function saveErrorMessage(result: { code: string; message?: string }): string {
-  const detail = result.message ?? ''
-  if (detail.includes('content_update_conflict') || detail.includes('40001')) {
+function saveErrorMessage(result: { code: string; message?: string; errorCode?: string }): string {
+  if (result.errorCode === 'CONFLICT') {
     return 'This content was changed by someone else. Reload to see the latest, then reapply your edits.'
   }
   return 'Could not save. Try again.'
@@ -322,9 +322,25 @@ const checklist = seo?.checklist ? (() => {
 
       <section aria-labelledby="fields-heading" data-testid="content-fields">
         <h2 id="fields-heading">Fields</h2>
+        <!-- Form saves reload the page, so save rich-text first to preserve the island draft. -->
+        {fields.some((field) => (field.type ?? 'text') === 'richtext') && (
+          <RichTextFieldsIsland
+            client:load
+            itemId={item.id}
+            initialRevisionId={item.current_revision_id ?? ''}
+            fields={fields.filter((field) => (field.type ?? 'text') === 'richtext').map((field) => ({
+              key: keyFor(field),
+              label: labelFor(field),
+              body: String(values[keyFor(field)] ?? ''),
+            }))}
+          />
+        )}
         <form method="post">
           <input type="hidden" name="intent" value="save" />
-          {fields.filter((field) => (field.type ?? 'text') !== 'asset').map((field) => {
+          {fields.filter((field) => {
+            const type = field.type ?? 'text'
+            return type !== 'asset' && type !== 'richtext'
+          }).map((field) => {
             const key = keyFor(field)
             const label = labelFor(field)
             const value = values[key]
@@ -333,9 +349,7 @@ const checklist = seo?.checklist ? (() => {
               <p data-field-control>
                 <label>
                   {label}
-                  {type === 'richtext' ? (
-                    <textarea name={`field:${key}`}>{String(value ?? '')}</textarea>
-                  ) : type === 'bool' ? (
+                  {type === 'bool' ? (
                     <>
                       <input type="hidden" name={`field:${key}`} value="false" />
                       <input type="checkbox" name={`field:${key}`} value="true" checked={value === true || value === 'true'} />

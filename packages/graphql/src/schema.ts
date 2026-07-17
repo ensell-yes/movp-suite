@@ -61,6 +61,27 @@ function domainFromSchema(ctx: GraphQLContext, schema: MovpSchema): Domain {
   return ctx.domain
 }
 
+async function updateContentWithConflictBoundary(
+  ctx: GraphQLContext,
+  schema: MovpSchema,
+  args: { id: unknown; data: unknown; expectedRevisionId?: unknown },
+) {
+  try {
+    return await domainFromSchema(ctx, schema).content.update({
+      itemId: String(args.id),
+      data: JSON.parse(String(args.data)),
+      expectedRevisionId: args.expectedRevisionId ? String(args.expectedRevisionId) : undefined,
+    })
+  } catch (error) {
+    if (error instanceof Error && error.message.includes('content_update_conflict')) {
+      throw new GraphQLError('This content was updated by someone else.', {
+        extensions: { code: 'CONFLICT', safeContentConflict: true },
+      })
+    }
+    throw error
+  }
+}
+
 function adminGraphqlError(error: unknown): never {
   const message = error instanceof Error ? error.message : 'domain.admin failed [unknown]'
   const pgCode = error instanceof AdminDomainError
@@ -1526,11 +1547,7 @@ export function buildSchema(schema: MovpSchema): GraphQLSchema {
         complexity: 10,
         args: { id: t.arg.id({ required: true }), data: t.arg.string({ required: true }), expectedRevisionId: t.arg.id({ required: false }) },
         resolve: (_r: unknown, a: any, ctx: GraphQLContext) =>
-          domainFrom(ctx).content.update({
-            itemId: String(a.id),
-            data: JSON.parse(String(a.data)),
-            expectedRevisionId: a.expectedRevisionId ? String(a.expectedRevisionId) : undefined,
-          }),
+          updateContentWithConflictBoundary(ctx, schema, a),
       }),
     )
     builder.mutationField('submitForApproval', (t: any) =>

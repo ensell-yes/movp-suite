@@ -1,5 +1,6 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import { schema } from '@movp/core-schema'
+import { canonicalizeInnerJson, docToPlainText } from '@movp/richtext'
 import { describe, expect, it } from 'vitest'
 import { createDomain } from '../src/index.ts'
 
@@ -143,7 +144,11 @@ describe('content integration', () => {
     const detail = await getDetail(item.id)
     expect(detail?.type?.key).toBe('article')
     expect(detail?.currentRevision?.id).toBe(rows[1].id)
-    expect(detail?.currentRevision?.data).toEqual({ title: 'Hello 2', body: '<p>Hi</p>', rank: 2 })
+    expect(detail?.currentRevision?.data).toEqual({
+      title: 'Hello 2',
+      body: '{"content":[{"content":[{"text":"<p>Hi</p>","type":"text"}],"type":"paragraph"}],"type":"doc"}',
+      rank: 2,
+    })
 
     await expect(ownerDomain.content.create({
       workspaceId: ws1,
@@ -167,5 +172,34 @@ describe('content integration', () => {
     const foreignId = (foreign.data as { id: string }).id
     expect(await ownerDomain.content.get(foreignId)).toBeNull()
     expect(await ownerDomain.content.getDetail(foreignId)).toBeNull()
+  })
+
+  it('stores richtext as canonical doc-JSON and derives human search_body', async () => {
+    const ws = await makeWorkspace('RichText WS')
+    const owner = await makeUser()
+    await addMember(ws, owner.id)
+    const domain = createDomain({ db: userClient(owner.token), userId: owner.id }, { schema })
+    const adminDb = serviceClient()
+
+    const ct = await domain.content.createType({
+      workspaceId: ws, key: 'post', label: 'Post',
+      fieldSchema: [{ name: 'body', type: 'richtext' }],
+    })
+    const created = await domain.content.create({
+      workspaceId: ws, contentTypeId: ct.id, slug: 'rt', data: { body: 'hello world' },
+    })
+
+    const expectedBody = canonicalizeInnerJson({
+      type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'hello world' }] }],
+    })
+    const detail = await domain.content.getDetail(created.id)
+    const storedBody = (detail!.currentRevision!.data as Record<string, string>).body
+    expect(storedBody).toBe(expectedBody)
+    expect(docToPlainText(JSON.parse(storedBody))).toBe('hello world')
+
+    const row = await adminDb.from('content_item').select('search_body').eq('id', created.id).single()
+    const searchBody = (row.data as { search_body: string }).search_body
+    expect(searchBody).toContain('hello world')
+    expect(searchBody).not.toContain('"type"')
   })
 })

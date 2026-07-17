@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { docToPlainText, normalizeToCanonicalDoc } from '@movp/richtext'
 import { validateAssetRequest } from './asset-bounds.ts'
 import { makeGraphService } from './graph.ts'
 import { auditSeo } from './seo-audit.ts'
@@ -160,6 +161,13 @@ export function makeContentService(ctx: DomainCtx): ContentService {
     data: Record<string, unknown>,
   ): Promise<{ canonical: Record<string, unknown>; hash: string; searchText: string; searchBody: string }> {
     const parsed = fieldSchemaToZod(fields).parse(data)
+    // Normalize richtext to canonical doc-JSON BEFORE hashing so the canonical invariant holds for
+    // every write surface (GraphQL/MCP/CLI/domain), not just the frontend endpoint (spec §3.3).
+    for (const field of fields) {
+      if (field.type === 'richtext' && parsed[field.name] != null) {
+        parsed[field.name] = normalizeToCanonicalDoc(parsed[field.name])
+      }
+    }
     const canonicalJson = canonicalize(parsed)
     const hash = await sha256Hex(canonicalJson)
     const textParts: string[] = []
@@ -167,7 +175,7 @@ export function makeContentService(ctx: DomainCtx): ContentService {
     for (const field of fields) {
       const value = parsed[field.name]
       if (value == null) continue
-      if (field.type === 'richtext') bodyParts.push(String(value))
+      if (field.type === 'richtext') bodyParts.push(docToPlainText(JSON.parse(value as string)))
       else if (field.type === 'text' || field.type === 'enum') textParts.push(String(value))
     }
     return { canonical: parsed, hash, searchText: textParts.join(' '), searchBody: bodyParts.join(' ') }

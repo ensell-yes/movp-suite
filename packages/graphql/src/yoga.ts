@@ -13,6 +13,12 @@ function maskMovpError(error: unknown, message: string, isDev?: boolean): Error 
     ? error as { extensions?: Record<string, unknown>; path?: unknown }
     : null
   const code = candidate?.extensions?.code
+  if (candidate?.extensions?.safeContentConflict === true && code === 'CONFLICT') {
+    return new GraphQLError('This content was updated by someone else.', {
+      path: Array.isArray(candidate.path) ? candidate.path as Array<string | number> : undefined,
+      extensions: { code },
+    })
+  }
   if (
     candidate?.extensions?.safeReportingError === true &&
     (code === 'FORBIDDEN' || code === 'INTERNAL_SERVER_ERROR')
