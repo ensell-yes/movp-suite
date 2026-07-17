@@ -6,6 +6,7 @@ export const campaignMetric = defineCollection({
   label: 'Campaign Metric',
   labelPlural: 'Campaign Metrics',
   workspaceScoped: true,
+  genericWrite: 'append-only',
   fields: {
     campaign: f.relation('campaign', { label: 'Campaign', cardinality: 'many-to-one', required: true }),
     // Optional relations -> `deliverable_id`/`channel_id uuid references ... on delete set null`.

@@ -6,6 +6,7 @@ export const webhookSubscription = defineCollection({
   label: 'Webhook Subscription',
   labelPlural: 'Webhook Subscriptions',
   workspaceScoped: true,
+  genericWrite: 'none',
   fields: {
     event_type: f.relation('event_type', { label: 'Event Type', cardinality: 'many-to-one', required: true }),
     url: f.text({ label: 'URL', required: true }),

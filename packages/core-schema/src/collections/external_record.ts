@@ -7,6 +7,7 @@ export const externalRecord = defineCollection({
   label: 'External Record',
   labelPlural: 'External Records',
   workspaceScoped: true,
+  genericWrite: 'crud',
   fields: {
     source: f.text({ label: 'Source', required: true }),
     external_id: f.text({ label: 'External ID', required: true }),

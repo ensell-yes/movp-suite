@@ -13,6 +13,45 @@ PROJECT="acme-crm"
 WS="33333333-3333-3333-3333-333333333333"
 DB_URL="postgresql://postgres:postgres@127.0.0.1:64522/postgres"
 
+auth_admin_post() {
+  for attempt in 1 2 3; do
+    if curl -sS --connect-timeout 2 --max-time 10 "$API_URL/auth/v1/admin/users" \
+      -H "Authorization: Bearer $SERVICE_ROLE_KEY" -H "apikey: $SERVICE_ROLE_KEY" \
+      -H 'content-type: application/json' \
+      -d '{"email":"crm@example.test","password":"Passw0rd!1","email_confirm":true}' >/dev/null; then
+      return 0
+    fi
+    sleep "$attempt"
+  done
+  return 1
+}
+
+auth_token_post() {
+  for attempt in 1 2 3; do
+    if curl -sS --connect-timeout 2 --max-time 10 "$API_URL/auth/v1/token?grant_type=password" \
+      -H "apikey: $ANON_KEY" -H 'content-type: application/json' \
+      -d '{"email":"crm@example.test","password":"Passw0rd!1"}'; then
+      return 0
+    fi
+    sleep "$attempt"
+  done
+  return 1
+}
+
+json_id() {
+  node -e '
+    let body = ""
+    process.stdin.on("data", (chunk) => { body += chunk })
+    process.stdin.on("end", () => {
+      const line = body.trim().split(/\n/).reverse().find((candidate) => candidate.trim().startsWith("{"))
+      if (!line) process.exit(1)
+      const value = JSON.parse(line)
+      if (typeof value.id !== "string" || value.id.length === 0) process.exit(1)
+      process.stdout.write(value.id)
+    })
+  '
+}
+
 # INTERFACES F1 — this gate writes NOTHING under the repository: the staging tree, Verdaccio's
 # storage, and the npm auth token all live under $WORK / $CM_STAGE (mktemp -d). So cleanup only ever
 # removes temp dirs — it never has to "restore" or delete anything in the worktree.
@@ -102,7 +141,7 @@ done
 # 4. Scaffold CRM-lite into a clean temp dir via the PUBLISHED create-movp (no workspace context).
 cd "$WORK"
 printf 'crm-lite\n%s\n%s\n' "$PROJECT" "$WS" | \
-  npm --registry "$REGISTRY" create movp@0.1.0
+  npm --registry "$REGISTRY" create movp@0.1.1
 [ -d "$WORK/$PROJECT" ] || { echo "scaffold did not create $PROJECT"; exit 1; }
 cd "$WORK/$PROJECT"
 
@@ -203,11 +242,8 @@ npm run movp -- verify-schema-runtime \
 # 9. Load env + mint a real member JWT (same gotrue flow as slice-e2e).
 eval "$(supabase status -o env | sed 's/^\([A-Z_]*\)=/export \1=/')"
 : "${API_URL:?}"; : "${ANON_KEY:?}"; : "${SERVICE_ROLE_KEY:?}"
-curl -sS --connect-timeout 2 --max-time 10 "$API_URL/auth/v1/admin/users" -H "Authorization: Bearer $SERVICE_ROLE_KEY" \
-  -H "apikey: $SERVICE_ROLE_KEY" -H "content-type: application/json" \
-  -d '{"email":"crm@example.test","password":"Passw0rd!1","email_confirm":true}' >/dev/null
-TOKEN="$(curl -sS --connect-timeout 2 --max-time 10 "$API_URL/auth/v1/token?grant_type=password" -H "apikey: $ANON_KEY" \
-  -H "content-type: application/json" -d '{"email":"crm@example.test","password":"Passw0rd!1"}' \
+auth_admin_post || { echo "failed to create test user after 3 attempts" >&2; exit 1; }
+TOKEN="$(auth_token_post \
   | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>process.stdout.write(JSON.parse(d).access_token))')"
 [ -n "$TOKEN" ] || { echo "failed to mint token"; exit 1; }
 USER_ID="$(node -e 'const t=process.argv[1].split(".")[1];process.stdout.write(JSON.parse(Buffer.from(t,"base64url")).sub)' "$TOKEN")"
@@ -240,6 +276,36 @@ SUPABASE_URL="$API_URL" SUPABASE_ANON_KEY="$ANON_KEY" MOVP_ACCESS_TOKEN="$TOKEN"
 SUPABASE_URL="$API_URL" SUPABASE_ANON_KEY="$ANON_KEY" MOVP_ACCESS_TOKEN="$TOKEN" \
   npm run movp -- company list --workspace "$WS" | grep -q 'Acme Corp' || { echo "CLI create/list failed"; exit 1; }
 
+# 11b. Drive a platform marketing workflow through the INSTALLED CLI. This pins stored relation
+#     names (`*_id`), typed JSON/number parsing, CRUD updates, and append-only metric creation.
+PLAN_ID="$(SUPABASE_URL="$API_URL" SUPABASE_ANON_KEY="$ANON_KEY" MOVP_ACCESS_TOKEN="$TOKEN" \
+  npm run movp -- marketing_plan create --workspace "$WS" --name "FY27 Plan" --owner_id "$USER_ID" \
+  --goals '{"registrations":100}' | json_id)" || { echo "CLI marketing plan create failed"; exit 1; }
+CAMPAIGN_ID="$(SUPABASE_URL="$API_URL" SUPABASE_ANON_KEY="$ANON_KEY" MOVP_ACCESS_TOKEN="$TOKEN" \
+  npm run movp -- campaign create --workspace "$WS" --marketing_plan_id "$PLAN_ID" \
+  --name "Fall Recruitment" --owner_id "$USER_ID" --goal_metrics '{"registrations":40}' | json_id)" \
+  || { echo "CLI campaign create failed"; exit 1; }
+CHANNEL_ID="$(SUPABASE_URL="$API_URL" SUPABASE_ANON_KEY="$ANON_KEY" MOVP_ACCESS_TOKEN="$TOKEN" \
+  npm run movp -- campaign_channel create --workspace "$WS" --campaign_id "$CAMPAIGN_ID" \
+  --channel_type email --name "Lifecycle Email" | json_id)" || { echo "CLI campaign channel create failed"; exit 1; }
+SUPABASE_URL="$API_URL" SUPABASE_ANON_KEY="$ANON_KEY" MOVP_ACCESS_TOKEN="$TOKEN" \
+  npm run movp -- campaign_metric create --workspace "$WS" --campaign_id "$CAMPAIGN_ID" \
+  --channel_id "$CHANNEL_ID" --metric_key registrations --value 12 --unit people >/dev/null
+SUPABASE_URL="$API_URL" SUPABASE_ANON_KEY="$ANON_KEY" MOVP_ACCESS_TOKEN="$TOKEN" \
+  npm run movp -- campaign update --id "$CAMPAIGN_ID" --status active --rank 2 >/dev/null
+
+CLI_MARKETING_STATE="$(psql "$DB_URL" -tAqc "
+  select c.status || '|' || c.rank || '|' || (c.goal_metrics->>'registrations') || '|' ||
+         ch.channel_type || '|' || m.value || '|' || m.channel_id
+    from public.campaign c
+    join public.campaign_channel ch on ch.campaign_id = c.id
+    join public.campaign_metric m on m.campaign_id = c.id
+   where c.id = '$CAMPAIGN_ID' and c.marketing_plan_id = '$PLAN_ID'
+   order by m.created_at asc limit 1;")"
+if [ "$CLI_MARKETING_STATE" != "active|2|40|email|12|$CHANNEL_ID" ]; then
+  echo "gate: installed CLI marketing workflow did not persist the expected typed/relation state" >&2; exit 1
+fi
+
 # 12. Authenticated GraphQL query over HTTP hits the project collection.
 GQL="$(curl -sS --connect-timeout 2 --max-time 30 "$API_URL/functions/v1/graphql" -H "Authorization: Bearer $TOKEN" -H "apikey: $ANON_KEY" \
   -H "content-type: application/json" \
@@ -253,9 +319,33 @@ MCP_LIST="$(curl -sS --connect-timeout 2 --max-time 30 "$API_URL/functions/v1/mc
   -H "content-type: application/json" -H "accept: application/json, text/event-stream" \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}')"
 echo "$MCP_LIST" | grep -qF '"company.list"' || { echo "MCP tools/list missing exact tool company.list: $MCP_LIST"; exit 1; }
+echo "$MCP_LIST" | grep -qF '"campaign.update"' || { echo "MCP tools/list missing campaign.update"; exit 1; }
+echo "$MCP_LIST" | grep -qF '"campaign_metric.create"' || { echo "MCP tools/list missing campaign_metric.create"; exit 1; }
+if echo "$MCP_LIST" | grep -qF '"campaign_metric.update"'; then
+  echo "gate: append-only campaign_metric unexpectedly exposes an MCP update tool" >&2; exit 1
+fi
 MCP_CALL="$(curl -sS --connect-timeout 2 --max-time 30 "$API_URL/functions/v1/mcp" -H "Authorization: Bearer $TOKEN" -H "apikey: $ANON_KEY" \
   -H "content-type: application/json" -H "accept: application/json, text/event-stream" \
   -d "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"company.list\",\"arguments\":{\"workspaceId\":\"$WS\"}}}")"
 echo "$MCP_CALL" | grep -q 'Acme Corp' || { echo "MCP tools/call company.list failed: $MCP_CALL"; exit 1; }
+
+# Exercise the same installed package through streamable HTTP MCP, including an FK relation and a
+# typed number. The DB assertion is the content-bearing gate; HTTP 200 alone is insufficient.
+MCP_UPDATE="$(curl -sS --connect-timeout 2 --max-time 30 "$API_URL/functions/v1/mcp" -H "Authorization: Bearer $TOKEN" -H "apikey: $ANON_KEY" \
+  -H "content-type: application/json" -H "accept: application/json, text/event-stream" \
+  -d "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"campaign.update\",\"arguments\":{\"id\":\"$CAMPAIGN_ID\",\"priority\":\"high\"}}}")"
+echo "$MCP_UPDATE" | grep -q '"isError":true' && { echo "MCP campaign.update returned an error"; exit 1; }
+MCP_METRIC="$(curl -sS --connect-timeout 2 --max-time 30 "$API_URL/functions/v1/mcp" -H "Authorization: Bearer $TOKEN" -H "apikey: $ANON_KEY" \
+  -H "content-type: application/json" -H "accept: application/json, text/event-stream" \
+  -d "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"tools/call\",\"params\":{\"name\":\"campaign_metric.create\",\"arguments\":{\"workspace_id\":\"$WS\",\"campaign_id\":\"$CAMPAIGN_ID\",\"channel_id\":\"$CHANNEL_ID\",\"metric_key\":\"mcp_clicks\",\"value\":7,\"unit\":\"clicks\"}}}")"
+echo "$MCP_METRIC" | grep -q '"isError":true' && { echo "MCP campaign_metric.create returned an error"; exit 1; }
+MCP_MARKETING_STATE="$(psql "$DB_URL" -tAqc "
+  select c.priority || '|' || m.value || '|' || m.channel_id
+    from public.campaign c
+    join public.campaign_metric m on m.campaign_id = c.id and m.metric_key = 'mcp_clicks'
+   where c.id = '$CAMPAIGN_ID';")"
+if [ "$MCP_MARKETING_STATE" != "high|7|$CHANNEL_ID" ]; then
+  echo "gate: installed HTTP MCP marketing workflow did not persist the expected typed/relation state" >&2; exit 1
+fi
 
 echo "gate: verdaccio-crm-lite acceptance PASS"

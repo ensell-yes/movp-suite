@@ -37,6 +37,8 @@ const adminListIngestKeys = vi.fn(async () => [{ id: 'key1', label: 'ci', active
 const adminCreateIngestKey = vi.fn(async () => ({ keyId: 'key1', rawKey: 'a'.repeat(48) }))
 const adminRotateIngestKey = vi.fn(async () => ({ keyId: 'key1', rawKey: 'b'.repeat(48) }))
 const adminRevokeIngestKey = vi.fn(async () => undefined)
+const campaignChannelCreate = vi.fn(async () => ({ id: 'ch1', campaign_id: 'camp1', channel_type: 'email' }))
+const campaignUpdate = vi.fn(async () => ({ id: 'camp1', status: 'active', rank: 2, goal_metrics: { leads: 40 } }))
 
 function crud() {
   return {
@@ -59,6 +61,8 @@ function collection(name: string) {
     }
   }
   if (name === 'workflow_run') return { ...crud(), list: workflowRunList }
+  if (name === 'campaign_channel') return { ...crud(), create: campaignChannelCreate }
+  if (name === 'campaign') return { ...crud(), update: campaignUpdate }
   return crud()
 }
 
@@ -187,6 +191,43 @@ describe('movp CLI', () => {
     await cmd.parseAsync(['node', 'movp', 'note', 'create', '--workspace', 'w', '--title', 'Hello'])
     expect(noteCreate).toHaveBeenCalledWith(expect.objectContaining({ workspace_id: 'w', title: 'Hello' }))
     expect(out[0]).toContain('Hello')
+  })
+
+  it('creates related records and updates typed fields through generated commands', async () => {
+    const { cmd } = program()
+    await cmd.parseAsync([
+      'node', 'movp', 'campaign_channel', 'create', '--workspace', 'w',
+      '--campaign_id', 'camp1', '--channel_type', 'email',
+    ])
+    expect(campaignChannelCreate).toHaveBeenCalledWith({
+      workspace_id: 'w',
+      campaign_id: 'camp1',
+      channel_type: 'email',
+    })
+
+    await cmd.parseAsync([
+      'node', 'movp', 'campaign', 'update', '--id', 'camp1', '--status', 'active',
+      '--rank', '2', '--goal_metrics', '{"leads":40}',
+    ])
+    expect(campaignUpdate).toHaveBeenCalledWith('camp1', {
+      status: 'active',
+      rank: 2,
+      goal_metrics: { leads: 40 },
+    })
+  })
+
+  it('rejects graph-only relation flags and empty generic updates', async () => {
+    const updateCallCount = campaignUpdate.mock.calls.length
+    const graphRelation = program()
+    await expect(graphRelation.cmd.parseAsync([
+      'node', 'movp', 'note', 'create', '--workspace', 'w', '--title', 'Hello', '--tags_id', 'tag1',
+    ])).rejects.toThrow(/unknown option '--tags_id'/)
+
+    const emptyUpdate = program()
+    await expect(emptyUpdate.cmd.parseAsync([
+      'node', 'movp', 'campaign', 'update', '--id', 'camp1',
+    ])).rejects.toThrow('no_update_fields')
+    expect(campaignUpdate).toHaveBeenCalledTimes(updateCallCount)
   })
 
   it('init writes the CLI config file', async () => {

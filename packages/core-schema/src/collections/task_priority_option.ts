@@ -6,6 +6,7 @@ export const taskPriorityOption = defineCollection({
   label: 'Task Priority Option',
   labelPlural: 'Task Priority Options',
   workspaceScoped: true,
+  genericWrite: 'crud',
   fields: {
     label: f.text({ label: 'Label', required: true }),
     rank: f.number({ label: 'Rank', required: true }),

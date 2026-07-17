@@ -121,3 +121,10 @@ MOVP_RELEASE_PREFLIGHT=1 pnpm check:release-preflight
 
 That command verifies `npm whoami` and `npm org ls movp` access. Use the unscoped org name for
 the npm org check.
+
+After the release is published, install the supported CLI with Node 20 or newer:
+
+```sh
+npm install --global @movp/cli@0.1.1
+movp --help
+```

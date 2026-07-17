@@ -6,6 +6,7 @@ export const campaignCalendarEvent = defineCollection({
   label: 'Campaign Calendar Event',
   labelPlural: 'Campaign Calendar Events',
   workspaceScoped: true,
+  genericWrite: 'crud',
   fields: {
     campaign: f.relation('campaign', { label: 'Campaign', cardinality: 'many-to-one', required: true }),
     title: f.text({ label: 'Title', required: true, searchable: true }),

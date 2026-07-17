@@ -6,6 +6,7 @@ export const segmentSnapshot = defineCollection({
   label: 'Segment Snapshot',
   labelPlural: 'Segment Snapshots',
   workspaceScoped: true,
+  genericWrite: 'none',
   fields: {
     // Required relation -> `segment_id uuid not null references public.segment(id) on delete cascade`.
     segment: f.relation('segment', { label: 'Segment', cardinality: 'many-to-one', required: true }),

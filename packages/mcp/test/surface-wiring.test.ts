@@ -1,6 +1,6 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
-import { defineCollection, defineSchema, schema } from '@movp/core-schema'
+import { defineCollection, defineSchema, genericWriteMode, schema } from '@movp/core-schema'
 import { createDomain } from '@movp/domain'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { describe, expect, it } from 'vitest'
@@ -40,7 +40,10 @@ const surfaceSchema = defineSchema({
       label: 'Surface widget',
       labelPlural: 'Surface widgets',
       workspaceScoped: true,
-      fields: { title: { type: 'text', label: 'Title', required: true } },
+      fields: {
+        title: { type: 'text', label: 'Title', required: true },
+        settings: { type: 'json', label: 'Settings', required: true },
+      },
     }),
     defineCollection({
       name: 'surface_secret',
@@ -218,9 +221,13 @@ const customCliCommands = [
 
 const expectedMcpTools = new Set([
   ...customMcpTools,
-  ...publicCollections.flatMap((collection) =>
-    ['create', 'get', 'list', 'search', 'link'].map((operation) => `${collection.name}.${operation}`),
-  ),
+  ...publicCollections.flatMap((collection) => {
+    const operations = ['get', 'list', 'search', 'link']
+    const writeMode = genericWriteMode(collection)
+    if (writeMode !== 'none') operations.push('create')
+    if (writeMode === 'crud') operations.push('update')
+    return operations.map((operation) => `${collection.name}.${operation}`)
+  }),
 ])
 const expectedGraphqlQueries = new Set([
   ...customGraphqlQueries,
@@ -228,10 +235,13 @@ const expectedGraphqlQueries = new Set([
 ])
 const expectedGraphqlMutations = new Set([
   ...customGraphqlMutations,
-  ...publicCollections.flatMap((collection) => [
-    `create${pascal(collection.name)}`,
-    `update${pascal(collection.name)}`,
-  ]),
+  ...publicCollections.flatMap((collection) => {
+    const mutations: string[] = []
+    const writeMode = genericWriteMode(collection)
+    if (writeMode !== 'none') mutations.push(`create${pascal(collection.name)}`)
+    if (writeMode === 'crud') mutations.push(`update${pascal(collection.name)}`)
+    return mutations
+  }),
 ])
 const expectedCliCommands = new Set([
   ...customCliCommands,
@@ -260,6 +270,52 @@ describe('real-schema generic surface wiring', () => {
     expect(surfaceDiff(names, expectedMcpTools)).toEqual({ missing: [], unexpected: [] })
   })
 
+  it('exposes only stored relation ids and preserves required JSON inputs', async () => {
+    const client = new Client({ name: 'surface-inputs', version: '0.0.0' })
+    const server = buildMcpServer(surfaceSchema, { db, userId: 'user-1' })
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)])
+    const tools = (await client.listTools()).tools
+    const create = tools.find((tool) => tool.name === 'campaign_metric.create')
+    const update = tools.find((tool) => tool.name === 'campaign.update')
+    const widgetCreate = tools.find((tool) => tool.name === 'surface_widget.create')
+    const noteCreate = tools.find((tool) => tool.name === 'note.create')
+    const noteUpdate = tools.find((tool) => tool.name === 'note.update')
+
+    expect(create?.inputSchema.required).toEqual(expect.arrayContaining(['workspace_id', 'campaign_id']))
+    expect(create?.inputSchema.properties).toMatchObject({
+      campaign_id: { type: 'string' },
+      value: { type: 'number' },
+    })
+    expect(update?.inputSchema.required).toEqual(['id'])
+    expect(update?.inputSchema.properties).toMatchObject({
+      id: { type: 'string' },
+      marketing_plan_id: { type: 'string' },
+      rank: { type: 'number' },
+    })
+    expect(widgetCreate?.inputSchema.required).toEqual(
+      expect.arrayContaining(['workspace_id', 'title', 'settings']),
+    )
+    expect(widgetCreate?.inputSchema.properties?.settings).not.toEqual({})
+    expect(noteCreate?.inputSchema.properties).not.toHaveProperty('tags_id')
+    expect(noteCreate?.inputSchema.properties).not.toHaveProperty('tags')
+    expect(noteUpdate?.inputSchema.properties).not.toHaveProperty('tags_id')
+    expect(noteUpdate?.inputSchema.properties).not.toHaveProperty('tags')
+    expect(tools.some((tool) => tool.name === 'campaign_metric.update')).toBe(false)
+    expect(tools.some((tool) => tool.name === 'segment_snapshot.create')).toBe(false)
+  })
+
+  it('rejects an MCP update with no fields before reaching the database', async () => {
+    const client = new Client({ name: 'surface-empty-update', version: '0.0.0' })
+    const server = buildMcpServer(surfaceSchema, { db, userId: 'user-1' })
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)])
+
+    const result = await client.callTool({ name: 'campaign.update', arguments: { id: 'campaign-1' } })
+    expect(result.isError).toBe(true)
+    expect(JSON.stringify(result.content)).toContain('no_update_fields')
+  })
+
   it('exposes every public collection through GraphQL and CLI', () => {
     const graphql = buildSchema(surfaceSchema)
     const queries = graphql.getQueryType()?.getFields() ?? {}
@@ -274,6 +330,16 @@ describe('real-schema generic surface wiring', () => {
       new Set(cliProgram.commands.map((command) => command.name())),
       expectedCliCommands,
     )).toEqual({ missing: [], unexpected: [] })
+
+    const widgetCreate = cliProgram.commands
+      .find((command) => command.name() === 'surface_widget')
+      ?.commands.find((command) => command.name() === 'create')
+    const noteCreate = cliProgram.commands
+      .find((command) => command.name() === 'note')
+      ?.commands.find((command) => command.name() === 'create')
+    expect(widgetCreate?.options.find((option) => option.long === '--settings')?.mandatory).toBe(true)
+    expect(noteCreate?.options.map((option) => option.long)).not.toContain('--tags_id')
+    expect(noteCreate?.options.map((option) => option.long)).not.toContain('--tags')
   })
 
   it('detects bespoke internal registrations outside the generic loops', () => {

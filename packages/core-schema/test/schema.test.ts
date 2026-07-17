@@ -87,6 +87,12 @@ describe('defineSchema aggregate', () => {
     expect(comment.internal).toBe(true)
   })
 
+  it('pins an explicit generic write mode for every public platform collection', () => {
+    for (const collection of schema.platformCollections) {
+      if (!collection.internal) expect(collection.genericWrite, collection.name).toBeDefined()
+    }
+  })
+
   it('rejects duplicate collection names', () => {
     expect(() => defineSchema({ collections: [tag, tag] })).toThrow(/duplicate/)
   })

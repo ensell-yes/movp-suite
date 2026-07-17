@@ -6,6 +6,7 @@ export const taskStatusOption = defineCollection({
   label: 'Task Status Option',
   labelPlural: 'Task Status Options',
   workspaceScoped: true,
+  genericWrite: 'crud',
   fields: {
     label: f.text({ label: 'Label', required: true }),
     category: f.enum(['backlog', 'active', 'blocked', 'done'], {

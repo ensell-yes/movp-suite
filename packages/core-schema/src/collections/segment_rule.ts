@@ -6,6 +6,7 @@ export const segmentRule = defineCollection({
   label: 'Segment Rule',
   labelPlural: 'Segment Rules',
   workspaceScoped: true,
+  genericWrite: 'crud',
   fields: {
     // Required relation -> `segment_id uuid not null references public.segment(id) on delete cascade`.
     segment: f.relation('segment', { label: 'Segment', cardinality: 'many-to-one', required: true }),

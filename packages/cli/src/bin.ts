@@ -1,4 +1,4 @@
-#!/usr/bin/env -S npx tsx
+#!/usr/bin/env node
 import { emit, REDACTION_VERSION } from '@movp/obs'
 import { AdminDomainError } from '@movp/domain'
 import { schema } from '@movp/core-schema'

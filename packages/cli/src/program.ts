@@ -1,7 +1,14 @@
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { Command, InvalidArgumentError, Option } from 'commander'
-import type { CollectionDef, FieldDef, MovpSchema } from '@movp/core-schema'
+import {
+  genericWriteMode,
+  isGenericInputField,
+  isStoredRelation,
+  type CollectionDef,
+  type FieldDef,
+  type MovpSchema,
+} from '@movp/core-schema'
 import { createDomain as createDomainWithSchema, type CollectionService, type Domain } from '@movp/domain'
 import { resolveCliCtx, exchangePat, type CliCtx } from './client.ts'
 import { writeCliConfig, loadCliConfig } from './config.ts'
@@ -48,6 +55,28 @@ function parseInteger(value: string, minimum: number): number {
 
 const parsePositiveInteger = (value: string) => parseInteger(value, 1)
 const parseNonNegativeInteger = (value: string) => parseInteger(value, 0)
+
+function inputName(name: string, def: FieldDef): string {
+  return isStoredRelation(def) ? `${name}_id` : name
+}
+
+function parseFieldValue(value: string, def: FieldDef): unknown {
+  if (def.type === 'number') {
+    const parsed = Number(value)
+    if (!Number.isFinite(parsed)) throw new InvalidArgumentError('expected a finite number')
+    return parsed
+  }
+  if (def.type === 'boolean') {
+    if (value === 'true') return true
+    if (value === 'false') return false
+    throw new InvalidArgumentError('expected true or false')
+  }
+  if (def.type === 'json') return parseJsonFlag(value, undefined)
+  if (def.type === 'enum' && def.values?.includes(value) !== true) {
+    throw new InvalidArgumentError(`expected one of: ${(def.values ?? []).join(', ')}`)
+  }
+  return value
+}
 
 async function readTokenFromStdin(): Promise<string> {
   const chunks: Buffer[] = []
@@ -103,23 +132,27 @@ export function buildProgram(schema: MovpSchema, opts: BuildProgramOpts = {}): C
   for (const c of schema.collections as CollectionDef[]) {
     if (c.internal) continue
     const cmd = program.command(c.name).description(`Operate on ${c.labelPlural}`)
+    const writeMode = genericWriteMode(c)
 
-    const create = cmd.command('create').requiredOption('--workspace <id>', 'workspace id')
-    for (const [name, def] of Object.entries(c.fields) as [string, FieldDef][]) {
-      if (def.type === 'relation') continue
-      const flag = `--${name} <value>`
-      if (def.required) create.requiredOption(flag, def.label)
-      else create.option(flag, def.label)
-    }
-    create.action(async (o: Record<string, string>) => {
-      const domain = createDomain(await resolveCtx())
-      const input: Record<string, unknown> = { workspace_id: o.workspace }
+    if (writeMode !== 'none') {
+      const create = cmd.command('create').requiredOption('--workspace <id>', 'workspace id')
       for (const [name, def] of Object.entries(c.fields) as [string, FieldDef][]) {
-        if (def.type === 'relation') continue
-        if (o[name] !== undefined) input[name] = o[name]
+        if (!isGenericInputField(def)) continue
+        const flag = `--${inputName(name, def)} <value>`
+        if (def.required) create.requiredOption(flag, def.label)
+        else create.option(flag, def.label)
       }
-      out(JSON.stringify(await service(domain, c.name).create(input)))
-    })
+      create.action(async (o: Record<string, string>) => {
+        const domain = createDomain(await resolveCtx())
+        const input: Record<string, unknown> = { workspace_id: o.workspace }
+        for (const [name, def] of Object.entries(c.fields) as [string, FieldDef][]) {
+          if (!isGenericInputField(def)) continue
+          const key = inputName(name, def)
+          if (o[key] !== undefined) input[key] = parseFieldValue(o[key], def)
+        }
+        out(JSON.stringify(await service(domain, c.name).create(input)))
+      })
+    }
 
     cmd
       .command('get')
@@ -146,6 +179,25 @@ export function buildProgram(schema: MovpSchema, opts: BuildProgramOpts = {}): C
           ),
         )
       })
+
+    if (writeMode === 'crud') {
+      const update = cmd.command('update').requiredOption('--id <id>', 'record id')
+      for (const [name, def] of Object.entries(c.fields) as [string, FieldDef][]) {
+        if (!isGenericInputField(def)) continue
+        update.option(`--${inputName(name, def)} <value>`, def.label)
+      }
+      update.action(async (o: Record<string, string>) => {
+        const patch: Record<string, unknown> = {}
+        for (const [name, def] of Object.entries(c.fields) as [string, FieldDef][]) {
+          if (!isGenericInputField(def)) continue
+          const key = inputName(name, def)
+          if (o[key] !== undefined) patch[key] = parseFieldValue(o[key], def)
+        }
+        if (Object.keys(patch).length === 0) throw new Error('no_update_fields')
+        const domain = createDomain(await resolveCtx())
+        out(JSON.stringify(await service(domain, c.name).update(o.id, patch)))
+      })
+    }
   }
 
   program
