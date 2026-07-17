@@ -50,12 +50,21 @@ export function MovpEditor({ initialBody, onSave, onSaved, onRefresh, readOnly =
     let result: SaveResult
     try {
       result = await onSave(tipTapAdapter.encode(editor.getJSON()))
-      if (result.status === 'saved') onSaved?.(result.revisionId)
     } catch (err) {
       result = classifySaveOutcome(err)
     }
     savingRef.current = false
     setStatus(result.status)
+    // onSaved is host-owned advisory revision feedback. Isolate it: a throwing host callback must
+    // neither repaint a committed save as an error (hence: after setStatus) nor dangle an unhandled
+    // rejection. The host owns error handling inside its own callback.
+    if (result.status === 'saved') {
+      try {
+        onSaved?.(result.revisionId)
+      } catch {
+        /* host callback fault — contained by design */
+      }
+    }
   }, [editor, onSave, onSaved])
 
   if (!editor) return null

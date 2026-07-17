@@ -70,6 +70,17 @@ describe('MovpEditor (mounted)', () => {
     expect(screen.queryByRole('alert')).toBeNull()
   })
 
+  it('reports a committed save as saved even when the host onSaved callback throws', async () => {
+    const onSave = vi.fn().mockResolvedValue({ status: 'saved', revisionId: 'r1' })
+    const onSaved = vi.fn(() => { throw new Error('host state update blew up') })
+    render(<MovpEditor initialBody={BODY_A} onSave={onSave} onSaved={onSaved} onRefresh={vi.fn()} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Save content' }))
+    // The save committed on the server; a throwing host callback must not repaint it as an error.
+    await screen.findByRole('status')
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(onSaved).toHaveBeenCalledTimes(1)
+  })
+
   it('shows the conflict surface when onSave resolves to a conflict', async () => {
     const onSave = vi.fn().mockResolvedValue({ status: 'conflict' })
     render(<MovpEditor initialBody={BODY_A} onSave={onSave} onRefresh={vi.fn()} />)
