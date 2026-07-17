@@ -165,6 +165,12 @@ max_indexes = 5
 enabled = true
 # The base URL of your website. Used as an allow-list for redirects and for constructing URLs used
 # in emails.
+# HOSTED DEPLOY (F4): these are LOCAL dev values. If you serve a browser magic-link login (e.g. the
+# frontend-astro admin console) from a deployed project, you MUST set site_url to your deployed origin
+# and add "<origin>/auth/callback" to additional_redirect_urls below, then apply this config to the
+# hosted project (`supabase config push`). Supabase Cloud's default (localhost Site URL + the implicit
+# email template) silently breaks the server-side /auth/callback token_hash verify — the emailed link
+# lands on a "#access_token" fragment the server never sees. See supabase/templates/magic_link.html.
 site_url = "http://127.0.0.1:4321"
 # The public URL that Auth serves on. Defaults to the API external URL with `/auth/v1` appended.
 # external_url = ""
