@@ -38,7 +38,7 @@ If any differ (export name, conflict string, migration name), update the affecte
 
 - `packages/editor-sdk/src/editor.tsx` (modify) — add `onDirtyChange` + `onLoadLatest`; dirty baseline + reconciliation timer.
 - `packages/editor-sdk/src/conflict-surface.tsx` (modify) — optional destructive "Load latest field" action + reworded copy.
-- `packages/editor-sdk/test/mounted.test.tsx` (modify) — dirty-signal + conflict-action tests.
+- `packages/editor-sdk/test/dirty-signal.test.tsx` (new) — dirty-signal tests; `packages/editor-sdk/test/mounted.test.tsx` (modify) — conflict-action tests.
 - `templates/frontend-astro/package.json` (modify) — add SDK + richtext + tiptap deps.
 - `templates/frontend-astro/src/pages/api/content/[id]/richtext.ts` (new) — the save/read endpoint.
 - `templates/frontend-astro/src/pages/api/content/[id]/richtext.test.ts` (new) — endpoint unit tests.
@@ -54,59 +54,73 @@ If any differ (export name, conflict string, migration name), update the affecte
 
 **Files:**
 - Modify: `packages/editor-sdk/src/editor.tsx`
-- Test: `packages/editor-sdk/test/mounted.test.tsx`
+- Create (test): `packages/editor-sdk/test/dirty-signal.test.tsx`
 
 **Interfaces:**
 - Produces: `MovpEditorProps.onDirtyChange?(dirty: boolean): void` — `false` at mount/`initialBody` change/successful save; `true` immediately on the first `docChanged` edit; back to `false` only after a 150 ms reconciliation encode matches the baseline.
 
-- [ ] **Step 1: Write the failing tests** — add to `packages/editor-sdk/test/mounted.test.tsx`. Real doc edits are driven through the `onReady` editor handle via `editor.commands.*` (jsdom cannot type into ProseMirror; the existing tests never mutate the doc — Task 1 establishes this). Uses REAL timers (the 150 ms reconciliation is awaited):
+- [ ] **Step 1: Write the failing tests** — new file `packages/editor-sdk/test/dirty-signal.test.tsx`. jsdom cannot type into ProseMirror and `MovpEditor` exposes no editor handle, so the test captures the real editor by **mock-probing `useEditor`** (a passthrough wrapper — no production API added; precedent: `vi.mock` of a package with `importOriginal` spread, e.g. `graphql/test/reporting.test.ts:27`). Real timers (the 150 ms reconciliation is awaited):
 
 ```tsx
+// @vitest-environment jsdom
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Editor } from '@tiptap/core'
-// existing file already imports: act, cleanup, fireEvent, render, screen, waitFor, describe, expect, it, vi, MovpEditor, tipTapAdapter, BODY_A
+
+const probe = vi.hoisted(() => ({ editor: null as Editor | null }))
+vi.mock('@tiptap/react', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('@tiptap/react')>()
+  return {
+    ...mod,                                            // keep EditorContent etc.
+    useEditor: (options: Parameters<typeof mod.useEditor>[0], deps?: readonly unknown[]) => {
+      const ed = mod.useEditor(options, deps as never) // passthrough: real hook, one call per render
+      if (ed) probe.editor = ed
+      return ed
+    },
+  }
+})
+
+import { MovpEditor } from '../src/editor.tsx'
+
+const BODY_A = '{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"alpha"}]}]}'
+afterEach(() => { cleanup(); probe.editor = null })
+
+async function mount(props: Omit<Parameters<typeof MovpEditor>[0], never>): Promise<Editor> {
+  render(<MovpEditor {...props} />)
+  await waitFor(() => expect(probe.editor).toBeTruthy())
+  return probe.editor!
+}
 
 describe('MovpEditor dirty signal', () => {
   it('is clean at mount and dirty immediately on a doc-changing edit', async () => {
     const onDirtyChange = vi.fn()
-    let ed!: Editor
-    render(<MovpEditor initialBody={BODY_A} onSave={vi.fn()} onRefresh={vi.fn()}
-      onDirtyChange={onDirtyChange} onReady={(e) => { ed = e }} />)
-    await waitFor(() => expect(ed).toBeTruthy())
+    const ed = await mount({ initialBody: BODY_A, onSave: vi.fn(), onRefresh: vi.fn(), onDirtyChange })
     onDirtyChange.mockClear()
-    act(() => { ed.commands.insertContent(' x') })            // real docChanged edit
-    expect(onDirtyChange).toHaveBeenLastCalledWith(true)       // immediate, before reconciliation
+    act(() => { ed.commands.insertContent(' x') })
+    expect(onDirtyChange).toHaveBeenLastCalledWith(true)        // immediate, before reconciliation
   })
 
   it('does not emit on a selection-only (non-docChanged) transaction', async () => {
     const onDirtyChange = vi.fn()
-    let ed!: Editor
-    render(<MovpEditor initialBody={BODY_A} onSave={vi.fn()} onRefresh={vi.fn()}
-      onDirtyChange={onDirtyChange} onReady={(e) => { ed = e }} />)
-    await waitFor(() => expect(ed).toBeTruthy())
+    const ed = await mount({ initialBody: BODY_A, onSave: vi.fn(), onRefresh: vi.fn(), onDirtyChange })
     onDirtyChange.mockClear()
-    act(() => { ed.commands.setTextSelection(1) })            // caret move: doc unchanged
+    act(() => { ed.commands.setTextSelection(1) })              // caret move: doc unchanged
     expect(onDirtyChange).not.toHaveBeenCalled()
   })
 
   it('reconciles back to clean when an edit is undone to the baseline', async () => {
     const onDirtyChange = vi.fn()
-    let ed!: Editor
-    render(<MovpEditor initialBody={BODY_A} onSave={vi.fn()} onRefresh={vi.fn()}
-      onDirtyChange={onDirtyChange} onReady={(e) => { ed = e }} />)
-    await waitFor(() => expect(ed).toBeTruthy())
+    const ed = await mount({ initialBody: BODY_A, onSave: vi.fn(), onRefresh: vi.fn(), onDirtyChange })
     act(() => { ed.commands.insertContent(' x') })
     expect(onDirtyChange).toHaveBeenLastCalledWith(true)
-    act(() => { ed.commands.undo() })                         // StarterKit history -> back to baseline
-    await waitFor(() => expect(onDirtyChange).toHaveBeenLastCalledWith(false), { timeout: 500 }) // after the 150ms reconcile
+    act(() => { ed.commands.undo() })                           // StarterKit history -> back to baseline
+    await waitFor(() => expect(onDirtyChange).toHaveBeenLastCalledWith(false), { timeout: 500 })  // after 150ms reconcile
   })
 
   it('clears dirty after a successful save', async () => {
     const onSave = vi.fn().mockResolvedValue({ status: 'saved', revisionId: 'r1' })
     const onDirtyChange = vi.fn()
-    let ed!: Editor
-    render(<MovpEditor initialBody={BODY_A} onSave={onSave} onRefresh={vi.fn()}
-      onDirtyChange={onDirtyChange} onReady={(e) => { ed = e }} />)
-    await waitFor(() => expect(ed).toBeTruthy())
+    const ed = await mount({ initialBody: BODY_A, onSave, onRefresh: vi.fn(), onDirtyChange })
     act(() => { ed.commands.insertContent(' edited') })
     fireEvent.click(screen.getByRole('button', { name: 'Save content' }))
     await waitFor(() => expect(onDirtyChange).toHaveBeenLastCalledWith(false))
@@ -116,17 +130,13 @@ describe('MovpEditor dirty signal', () => {
     let resolveSave!: (r: { status: 'saved'; revisionId: string }) => void
     const onSave = vi.fn(() => new Promise<{ status: 'saved'; revisionId: string }>((r) => { resolveSave = r }))
     const onDirtyChange = vi.fn()
-    let ed!: Editor
-    render(<MovpEditor initialBody={BODY_A} onSave={onSave} onRefresh={vi.fn()}
-      onDirtyChange={onDirtyChange} onReady={(e) => { ed = e }} />)
-    await waitFor(() => expect(ed).toBeTruthy())
-    act(() => { ed.commands.insertContent(' first') })         // edit #1 -> becomes submittedBody
+    const ed = await mount({ initialBody: BODY_A, onSave, onRefresh: vi.fn(), onDirtyChange })
+    act(() => { ed.commands.insertContent(' first') })          // edit #1 -> becomes submittedBody
     fireEvent.click(screen.getByRole('button', { name: 'Save content' }))
-    act(() => { ed.commands.insertContent(' second') })        // edit #2 during the in-flight save
+    act(() => { ed.commands.insertContent(' second') })         // edit #2 during the in-flight save
     onDirtyChange.mockClear()
     await act(async () => { resolveSave({ status: 'saved', revisionId: 'r1' }) })
-    // Without the F-2 fix the save baselines the live (edit #2) doc and emits dirty=false.
-    // With it, the baseline is the submitted (edit #1) body, so edit #2 stays dirty -> no false emit.
+    // With the F-2 fix, baseline = submitted (edit #1) body, so edit #2 keeps it dirty -> no false emit.
     expect(onDirtyChange).not.toHaveBeenCalledWith(false)
   })
 })
@@ -134,14 +144,12 @@ describe('MovpEditor dirty signal', () => {
 
 - [ ] **Step 2: Run to verify it fails**
 
-Run: `pnpm --filter @movp/editor-sdk exec vitest run test/mounted.test.tsx`
-Expected: FAIL — `onDirtyChange` is not a prop yet; never called.
+Run: `pnpm --filter @movp/editor-sdk exec vitest run test/dirty-signal.test.tsx`
+Expected: FAIL — `onDirtyChange` is not a prop yet; never called (TS also errors on the unknown prop).
 
 - [ ] **Step 3: Implement in `packages/editor-sdk/src/editor.tsx`.** Add `onDirtyChange?` to `MovpEditorProps`, and wire the baseline + `docChanged`-gated + 150 ms reconciliation logic:
 
 ```tsx
-import { type Editor } from '@tiptap/core'   // add to the existing imports at the top of editor.tsx
-
 export interface MovpEditorProps {
   initialBody: string
   onSave: SaveHandler
@@ -149,10 +157,6 @@ export interface MovpEditorProps {
   onRefresh(): void
   onLoadLatest?(): void        // Task 2
   onDirtyChange?(dirty: boolean): void
-  /** Fires once with the created editor instance. A legitimate host affordance (hosts often need the
-   *  editor); it also lets tests drive real doc edits via editor.commands, since jsdom cannot type into
-   *  ProseMirror and MovpEditor otherwise exposes no editor handle. */
-  onReady?(editor: Editor): void
   readOnly?: boolean
 }
 ```
@@ -177,7 +181,6 @@ Inside `MovpEditor`, add a baseline ref, a dirty ref, and a reconciliation timer
     editorProps: {
       attributes: { role: 'textbox', 'aria-label': 'Rich text editor', 'aria-multiline': 'true' },
     },
-    onCreate: ({ editor }) => { try { onReady?.(editor) } catch { /* host callback contained */ } },
     onUpdate: ({ transaction }) => {
       if (!transaction.docChanged) return          // selection-only transaction: no encode, no emit
       emitDirty(true)                              // immediate: no unguarded navigation window
@@ -245,7 +248,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add packages/editor-sdk/src/editor.tsx packages/editor-sdk/test/mounted.test.tsx
+git add packages/editor-sdk/src/editor.tsx packages/editor-sdk/test/dirty-signal.test.tsx
 git commit -m "feat(editor-sdk): docChanged-gated onDirtyChange with trailing reconciliation"
 ```
 
@@ -335,26 +338,22 @@ git commit -m "feat(editor-sdk): non-destructive conflict surface (refresh revis
 
 **Files:** Modify `templates/frontend-astro/package.json`, `templates/frontend-astro/vitest.config.ts`
 
-> **DEPENDENCY APPROVAL GATE (per CLAUDE.md "No new dependencies without approval"):** this task edits `package.json`. The `@movp/*` entries are workspace packages and the `@tiptap/*` entries are **already in the repo lockfile** (they are `@movp/editor-sdk`'s own deps), so no NEW third-party runtime package enters the project. The **test** devDeps below (`@testing-library/react`, `@testing-library/dom`, `jsdom`) are already used by `@movp/editor-sdk`'s tests but are NEW to `frontend-astro`. Obtain explicit approval before running `pnpm install` in this task.
+> **DEPENDENCY APPROVAL (granted):** add ONLY the deps below. Do NOT add `@tiptap/{core,react,pm,starter-kit}` or `react` directly — `@movp/editor-sdk` already declares the tiptap packages as runtime deps (including in its published metadata), so they resolve transitively, and `react`/`react-dom` are already `frontend-astro` deps. Add a direct `@tiptap/*` entry only if the Verdaccio consumer install later demonstrates a real transitive-resolution failure.
 
-- [ ] **Step 1: Add dependencies.** In `templates/frontend-astro/package.json` `dependencies` add the runtime deps, and in `devDependencies` add the component-test deps (pin the tiptap versions the SDK pins):
+- [ ] **Step 1: Add dependencies.** In `templates/frontend-astro/package.json` `dependencies` add the two workspace packages, and in `devDependencies` add the component-test deps (same versions `@movp/editor-sdk` uses):
 
 ```json
   // dependencies:
     "@movp/editor-sdk": "workspace:*",
     "@movp/richtext": "workspace:*",
-    "@tiptap/core": "2.27.2",
-    "@tiptap/react": "2.27.2",
-    "@tiptap/pm": "2.27.2",
-    "@tiptap/starter-kit": "2.27.2",
-  // devDependencies (component tests — same versions @movp/editor-sdk uses):
+  // devDependencies (component tests):
     "@testing-library/react": "^16.1.0",
     "@testing-library/dom": "^10.4.0",
     "jsdom": "^25.0.0"
 ```
 
-Run (after approval): `pnpm install`
-Expected: resolves with no lockfile error.
+Run: `pnpm install`
+Expected: resolves with no lockfile error; `@tiptap/*` appears transitively under `@movp/editor-sdk`.
 
 - [ ] **Step 2: Enable component tests in the frontend vitest config.** The current config only runs `tests/**/*.test.ts` under `node`, so the endpoint test (`src/pages/api/...`) and island test (`.tsx` under `src/components/`) would not be collected and JSX would not compile. Replace `templates/frontend-astro/vitest.config.ts`:
 
@@ -405,10 +404,10 @@ import { describe, expect, it, vi } from 'vitest'
 import { schema as movpSchema } from '@movp/core-schema'
 import { createYoga } from '../src/yoga.ts'
 
-const update = vi.fn()
+const mocks = vi.hoisted(() => ({ update: vi.fn() }))   // vi.hoisted: safe to reference inside the hoisted vi.mock factory
 vi.mock('@movp/domain', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
-  createDomain: () => ({ content: { update } }),
+  createDomain: () => ({ content: { update: mocks.update } }),
 }))
 
 const yoga = createYoga({ schema: movpSchema })
@@ -427,13 +426,13 @@ const MUT =
 
 describe('updateContent conflict boundary', () => {
   it('surfaces a content-update conflict as a sanitized CONFLICT code (survives yoga masking)', async () => {
-    update.mockRejectedValueOnce(new Error('domain.content.update failed [content_update_conflict]'))
+    mocks.update.mockRejectedValueOnce(new Error('domain.content.update failed [content_update_conflict]'))
     const body = await run(MUT)
     expect(body.errors?.[0]?.extensions?.code).toBe('CONFLICT')
     expect(body.errors?.[0]?.message).not.toContain('content_update_conflict')   // sanitized, not the raw domain string
   })
   it('still masks an ordinary internal error to "Unexpected error." (mirrors reporting.test.ts:161-170)', async () => {
-    update.mockRejectedValueOnce(new Error('some internal boom'))
+    mocks.update.mockRejectedValueOnce(new Error('some internal boom'))
     const body = await run(MUT)
     expect(body.errors?.[0]).toMatchObject({ message: 'Unexpected error.', extensions: { code: 'INTERNAL_SERVER_ERROR' } })
   })
@@ -523,11 +522,94 @@ git commit -m "fix(graphql): surface content-update conflict as sanitized CONFLI
 - Consumes: `isDocShape` (`@movp/richtext`), `gqlRequest`, `CONTENT_ITEM_QUERY`, `UPDATE_CONTENT_MUTATION`, `getSessionToken`, `readServerEnv`.
 - Produces: `POST` → `{status:'saved',revisionId}` (200) | `{status:'conflict'}` (409) | `{status:'error',code}` (413/422/401/404/500). `GET ?fieldKey=` → `{body,revisionId}`.
 
-- [ ] **Step 1: Write the failing test** `templates/frontend-astro/src/pages/api/content/[id]/richtext.test.ts`. The `POST`/`GET` handlers read `cloudflare:workers` env (`readServerEnv`) and do real `gqlRequest` fetches, and the frontend has NO route-handler-test precedent (it uses dependency injection / fake `fetchImpl`). So the **handler contract** (status codes + one combined read + one event) is proven in the E2E (Task 8, via Playwright's `request` API + `mockCounts`); here we unit-test the module's **exported pure helpers**, which carry the bounds, classification, structural validation, and event discipline:
+- [ ] **Step 1: Write the failing test** `templates/frontend-astro/src/pages/api/content/[id]/richtext.test.ts`. Importing the route pulls in `env.ts` → `import { env } from 'cloudflare:workers'`, which Node rejects (`ERR_UNSUPPORTED_ESM_URL_SCHEME`). So the test **mocks `env`/`session`/`graphql` before importing the route** — which also lets us drive `POST`/`GET` directly and assert exactly one content-disciplined event per outcome (N-4/N-6):
 
 ```ts
-import { describe, expect, it, vi } from 'vitest'
-import { boundedText, classifyOutcome, emit, fieldKeyBytes, parseData, parseSchema } from './richtext.ts'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+
+// Mock the server-only modules so importing the route never evaluates `cloudflare:workers`.
+const h = vi.hoisted(() => ({ token: 'tok' as string | null, gql: vi.fn() }))
+vi.mock('../../../../lib/env.ts', () => ({
+  readServerEnv: () => ({ graphqlEndpoint: 'http://x/graphql', workspaceId: 'w', supabaseUrl: 'http://x', supabaseAnonKey: 'anon' }),
+}))
+vi.mock('../../../../lib/session.ts', () => ({ getSessionToken: () => h.token }))
+vi.mock('../../../../lib/graphql.ts', () => ({ gqlRequest: h.gql }))
+
+import { GET, POST, boundedText, classifyOutcome, emit, fieldKeyBytes, parseData, parseSchema } from './richtext.ts'
+
+const ITEM = 'd1000000-0000-4000-8000-000000000001'
+const REV = 'd2000000-0000-4000-8000-000000000001'
+const okDoc = JSON.stringify({ type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'hi' }] }] })
+const itemOk = { ok: true, data: { contentItem: {
+  data: '{"body":"","summary":""}', current_revision_id: REV,
+  content_type: { field_schema: '[{"name":"body","type":"richtext"}]' },
+} } }
+
+let logs: string[] = []
+afterEach(() => { vi.restoreAllMocks(); h.token = 'tok'; h.gql.mockReset() })
+const spyLogs = () => { logs = []; vi.spyOn(console, 'log').mockImplementation((l: unknown) => { logs.push(String(l)) }) }
+const call = (fn: typeof POST, id: string, init: RequestInit & { url?: string }) =>
+  fn({ params: { id }, cookies: {}, request: new Request(init.url ?? `http://x/api/content/${id}/richtext`, init) } as unknown as Parameters<typeof POST>[0])
+const post = (body: unknown, id = ITEM) => call(POST, id, { method: 'POST', body: JSON.stringify(body) })
+
+describe('POST outcomes — exactly one content-disciplined event each', () => {
+  it('401 when the session cookie is missing', async () => {
+    h.token = null; spyLogs()
+    const res = await post({ fieldKey: 'body', body: okDoc, expectedRevisionId: REV })
+    expect(res.status).toBe(401); expect(logs).toHaveLength(1)
+    expect(JSON.parse(logs[0]!).outcome).toBe('unauthorized')
+  })
+  it('422 for a non-doc body, before any upstream read', async () => {
+    spyLogs()
+    const res = await post({ fieldKey: 'body', body: '"nope"', expectedRevisionId: REV })
+    expect(res.status).toBe(422); expect(h.gql).not.toHaveBeenCalled()
+    expect(JSON.parse(logs[0]!).outcome).toBe('validation')
+  })
+  it('413 for an oversized body, before parse/read', async () => {
+    spyLogs()
+    const res = await post({ fieldKey: 'body', body: okDoc + ' '.repeat(300_000), expectedRevisionId: REV })
+    expect(res.status).toBe(413); expect(h.gql).not.toHaveBeenCalled()
+    expect(JSON.parse(logs[0]!).outcome).toBe('too_large')
+  })
+  it('404 when the combined read returns no item', async () => {
+    h.gql.mockResolvedValueOnce({ ok: true, data: { contentItem: null } }); spyLogs()
+    expect((await post({ fieldKey: 'body', body: okDoc, expectedRevisionId: REV })).status).toBe(404)
+  })
+  it('500 when persisted state is structurally malformed (quarantine, not crash)', async () => {
+    h.gql.mockResolvedValueOnce({ ok: true, data: { contentItem: {
+      data: 'not json', current_revision_id: REV, content_type: { field_schema: '[{"name":"body","type":"richtext"}]' } } } }); spyLogs()
+    expect((await post({ fieldKey: 'body', body: okDoc, expectedRevisionId: REV })).status).toBe(500)
+  })
+  it('422 for a non-richtext fieldKey — and the key is NOT logged', async () => {
+    h.gql.mockResolvedValueOnce(itemOk); spyLogs()
+    const res = await post({ fieldKey: 'nope', body: okDoc, expectedRevisionId: REV })
+    expect(res.status).toBe(422); expect(JSON.parse(logs[0]!).field_key).toBeUndefined()
+  })
+  it('409 on a structured CONFLICT from the write', async () => {
+    h.gql.mockResolvedValueOnce(itemOk).mockResolvedValueOnce({ ok: false, code: 'graphql_error', errorCode: 'CONFLICT' }); spyLogs()
+    const res = await post({ fieldKey: 'body', body: okDoc, expectedRevisionId: REV })
+    expect(res.status).toBe(409); expect(await res.json()).toEqual({ status: 'conflict' })
+    expect(JSON.parse(logs[0]!).outcome).toBe('conflict')
+  })
+  it('200 on success — new revision id, ONE combined read, no payload in the event', async () => {
+    h.gql.mockResolvedValueOnce(itemOk).mockResolvedValueOnce({ ok: true, data: { updateContent: { current_revision_id: 'rNEW' } } }); spyLogs()
+    const res = await post({ fieldKey: 'body', body: okDoc, expectedRevisionId: REV })
+    expect(res.status).toBe(200); expect(await res.json()).toEqual({ status: 'saved', revisionId: 'rNEW' })
+    expect(h.gql).toHaveBeenCalledTimes(2)                 // one combined read + one write
+    expect(logs).toHaveLength(1)
+    const line = JSON.parse(logs[0]!)
+    expect(line.outcome).toBe('saved'); expect(line.field_key).toBe('body')
+    expect(JSON.stringify(line)).not.toContain('hi')       // the event never carries the doc text
+  })
+})
+
+describe('GET returns the field body + revision', () => {
+  it('200 with body + revisionId for a valid richtext field', async () => {
+    h.gql.mockResolvedValueOnce(itemOk); spyLogs()
+    const res = await call(GET, ITEM, { method: 'GET', url: `http://x/api/content/${ITEM}/richtext?fieldKey=body` })
+    expect(res.status).toBe(200); expect(await res.json()).toEqual({ body: '', revisionId: REV })
+  })
+})
 
 describe('boundedText', () => {
   it('returns null when the stream exceeds the cap', async () => {
@@ -836,7 +918,7 @@ contentRevisions.push({ id: rtRevId(1), parent_id: null, revision_number: 1, dat
   }
 ```
 
-- [ ] **Step 3: Add a `ContentItem` read counter** so the endpoint's "one combined read" is provable. The mock ALREADY serves `/counts` (`graphql-mock.mjs:361`) and has `bump()` (`:24`) — do NOT re-add them. Just add `bump(token, 'contentItemRead')` inside the `query ContentItem` handler (`graphql-mock.mjs:417-419`) before it returns. Also reset per-item revision state per test: on the `/scenario` reset (`:349-364`, which already does `counts.set(token, {})`), restore the richtext item (`RT_ITEM_ID`) to `rtRevId(1)` / empty `{ body: '', summary: '' }` and `rtRevSeq = 1`.
+- [ ] **Step 3: Add a `ContentItem` read counter** so the endpoint's "one combined read" is provable. The mock ALREADY serves `/counts` (`graphql-mock.mjs:361`) and has `bump()` (`:24`) — do NOT re-add them. Just add `bump(token, 'contentItemRead')` inside the `query ContentItem` handler (`graphql-mock.mjs:417-419`) before it returns. Also FULLY reset the richtext fixture per test: on the `/scenario` reset (`:349-364`, which already does `counts.set(token, {})`), splice out **every** generated `d2000000-…` row from `contentRevisions` and re-push only `rtRevId(1)`; set the richtext item's `current_revision_id = rtRevId(1)` and `data = JSON.stringify({ body: '', summary: '' })`; and `rtRevSeq = 1`. (Leaving old `rtRevId(2+)` rows would let a later `.find()` select a stale/duplicate-id revision after `rtRevSeq` resets — N-5.)
 
 - [ ] **Step 4: Verify the mock boots**
 
@@ -931,6 +1013,16 @@ describe('RichTextFieldsIsland', () => {
     fireEvent.click(screen.getByRole('button', { name: 'do-refresh' }))
     await screen.findByText(/Could not refresh/)
   })
+
+  it('load-latest clears the dirty guard for that field (N-1)', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+    render(<RichTextFieldsIsland itemId="rtx" initialRevisionId="r0" fields={[twoFields[0]!]} />)
+    fireEvent.click(screen.getByRole('button', { name: 'mark-dirty' }))
+    expect(screen.getByTestId('richtext-island').getAttribute('data-dirty')).toBe('true')
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ body: '', revisionId: 'r9' }), { status: 200 }))
+    fireEvent.click(screen.getByRole('button', { name: 'do-load-latest' }))
+    await waitFor(() => expect(screen.getByTestId('richtext-island').getAttribute('data-dirty')).toBe('false'))
+  })
 })
 ```
 
@@ -992,6 +1084,7 @@ function RichTextField(
   { itemId: string; field: Field; revisionRef: { current: string }; setFieldDirty: (key: string, isDirty: boolean) => void },
 ) {
   const [initialBody, setInitialBody] = useState(() => normalizeToCanonicalDoc(field.body))
+  const [editorEpoch, setEditorEpoch] = useState(0)   // bumping this remounts MovpEditor (forces setContent even if the body is unchanged)
   const [refreshState, setRefreshState] = useState<'idle' | 'refreshing' | 'ready_to_retry' | 'refresh_error'>('idle')
 
   const onSave = async (body: string) => {
@@ -1020,14 +1113,20 @@ function RichTextField(
   const onLoadLatest = () => {
     setRefreshState('refreshing')
     fetchLatest()
-      .then((j) => { revisionRef.current = j.revisionId; setInitialBody(normalizeToCanonicalDoc(j.body)); setRefreshState('idle') })
+      .then((j) => {
+        revisionRef.current = j.revisionId
+        setInitialBody(normalizeToCanonicalDoc(j.body))
+        setEditorEpoch((e) => e + 1)          // force a remount so setContent runs even if the body is unchanged (N-1)
+        setFieldDirty(field.key, false)       // the remounted editor starts clean and won't emit dirty=false, so clear here
+        setRefreshState('idle')
+      })
       .catch(() => setRefreshState('refresh_error'))   // destructive path: only replaces the draft on success
   }
   const onDirtyChange = (d: boolean) => setFieldDirty(field.key, d)
 
   return (
     <section aria-label={field.label}>
-      <MovpEditor initialBody={initialBody} onSave={onSave} onSaved={onSaved}
+      <MovpEditor key={editorEpoch} initialBody={initialBody} onSave={onSave} onSaved={onSaved}
         onRefresh={onRefresh} onLoadLatest={onLoadLatest} onDirtyChange={onDirtyChange} />
       {refreshState === 'ready_to_retry' && <span role="status">Revision updated — Save to retry.</span>}
       {refreshState === 'refresh_error' && <span role="alert">Could not refresh. Your draft is safe; try again.</span>}
@@ -1172,6 +1271,7 @@ test('richtext endpoint contract: 422/413/200/409 and exactly one combined read 
   await page.goto(`/content/${RT}`)                    // beforeEach seeds the sb-access-token cookie into this context
   const url = `/api/content/${RT}/richtext`
   const okDoc = JSON.stringify({ type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'hi' }] }] })
+  const staleDoc = JSON.stringify({ type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'different' }] }] })
   const before = (await mockCounts()).contentItemRead ?? 0
 
   const bad = await page.request.post(url, { data: { fieldKey: 'body', body: '"not a doc"', expectedRevisionId: RT_REV } })
@@ -1180,12 +1280,16 @@ test('richtext endpoint contract: 422/413/200/409 and exactly one combined read 
   expect(big.status()).toBe(413)                       // over MAX_BODY_BYTES — rejected before parse/read
   const ok = await page.request.post(url, { data: { fieldKey: 'body', body: okDoc, expectedRevisionId: RT_REV } })
   expect(ok.status()).toBe(200)
-  expect((await ok.json()).status).toBe('saved')       // revision advanced on the mock
-  const stale = await page.request.post(url, { data: { fieldKey: 'body', body: okDoc, expectedRevisionId: RT_REV } })
-  expect(stale.status()).toBe(409)                     // RT_REV is now stale -> structured CONFLICT -> 409
+  expect((await ok.json()).status).toBe('saved')       // revision advanced (RT_REV is now stale)
+  // Same payload + now-stale RT_REV -> hash-first idempotency -> 200, NO new revision:
+  const idem = await page.request.post(url, { data: { fieldKey: 'body', body: okDoc, expectedRevisionId: RT_REV } })
+  expect(idem.status()).toBe(200)
+  // DIFFERENT payload + stale RT_REV -> a real optimistic-lock conflict -> 409:
+  const stale = await page.request.post(url, { data: { fieldKey: 'body', body: staleDoc, expectedRevisionId: RT_REV } })
+  expect(stale.status()).toBe(409)
 
   const after = (await mockCounts()).contentItemRead ?? 0
-  expect(after - before).toBe(2)                       // only the 200 + 409 reach the ONE combined read; 422/413 short-circuit
+  expect(after - before).toBe(3)                       // the 200 + idempotent-200 + 409 each do ONE combined read; 422/413 short-circuit
 })
 ```
 
@@ -1240,4 +1344,5 @@ The masking risk — a production `updateContent` conflict masked to `save_faile
 - Endpoint structural validation of persisted state + UTF-8 byte key length + content-disciplined events (F-4) → Task 4. ✅
 - Dirty stays true when the user edits during an in-flight save (F-2) → Task 1. ✅
 - Refresh feedback states + caught GET-failure + deterministic guard install/remove (F-5) → Tasks 6, 8. ✅
-- Review round 2 (R-1…R-5): UUID-shaped fixtures so saves reach 409/200 (R-1) → Tasks 5, 8; item id logged only after UUID validation + GET byte bound (R-2) → Task 4; handler contract (413/422/409/200 + one combined read via `mockCounts`) proven in e2e, `emit` discipline + closed `Outcome` union unit-tested (R-3) → Tasks 4, 8; real listener install/remove/unmount + refresh-state test via `vi.mock('@movp/editor-sdk')` (R-4) → Task 6; executable samples — real yoga `handleRequest` harness, `onReady`-driven TipTap edits, frontend component-test infra (R-5) → Tasks 1, 3, 3G, 6. ✅
+- Review round 2 (R-1…R-5): UUID-shaped fixtures so saves reach 409/200 (R-1) → Tasks 5, 8; item id logged only after UUID validation + GET byte bound (R-2) → Task 4; handler contract (413/422/409/200 + one combined read via `mockCounts`) proven in e2e, `emit` discipline + closed `Outcome` union unit-tested (R-3) → Tasks 4, 8; real listener install/remove/unmount + refresh-state test via `vi.mock('@movp/editor-sdk')` (R-4) → Task 6; executable samples — real yoga `handleRequest` harness, `useEditor` mock-probed TipTap edits (no new production API), frontend component-test infra (R-5) → Tasks 1, 3, 3G, 6. ✅
+- Review round 3 (N-1…N-7): destructive Load-latest forces a remount via `editorEpoch` key (N-1) → Tasks 2, 6; endpoint e2e uses a distinct `staleDoc` for the 409 + keeps a same-payload 200 idempotency case (N-2) → Task 8; `vi.hoisted` in the yoga test (N-3) → Task 3G; endpoint tests mock `env`/`session`/`graphql` and drive `POST`/`GET` directly with a per-outcome console spy (N-4, N-6) → Task 4; `/scenario` reset drops accumulated richtext revisions (N-5) → Task 5; only `@movp/*` added to frontend, tiptap transitive (N-7) → Task 3; `onReady` dropped for `useEditor` mock-probe. ✅
