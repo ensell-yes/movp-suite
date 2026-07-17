@@ -297,6 +297,19 @@ it.each([
   expect(document.body.textContent).toContain('alpha')
   expect(screen.getByRole('button', { name: 'Save content' })).toBeEnabled()
 })
+
+it('clears the host-action error once a retry Save succeeds', async () => {
+  const onSave = vi.fn()
+    .mockResolvedValueOnce({ status: 'conflict' })
+    .mockResolvedValueOnce({ status: 'saved', revisionId: 'r1' })
+  render(<MovpEditor initialBody={BODY_A} onSave={onSave}
+    onRefresh={() => { throw new Error('host fault') }} onLoadLatest={vi.fn()} />)
+  fireEvent.click(await screen.findByRole('button', { name: 'Save content' }))       // -> conflict
+  fireEvent.click(await screen.findByRole('button', { name: 'Refresh revision' }))   // host throws -> alert
+  await screen.findByText('Could not refresh or load latest. Your draft is unchanged.')
+  fireEvent.click(screen.getByRole('button', { name: 'Save content' }))              // retry -> saved
+  await waitFor(() => expect(screen.queryByText(/Could not refresh or load latest/)).toBeNull())
+})
 ```
 
 - [ ] **Step 2: Run to verify it fails**
@@ -338,6 +351,10 @@ In `editor.tsx`, contain both host callbacks before passing them to `ConflictSur
     setHostActionError(false)
     try { onLoadLatest?.() } catch { setHostActionError(true) }
   }, [onLoadLatest])
+
+  // Clear the host-action error once the editor leaves 'conflict' (e.g. a successful retry Save), so a
+  // stale "could not refresh" alert never lingers past the conflict it belonged to.
+  useEffect(() => { if (status !== 'conflict') setHostActionError(false) }, [status])
 
   // ...inside render...
       {status === 'conflict' && (
@@ -1281,7 +1298,7 @@ git commit -m "feat(frontend): RichTextFieldsIsland coordinator over a shared re
 import RichTextFieldsIsland from '../../components/content/RichTextFieldsIsland.tsx'
 ```
 
-- [ ] **Step 2: Render the island for richtext fields and drop them from the textarea branch.** In the field-render loop (`content/[id].astro:327-361`), change the `type === 'richtext'` textarea branch so richtext fields are no longer rendered as form textareas (they leave the form POST). Before the `<form method="post">` (or at the top of the fields section), render one island for ALL richtext fields:
+- [ ] **Step 2: Render the island for richtext fields and drop them from the textarea branch.** In the field-render loop (`content/[id].astro:327-361`), change the `type === 'richtext'` textarea branch so richtext fields are no longer rendered as form textareas (they leave the form POST). Render one island for ALL richtext fields **inside the `content-fields` section (`:323`), immediately before the save `<form>` (`:325`)** — the island's `data-field-control` sections must remain within `content-fields` so the existing `toHaveCount(6)` assertion still holds:
 
 ```astro
         {fields.some((field) => (field.type ?? 'text') === 'richtext') && (
