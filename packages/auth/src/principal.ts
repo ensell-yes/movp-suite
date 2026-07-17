@@ -12,7 +12,7 @@ export type Env = {
 export type PrincipalDeps = { resolvePat?: typeof resolvePatToken }
 
 export type Principal =
-  | { ok: true; userId: string; db: SupabaseClient }
+  | { ok: true; userId: string; db: SupabaseClient; accessToken: string }
   | { ok: false; code: 'missing_token' | 'invalid_token' | 'expired_token' | 'invalid_claims' }
 
 const jwksCache = new Map<string, ReturnType<typeof createRemoteJWKSet>>()
@@ -55,7 +55,7 @@ export async function resolvePrincipal(req: Request, env: Env, deps?: PrincipalD
       global: { headers: { Authorization: `Bearer ${ex.accessToken}` } },
       auth: { persistSession: false },
     })
-    return { ok: true, userId: ex.userId, db }
+    return { ok: true, userId: ex.userId, db, accessToken: ex.accessToken }
   }
 
   let payload: Awaited<ReturnType<typeof jwtVerify>>['payload']
@@ -82,5 +82,5 @@ export async function resolvePrincipal(req: Request, env: Env, deps?: PrincipalD
     auth: { persistSession: false },
   })
 
-  return { ok: true, userId: payload.sub, db }
+  return { ok: true, userId: payload.sub, db, accessToken: token }
 }

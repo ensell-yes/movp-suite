@@ -55,7 +55,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
     db: principal.db,
     userId: principal.userId,
     embedder: new GteSmallProvider(),
-    accessToken: req.headers.get('Authorization')?.replace(/^Bearer\s+/i, ''),
+    accessToken: principal.accessToken,
     assetsFnUrl: `${env.SUPABASE_URL}/functions/v1/content-assets`,
     reportReportingFailure,
   })

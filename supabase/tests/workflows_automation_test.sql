@@ -1,5 +1,5 @@
 begin;
-select plan(28);
+select plan(38);
 
 insert into public.workspace (id, name) values
   ('11111111-1111-1111-1111-111111111111', 'W1'),
@@ -211,6 +211,106 @@ select ok(
        and indexname='task_workflow_idempotency_key_unique'
   ),
   'workflow-created tasks have a unique idempotency index');
+
+select is(
+  has_function_privilege(
+    'authenticated',
+    'public.create_workflow_task_with_revision(uuid,text,uuid,uuid,uuid,date,date,text,text,uuid)',
+    'execute'
+  ),
+  true,
+  'authenticated can execute the idempotent workflow task RPC');
+select is(
+  has_function_privilege(
+    'anon',
+    'public.create_workflow_task_with_revision(uuid,text,uuid,uuid,uuid,date,date,text,text,uuid)',
+    'execute'
+  ),
+  false,
+  'anon cannot execute the idempotent workflow task RPC');
+
+set local role authenticated;
+set local request.jwt.claims = '{"sub":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","role":"authenticated"}';
+select is(
+  (public.create_workflow_task_with_revision(
+    '11111111-1111-1111-1111-111111111111', 'Agent task',
+    (select id from public.task_status_option where workspace_id = '11111111-1111-1111-1111-111111111111' and is_default),
+    (select id from public.task_priority_option where workspace_id = '11111111-1111-1111-1111-111111111111' and is_default), null,
+    null, null, 'Agent body', 'agent-key-1', 'ffffffff-ffff-ffff-ffff-ffffffffffff'
+  ) ->> 'id'),
+  (public.create_workflow_task_with_revision(
+    '11111111-1111-1111-1111-111111111111', 'Agent task replay',
+    (select id from public.task_status_option where workspace_id = '11111111-1111-1111-1111-111111111111' and is_default),
+    (select id from public.task_priority_option where workspace_id = '11111111-1111-1111-1111-111111111111' and is_default), null,
+    null, null, 'Changed body is ignored on replay', 'agent-key-1', 'ffffffff-ffff-ffff-ffff-ffffffffffff'
+  ) ->> 'id'),
+  'same member and idempotency key return the same task');
+select is(
+  (select count(*)::int
+     from public.task
+    where workspace_id = '11111111-1111-1111-1111-111111111111'
+      and workflow_idempotency_key = 'agent-key-1'),
+  1,
+  'same idempotency key creates exactly one task row');
+select is(
+  (select r.author_id
+     from public.task t
+     join public.task_revision r on r.id = t.current_revision_id
+    where t.workspace_id = '11111111-1111-1111-1111-111111111111'
+      and t.workflow_idempotency_key = 'agent-key-1'),
+  'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'::uuid,
+  'authenticated caller cannot forge revision authorship');
+select isnt(
+  (public.create_workflow_task_with_revision(
+    '11111111-1111-1111-1111-111111111111', 'Agent task two',
+    (select id from public.task_status_option where workspace_id = '11111111-1111-1111-1111-111111111111' and is_default),
+    (select id from public.task_priority_option where workspace_id = '11111111-1111-1111-1111-111111111111' and is_default), null,
+    null, null, 'Agent body two', 'agent-key-2', null
+  ) ->> 'id'),
+  (select id::text
+     from public.task
+    where workspace_id = '11111111-1111-1111-1111-111111111111'
+      and workflow_idempotency_key = 'agent-key-1'),
+  'different idempotency keys create different tasks');
+
+set local request.jwt.claims = '{"sub":"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb","role":"authenticated"}';
+select throws_ok(
+  $$select public.create_workflow_task_with_revision(
+    '11111111-1111-1111-1111-111111111111', 'Foreign task',
+    (select id from public.task_status_option where workspace_id = '11111111-1111-1111-1111-111111111111' and is_default),
+    (select id from public.task_priority_option where workspace_id = '11111111-1111-1111-1111-111111111111' and is_default), null,
+    null, null, 'Foreign body', 'agent-key-foreign', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+  )$$,
+  '42501', null,
+  'authenticated non-member cannot create a task in a foreign workspace');
+reset role;
+select is(
+  (select count(*)::int
+     from public.task
+    where workspace_id = '11111111-1111-1111-1111-111111111111'
+      and workflow_idempotency_key = 'agent-key-foreign'),
+  0,
+  'denied foreign-workspace call leaves no task row');
+
+set local role service_role;
+set local request.jwt.claims = '{"role":"service_role"}';
+select ok(
+  (public.create_workflow_task_with_revision(
+    '22222222-2222-2222-2222-222222222222', 'Worker task',
+    (select id from public.task_status_option where workspace_id = '22222222-2222-2222-2222-222222222222' and is_default),
+    (select id from public.task_priority_option where workspace_id = '22222222-2222-2222-2222-222222222222' and is_default), null,
+    null, null, 'Worker body', 'worker-key-1', 'cccccccc-cccc-cccc-cccc-cccccccccccc'
+  ) ->> 'id') is not null,
+  'service-role worker can create an idempotent workflow task');
+reset role;
+select is(
+  (select r.author_id
+     from public.task t
+     join public.task_revision r on r.id = t.current_revision_id
+    where t.workspace_id = '22222222-2222-2222-2222-222222222222'
+      and t.workflow_idempotency_key = 'worker-key-1'),
+  'cccccccc-cccc-cccc-cccc-cccccccccccc'::uuid,
+  'service-role worker retains explicit actor attribution');
 
 delete from movp_internal.movp_jobs;
 insert into movp_internal.movp_jobs (kind, idempotency_key, payload, workspace_id, status, last_error_code)

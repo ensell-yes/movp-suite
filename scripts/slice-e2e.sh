@@ -141,6 +141,10 @@ FN_ENV_FILE="$(mktemp "${TMPDIR:-/tmp}/movp-functions.XXXXXX")"
 # responses during manual debugging.
 printf 'MOVP_JWT_ISSUER=%s\n' "$API_URL/auth/v1" >"$FN_ENV_FILE"
 printf 'RESEND_API_KEY=%s\n' "slice-e2e-placeholder" >>"$FN_ENV_FILE"
+printf 'R2_ACCOUNT_ID=%s\n' "slice-e2e" >>"$FN_ENV_FILE"
+printf 'R2_BUCKET=%s\n' "slice-assets" >>"$FN_ENV_FILE"
+printf 'R2_ACCESS_KEY_ID=%s\n' "slice-access-key" >>"$FN_ENV_FILE"
+printf 'R2_SECRET_ACCESS_KEY=%s\n' "slice-secret-key" >>"$FN_ENV_FILE"
 # This CLI serves every function and accepts no positional function list.
 supabase_local functions serve --env-file "$FN_ENV_FILE" >/tmp/movp-functions.log 2>&1 &
 FN_PID=$!
@@ -850,6 +854,54 @@ AGENTS_MCP_CALL="$(curl -sS "$API_URL/functions/v1/mcp" \
   -H "accept: application/json, text/event-stream" \
   -d "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"note.list\",\"arguments\":{\"workspaceId\":\"$WS\"}}}")"
 echo "$AGENTS_MCP_CALL" | grep -q 'E2E note' || { echo "MCP note.list (PAT auth) returned no real data: $AGENTS_MCP_CALL"; exit 1; }
+
+echo "== [agents] PAT task.create is idempotent by key and discriminates different keys =="
+AGENTS_TASK_CREATE_1="$(curl -sS "$API_URL/functions/v1/mcp" \
+  -H "Authorization: Bearer $AGENTS_PAT" \
+  -H "apikey: $ANON_KEY" \
+  -H "content-type: application/json" \
+  -H "accept: application/json, text/event-stream" \
+  -d "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"task.create\",\"arguments\":{\"workspaceId\":\"$WS\",\"title\":\"PAT idempotent task\",\"description\":\"slice replay contract\",\"idempotencyKey\":\"slice-agent-task-1\"}}}")"
+AGENTS_TASK_CREATE_2="$(curl -sS "$API_URL/functions/v1/mcp" \
+  -H "Authorization: Bearer $AGENTS_PAT" \
+  -H "apikey: $ANON_KEY" \
+  -H "content-type: application/json" \
+  -H "accept: application/json, text/event-stream" \
+  -d "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"tools/call\",\"params\":{\"name\":\"task.create\",\"arguments\":{\"workspaceId\":\"$WS\",\"title\":\"PAT idempotent task replay\",\"description\":\"must return the first task\",\"idempotencyKey\":\"slice-agent-task-1\"}}}")"
+AGENTS_TASK_CREATE_3="$(curl -sS "$API_URL/functions/v1/mcp" \
+  -H "Authorization: Bearer $AGENTS_PAT" \
+  -H "apikey: $ANON_KEY" \
+  -H "content-type: application/json" \
+  -H "accept: application/json, text/event-stream" \
+  -d "{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"tools/call\",\"params\":{\"name\":\"task.create\",\"arguments\":{\"workspaceId\":\"$WS\",\"title\":\"PAT distinct task\",\"idempotencyKey\":\"slice-agent-task-2\"}}}")"
+AGENTS_TASK_ID="$(psql "$DB_URL" -Atqc "select id from public.task where workspace_id='$WS' and workflow_idempotency_key='slice-agent-task-1'")"
+AGENTS_TASK_DISTINCT_ID="$(psql "$DB_URL" -Atqc "select id from public.task where workspace_id='$WS' and workflow_idempotency_key='slice-agent-task-2'")"
+[ -n "$AGENTS_TASK_ID" ] && [ -n "$AGENTS_TASK_DISTINCT_ID" ] || { echo "PAT task.create did not persist both keyed tasks"; exit 1; }
+[ "$AGENTS_TASK_ID" != "$AGENTS_TASK_DISTINCT_ID" ] || { echo "different PAT idempotency keys returned the same task"; exit 1; }
+[ "$(psql "$DB_URL" -Atqc "select count(*) from public.task where workspace_id='$WS' and workflow_idempotency_key='slice-agent-task-1'")" = "1" ] \
+  || { echo "same PAT idempotency key created more than one task"; exit 1; }
+case "$AGENTS_TASK_CREATE_1" in *"$AGENTS_TASK_ID"*) : ;; *) echo "first PAT task.create response omitted its task id"; exit 1;; esac
+case "$AGENTS_TASK_CREATE_2" in *"$AGENTS_TASK_ID"*) : ;; *) echo "replayed PAT task.create response did not return the original task"; exit 1;; esac
+case "$AGENTS_TASK_CREATE_3" in *"$AGENTS_TASK_DISTINCT_ID"*) : ;; *) echo "different-key PAT task.create response omitted its task id"; exit 1;; esac
+
+echo "== [agents] PAT asset issuance forwards the exchanged JWT through MCP and GraphQL =="
+AGENTS_MCP_ASSET="$(curl -sS "$API_URL/functions/v1/mcp" \
+  -H "Authorization: Bearer $AGENTS_PAT" \
+  -H "apikey: $ANON_KEY" \
+  -H "content-type: application/json" \
+  -H "accept: application/json, text/event-stream" \
+  -d "{\"jsonrpc\":\"2.0\",\"id\":6,\"method\":\"tools/call\",\"params\":{\"name\":\"content.issue_asset_upload\",\"arguments\":{\"workspaceId\":\"$WS\",\"filename\":\"pat-mcp-asset.pdf\",\"mime\":\"application/pdf\",\"sizeBytes\":15}}}")"
+AGENTS_MCP_ASSET_ID="$(psql "$DB_URL" -Atqc "select id from public.asset where workspace_id='$WS' and filename='pat-mcp-asset.pdf'")"
+[ -n "$AGENTS_MCP_ASSET_ID" ] || { echo "PAT MCP asset issuance did not persist an asset"; exit 1; }
+case "$AGENTS_MCP_ASSET" in *'uploadUrl'*"$AGENTS_MCP_ASSET_ID"*) : ;; *) echo "PAT MCP asset issuance did not return a signed URL and matching asset id"; exit 1;; esac
+
+AGENTS_GRAPHQL_ASSET="$(post_graphql_as "$AGENTS_PAT" "{\"query\":\"mutation{issueAssetUpload(workspaceId:\\\"$WS\\\",filename:\\\"pat-graphql-asset.pdf\\\",mime:\\\"application/pdf\\\",sizeBytes:16){uploadUrl assetId r2Key}}\"}")"
+AGENTS_GRAPHQL_ASSET_ID="$(printf '%s' "$AGENTS_GRAPHQL_ASSET" | json_get data.issueAssetUpload.assetId || true)"
+AGENTS_GRAPHQL_UPLOAD_URL="$(printf '%s' "$AGENTS_GRAPHQL_ASSET" | json_get data.issueAssetUpload.uploadUrl || true)"
+[ -n "$AGENTS_GRAPHQL_ASSET_ID" ] && [ -n "$AGENTS_GRAPHQL_UPLOAD_URL" ] \
+  || { echo "PAT GraphQL asset issuance did not return a signed URL and asset id"; exit 1; }
+[ "$(psql "$DB_URL" -Atqc "select count(*) from public.asset where id='$AGENTS_GRAPHQL_ASSET_ID' and workspace_id='$WS' and filename='pat-graphql-asset.pdf' and uploaded_by='$USER_ID'")" = "1" ] \
+  || { echo "PAT GraphQL asset issuance persisted incorrect actor or workspace metadata"; exit 1; }
 
 echo "== [agents] MCP over stdio via @movp/mcp-bridge with the PAT: tools/list =="
 AGENTS_STDIO="$(MCP_ENDPOINT="$API_URL/functions/v1/mcp" MCP_PAT="$AGENTS_PAT" MCP_APIKEY="$ANON_KEY" \
