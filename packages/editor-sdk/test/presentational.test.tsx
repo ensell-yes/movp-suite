@@ -5,10 +5,11 @@ import { ConflictSurface } from '../src/conflict-surface.tsx'
 import { MovpEditor } from '../src/editor.tsx'
 
 const noopCommands = { bold: vi.fn(), h1: vi.fn(), bullet: vi.fn(), undo: vi.fn(), redo: vi.fn() }
+const inactive = { bold: false, h1: false, bullet: false }
 
 describe('Toolbar', () => {
   it('renders a labeled toolbar with five accessible controls', () => {
-    const html = renderToStaticMarkup(<Toolbar commands={noopCommands} />)
+    const html = renderToStaticMarkup(<Toolbar commands={noopCommands} active={inactive} />)
     expect(html).toContain('role="toolbar"')
     expect(html).toContain('aria-label="Formatting"')
     for (const label of ['Bold', 'Heading 1', 'Bullet list', 'Undo', 'Redo']) {

@@ -81,6 +81,9 @@ export const REQUIRED_JOBS = {
       'pnpm --filter @movp/cli exec vitest run test/codegen-refusal.test.ts',
     ],
   },
+  'c7-editor-sdk': {
+    runs: ['pnpm --filter @movp/editor-sdk test'],
+  },
   'pack-artifacts': {
     runs: ['bash fixtures/verdaccio-gallery/pack.sh ./artifacts'],
   },

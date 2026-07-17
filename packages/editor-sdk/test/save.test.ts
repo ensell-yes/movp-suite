@@ -6,9 +6,9 @@ describe('classifySaveOutcome', () => {
     const err = new Error('domain.content.update failed [content_update_conflict]')
     expect(classifySaveOutcome(err)).toEqual<SaveResult>({ status: 'conflict' })
   })
-  it('maps a GraphQL CONFLICT extension code to conflict', () => {
+  it('does not infer conflict from a transport extension the content GraphQL path does not emit', () => {
     const err = { extensions: { code: 'CONFLICT' } }
-    expect(classifySaveOutcome(err)).toEqual<SaveResult>({ status: 'conflict' })
+    expect(classifySaveOutcome(err)).toEqual<SaveResult>({ status: 'error', code: 'save_failed' })
   })
   it('normalizes any other error to save_failed and never leaks the message', () => {
     const err = new Error('connect ECONNREFUSED 10.0.0.1:5432 secret-token')

@@ -18,6 +18,12 @@ describe('MovpEditor (mounted)', () => {
     render(<MovpEditor initialBody={BODY_A} onSave={vi.fn()} onRefresh={vi.fn()} />)
     await waitFor(() => expect(screen.getByRole('toolbar', { name: 'Formatting' })).toBeTruthy())
     expect(screen.getByRole('button', { name: 'Save content' })).toBeTruthy()
+    const bold = screen.getByRole('button', { name: 'Bold' })
+    expect(bold.getAttribute('aria-pressed')).toBe('false')
+    expect(screen.getByRole('button', { name: 'Heading 1' }).getAttribute('aria-pressed')).toBe('false')
+    expect(screen.getByRole('button', { name: 'Bullet list' }).getAttribute('aria-pressed')).toBe('false')
+    fireEvent.click(bold)
+    await waitFor(() => expect(bold.getAttribute('aria-pressed')).toBe('true'))
   })
 
   it('encodes the live document and calls onSave once, even on a double click', async () => {
@@ -32,6 +38,36 @@ describe('MovpEditor (mounted)', () => {
     const body = onSave.mock.calls[0][0] as string
     expect(tipTapAdapter.decode(body).type).toBe('doc')
     await screen.findByRole('status')
+  })
+
+  it('returns each successful revision so the host can advance the next expected revision', async () => {
+    let serverRevision = 'r0'
+    let expectedRevision = 'r0'
+    let revisionNumber = 0
+    const onSave = vi.fn(async () => {
+      if (expectedRevision !== serverRevision) return { status: 'conflict' as const }
+      revisionNumber += 1
+      serverRevision = `r${revisionNumber}`
+      return { status: 'saved' as const, revisionId: serverRevision }
+    })
+    const onSaved = vi.fn((revisionId: string) => { expectedRevision = revisionId })
+    render(
+      <MovpEditor
+        initialBody={BODY_A}
+        onSave={onSave}
+        onSaved={onSaved}
+        onRefresh={vi.fn()}
+      />,
+    )
+
+    const save = await screen.findByRole('button', { name: 'Save content' })
+    fireEvent.click(save)
+    await waitFor(() => expect(onSaved).toHaveBeenLastCalledWith('r1'))
+    fireEvent.click(save)
+    await waitFor(() => expect(onSaved).toHaveBeenLastCalledWith('r2'))
+
+    expect(onSave).toHaveBeenCalledTimes(2)
+    expect(screen.queryByRole('alert')).toBeNull()
   })
 
   it('shows the conflict surface when onSave resolves to a conflict', async () => {

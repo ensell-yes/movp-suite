@@ -105,6 +105,35 @@ jobs:
   })
 })
 
+describe('checkCiWiring — the C7 editor SDK gate stays armed', () => {
+  const workflow = `name: ci
+on: [push]
+jobs:
+  c7-editor-sdk:
+    runs-on: ubuntu-latest
+    steps:
+      - run: pnpm --filter @movp/editor-sdk test
+`
+
+  it('registers the job and fails when its package test invocation is removed', () => {
+    const requirement = REQUIRED_JOBS['c7-editor-sdk']
+    assert.ok(requirement)
+    assert.deepEqual(checkCiWiring(fixture('c7-editor-sdk', workflow), {
+      'c7-editor-sdk': requirement,
+    }), [])
+
+    const withoutPackageTests = workflow.replace(
+      '      - run: pnpm --filter @movp/editor-sdk test\n',
+      '',
+    )
+    const problems = checkCiWiring(fixture('c7-editor-sdk-missing-tests', withoutPackageTests), {
+      'c7-editor-sdk': requirement,
+    })
+    assert.equal(problems.length, 1)
+    assert.match(problems[0], /ci_wiring_run_missing: .*pnpm --filter @movp\/editor-sdk test/)
+  })
+})
+
 describe('checkCiWiring — hostile workflows that MUST fail (each false-greened the substring scan)', () => {
   // THE reproduced defect: `y.includes('publishable-versions:')` is true for a COMMENTED-OUT job.
   it('FAILS: the job and its commands appear ONLY inside # comments', () => {
@@ -342,12 +371,12 @@ describe('checkCiWiring — `steps` proves the pin is OWNED by the setup-cli ste
 
 // ==============================================================================================
 // THE ACCEPTANCE TEST (INTERFACES round-10 F1). The round-9 checker passed hand-made fixtures and would
-// have REJECTED the real workflow: its parser matched only `- run: <cmd>` (list-item form), but
+// have REJECTED the real 06e workflow excerpt: its parser matched only `- run: <cmd>` (list-item form), but
 // `template-smoke`'s gate step is a MULTI-KEY step whose `run:` is an indented PROPERTY. A checker that
 // rejects the very workflow it exists to verify makes 06e's required gate permanently RED. Verified: the
 // round-9 parser emits `ci_wiring_run_missing` for the gate.sh step against the YAML below.
 //
-// So this fixture is 06e's ACTUAL ci.yml jobs, pasted VERBATIM — not a simplified stand-in.
+// The 06e-owned jobs remain verbatim; later required jobs are appended so the fixture exercises the current table.
 //
 // GOTCHA when pasting into a JS template literal, TWO characters need a backslash and NOTHING else does:
 //   1. `${` opens an interpolation — GitHub's `${{ … }}` MUST be written `\${{ … }}` (yields `${{ … }}`).
@@ -383,6 +412,11 @@ ${ARMED_JOB}
       - run: pnpm --filter @movp/flows exec vitest run test/schema-injection.test.ts
       - run: pnpm --filter @movp/mcp exec vitest run test/surface-wiring.test.ts
       - run: pnpm --filter @movp/cli exec vitest run test/codegen-refusal.test.ts
+
+  c7-editor-sdk:
+    runs-on: ubuntu-latest
+    steps:
+      - run: pnpm --filter @movp/editor-sdk test
 
   template-gallery:
     runs-on: ubuntu-latest
@@ -444,7 +478,7 @@ ${ARMED_JOB}
         run: bash fixtures/verdaccio-gallery/gate.sh \${{ matrix.template }}
 `
 
-/** 06d's seed entry PLUS the three 06e APPENDS — the table exactly as it stands once 06e lands. */
+/** Every currently registered job, plus explicit copies of the three 06e entries. */
 const FULL_TABLE = {
   ...REQUIRED_JOBS,
   'pack-artifacts': {
@@ -474,8 +508,8 @@ const FULL_TABLE = {
   },
 }
 
-describe("checkCiWiring — 06e's REAL workflow, pasted verbatim (round-10 F1 acceptance)", () => {
-  it('PASSES with ZERO problems against all four real jobs', () => {
+describe('checkCiWiring — registered workflow excerpt (round-10 F1 acceptance)', () => {
+  it('PASSES with ZERO problems against every registered job', () => {
     assert.deepEqual(checkCiWiring(fixture('real-ci', REAL_CI), FULL_TABLE), [])
   })
 

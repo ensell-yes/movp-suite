@@ -12,7 +12,7 @@
 
 - **Candidate selection is settled.** C7.1's report (`docs/superpowers/specs/2026-07-15-c7.1-editor-spike-report.md`) selected **TipTap** under `permissive_only`: all-MIT prod tree, passed idempotent/exact-edit/lifecycle/delivery/stale/boundary/a11y. BlockNote failed delivery + a11y and carries MPL-2.0 copyleft. Use TipTap; introduce no MPL/copyleft dependency.
 - **The byte contract is normative.** Spike design (`docs/superpowers/specs/2026-07-15-c7.1-editor-spike-design.md` §5.2) fixes the canonical inner-JSON algorithm. `richtext` is stored as an **opaque `z.string()`** and production `canonicalize` (`packages/domain/src/content.ts:95-108`) sorts only *outer* `data` keys, so editor idempotency reduces to "is the stored inner string byte-stable across load→save?". Port the algorithm verbatim (Task 2).
-- **Conflict mechanics already exist.** `ContentService.update({ itemId, data, expectedRevisionId? })` (`packages/domain/src/types.ts:177`) maps a stale revision to the error `domain.content.update failed [content_update_conflict]` (`packages/domain/src/content.ts:237`); the GraphQL layer maps the underlying `P0001` to extension code `CONFLICT` (`packages/graphql/src/schema.ts:64-79`). The SDK binds to these *by name only* via `classifySaveOutcome` — it does not import them.
+- **Conflict mechanics already exist.** `ContentService.update({ itemId, data, expectedRevisionId? })` (`packages/domain/src/types.ts:177`) maps a stale revision to the error `domain.content.update failed [content_update_conflict]` (`packages/domain/src/content.ts:237`). The content GraphQL resolver does not currently expose a stable conflict extension, so transport hosts must translate their own conflict response into `{ status: 'conflict' }`; `classifySaveOutcome` recognizes only the domain error string and never imports server packages.
 - **Scope boundary.** This is C7.2 of the C7 breakdown (`docs/superpowers/plans/2026-07-07-movp-stage-c-tdd-breakdown.md:607-616`). The **two-editor domain 409 e2e**, the real `onSave→content.update` binding, the overlay, realtime, and delivery artifacts are C7.3–C7.7 — **out of scope** here. C7.2 proves the component *mounts, saves, surfaces conflict, and reloads* against an injected `onSave` (jsdom, Task 6); the real keystroke-driven bold + two-editor conflict against a live DB is C7.3 Playwright.
 
 ## Global Constraints
@@ -502,9 +502,9 @@ describe('classifySaveOutcome', () => {
     const err = new Error('domain.content.update failed [content_update_conflict]')
     expect(classifySaveOutcome(err)).toEqual<SaveResult>({ status: 'conflict' })
   })
-  it('maps a GraphQL CONFLICT extension code to conflict', () => {
+  it('does not infer conflict from a transport extension the content GraphQL path does not emit', () => {
     const err = { extensions: { code: 'CONFLICT' } }
-    expect(classifySaveOutcome(err)).toEqual<SaveResult>({ status: 'conflict' })
+    expect(classifySaveOutcome(err)).toEqual<SaveResult>({ status: 'error', code: 'save_failed' })
   })
   it('normalizes any other error to save_failed and never leaks the message', () => {
     const err = new Error('connect ECONNREFUSED 10.0.0.1:5432 secret-token')
@@ -538,19 +538,16 @@ export type SaveResult =
   | { status: 'conflict' }
   | { status: 'error'; code: 'save_failed' }
 
-/** The host implements this (server-side, via content.update); the SDK only calls it. */
+/**
+ * The host implements this via content.update. It must translate transport-specific conflicts into
+ * `{ status: 'conflict' }`; transport errors are deliberately not inferred by this client package.
+ */
 export type SaveHandler = (body: string) => Promise<SaveResult>
-
-const hasConflictCode = (value: unknown): boolean => {
-  if (typeof value !== 'object' || value === null) return false
-  const ext = (value as { extensions?: unknown }).extensions
-  return typeof ext === 'object' && ext !== null && (ext as { code?: unknown }).code === 'CONFLICT'
-}
 
 /** Map a caught save error to a SaveResult. Conflict is retryable via refresh; everything else is terminal. */
 export function classifySaveOutcome(err: unknown): SaveResult {
   const message = err instanceof Error ? err.message : ''
-  if (message.includes('content_update_conflict') || hasConflictCode(err)) {
+  if (message.includes('content_update_conflict')) {
     return { status: 'conflict' }
   }
   return { status: 'error', code: 'save_failed' }
@@ -581,7 +578,8 @@ git commit -m "feat(editor-sdk): SaveResult union + normalized classifySaveOutco
 **Interfaces:**
 - Produces:
   - `interface ToolbarCommands { bold(): void; h1(): void; bullet(): void; undo(): void; redo(): void }`
-  - `function Toolbar({ commands }: { commands: ToolbarCommands }): JSX.Element`
+  - `interface ToolbarActiveState { bold: boolean; h1: boolean; bullet: boolean }`
+  - `function Toolbar({ commands, active }: { commands: ToolbarCommands; active: ToolbarActiveState }): JSX.Element`
   - `function ConflictSurface({ onRefresh }: { onRefresh(): void }): JSX.Element`
 
 > **A11y (this repo gates a11y):** the toolbar carries `role="toolbar"` + `aria-label`; each control has an explicit `aria-label`. The conflict surface uses `role="alert"` so it is announced, with a labeled refresh control. These match the spike's passing a11y gate.
@@ -598,10 +596,11 @@ import { Toolbar } from '../src/toolbar.tsx'
 import { ConflictSurface } from '../src/conflict-surface.tsx'
 
 const noopCommands = { bold: vi.fn(), h1: vi.fn(), bullet: vi.fn(), undo: vi.fn(), redo: vi.fn() }
+const inactive = { bold: false, h1: false, bullet: false }
 
 describe('Toolbar', () => {
   it('renders a labeled toolbar with five accessible controls', () => {
-    const html = renderToStaticMarkup(<Toolbar commands={noopCommands} />)
+    const html = renderToStaticMarkup(<Toolbar commands={noopCommands} active={inactive} />)
     expect(html).toContain('role="toolbar"')
     expect(html).toContain('aria-label="Formatting"')
     for (const label of ['Bold', 'Heading 1', 'Bullet list', 'Undo', 'Redo']) {
@@ -636,12 +635,18 @@ export interface ToolbarCommands {
   redo(): void
 }
 
-export function Toolbar({ commands }: { commands: ToolbarCommands }) {
+export interface ToolbarActiveState {
+  bold: boolean
+  h1: boolean
+  bullet: boolean
+}
+
+export function Toolbar({ commands, active }: { commands: ToolbarCommands; active: ToolbarActiveState }) {
   return (
     <div role="toolbar" aria-label="Formatting">
-      <button type="button" aria-label="Bold" onClick={commands.bold}>B</button>
-      <button type="button" aria-label="Heading 1" onClick={commands.h1}>H1</button>
-      <button type="button" aria-label="Bullet list" onClick={commands.bullet}>List</button>
+      <button type="button" aria-label="Bold" aria-pressed={active.bold} onClick={commands.bold}>B</button>
+      <button type="button" aria-label="Heading 1" aria-pressed={active.h1} onClick={commands.h1}>H1</button>
+      <button type="button" aria-label="Bullet list" aria-pressed={active.bullet} onClick={commands.bullet}>List</button>
       <button type="button" aria-label="Undo" onClick={commands.undo}>Undo</button>
       <button type="button" aria-label="Redo" onClick={commands.redo}>Redo</button>
     </div>
@@ -693,7 +698,7 @@ git commit -m "feat(editor-sdk): accessible toolbar + conflict surface"
 - Consumes: `Toolbar`/`ToolbarCommands`, `ConflictSurface`, `tipTapAdapter`, `classifySaveOutcome`/`SaveHandler`/`SaveResult`.
 - Produces:
   - `type EditorStatus = 'idle' | 'saving' | 'saved' | 'conflict' | 'error'`
-  - `interface MovpEditorProps { initialBody: string; onSave: SaveHandler; onRefresh(): void; readOnly?: boolean }`
+  - `interface MovpEditorProps { initialBody: string; onSave: SaveHandler; onSaved?(revisionId: string): void; onRefresh(): void; readOnly?: boolean }`
   - `function MovpEditor(props: MovpEditorProps): JSX.Element | null`
 
 > **Refresh semantics (fixes the "refresh does nothing" defect):** TipTap does NOT react to `content`-prop changes, so refresh must reload imperatively. The host's refresh (wired to `ConflictSurface.onRefresh`) refetches the latest content and passes a **new `initialBody`**; an effect on `initialBody` calls `editor.commands.setContent(decode(initialBody))` and resets status to `idle`, which reloads the doc and clears the conflict surface.
@@ -824,7 +829,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { tipTapAdapter } from './adapter.ts'
 import { classifySaveOutcome, type SaveHandler, type SaveResult } from './save.ts'
 import { ConflictSurface } from './conflict-surface.tsx'
-import { Toolbar, type ToolbarCommands } from './toolbar.tsx'
+import { Toolbar, type ToolbarActiveState, type ToolbarCommands } from './toolbar.tsx'
 
 export type EditorStatus = 'idle' | 'saving' | 'saved' | 'conflict' | 'error'
 
@@ -833,12 +838,14 @@ export interface MovpEditorProps {
   initialBody: string
   /** host-provided save; the host calls content.update server-side and returns a SaveResult */
   onSave: SaveHandler
+  /** successful revision feedback; retain this as the next content.update expectedRevisionId */
+  onSaved?(revisionId: string): void
   /** host-provided reload of the latest content (wired to the conflict Refresh control) */
   onRefresh(): void
   readOnly?: boolean
 }
 
-export function MovpEditor({ initialBody, onSave, onRefresh, readOnly = false }: MovpEditorProps) {
+export function MovpEditor({ initialBody, onSave, onSaved, onRefresh, readOnly = false }: MovpEditorProps) {
   const [status, setStatus] = useState<EditorStatus>('idle')
   const savingRef = useRef(false)
   const editor = useEditor({
@@ -868,12 +875,13 @@ export function MovpEditor({ initialBody, onSave, onRefresh, readOnly = false }:
     let result: SaveResult
     try {
       result = await onSave(tipTapAdapter.encode(editor.getJSON()))
+      if (result.status === 'saved') onSaved?.(result.revisionId)
     } catch (err) {
       result = classifySaveOutcome(err)
     }
     savingRef.current = false
     setStatus(result.status)
-  }, [editor, onSave])
+  }, [editor, onSave, onSaved])
 
   if (!editor) return null
 
@@ -884,10 +892,15 @@ export function MovpEditor({ initialBody, onSave, onRefresh, readOnly = false }:
     undo: () => editor.chain().focus().undo().run(),
     redo: () => editor.chain().focus().redo().run(),
   }
+  const active: ToolbarActiveState = {
+    bold: editor.isActive('bold'),
+    h1: editor.isActive('heading', { level: 1 }),
+    bullet: editor.isActive('bulletList'),
+  }
 
   return (
     <div>
-      {!readOnly && <Toolbar commands={commands} />}
+      {!readOnly && <Toolbar commands={commands} active={active} />}
       {status === 'conflict' && <ConflictSurface onRefresh={onRefresh} />}
       {status === 'error' && <div role="alert">Save failed. Please try again.</div>}
       <EditorContent editor={editor} />
@@ -941,7 +954,7 @@ Expected: FAIL — `src/index.ts` still exports `{}` (Task 1 placeholder).
 export { canonicalizeInnerJson } from './canonical.ts'
 export { INNER_CANONICAL_VERSION, tipTapAdapter, type EditorAdapter, type TipTapDoc } from './adapter.ts'
 export { classifySaveOutcome, type SaveHandler, type SaveResult } from './save.ts'
-export { Toolbar, type ToolbarCommands } from './toolbar.tsx'
+export { Toolbar, type ToolbarActiveState, type ToolbarCommands } from './toolbar.tsx'
 export { ConflictSurface } from './conflict-surface.tsx'
 export { MovpEditor, type EditorStatus, type MovpEditorProps } from './editor.tsx'
 ```
@@ -1081,6 +1094,9 @@ git commit -m "test(editor-sdk): client/server boundary gate over src/"
 **Files:**
 - Modify: `scripts/check-package-artifacts.mjs:6-20` (the `publishable` array)
 - Modify: `scripts/check-publishable-versions.mjs:11-14` (the `PUBLISHABLE` array)
+- Modify: `.github/workflows/ci.yml` (required `c7-editor-sdk` package-test job)
+- Modify: `scripts/check-ci-wiring.mjs` (`REQUIRED_JOBS` entry)
+- Modify: `scripts/test/check-ci-wiring.test.mjs` (missing-step sabotage regression)
 
 **Interfaces:**
 - Produces: `@movp/editor-sdk` is a first-class publishable package (built `dist/` asserted, version pinned to `0.1.0`).
@@ -1122,7 +1138,19 @@ export const PUBLISHABLE = [
 ]
 ```
 
-- [ ] **Step 4: Run the gates**
+- [ ] **Step 4: Arm the package tests in CI**
+
+Add a `c7-editor-sdk` job that performs checkout, pinned pnpm/Node setup, frozen install, then runs exactly:
+
+```yaml
+- run: pnpm --filter @movp/editor-sdk test
+```
+
+Register that exact command under `REQUIRED_JOBS['c7-editor-sdk']`. Add a checker test that removes the run line
+from a fixture and requires `ci_wiring_run_missing`; this is the permanent sabotage proof that the seam audit cannot
+become inert while CI remains green.
+
+- [ ] **Step 5: Run the gates**
 
 Run: `pnpm check:publishable-versions`
 Expected: PASS — `all N @movp publishables at 0.1.0, no 0.0.0 consumer pins` (N incremented by one). If it prints `@movp/editor-sdk is <x>, expected 0.1.0`, fix the package version.
@@ -1135,17 +1163,17 @@ Expected: PASS — packed `@movp/editor-sdk` contains `package/dist/` and its ma
 > `platform`, `create-movp`, and `search`; none applies to `editor-sdk`. Keep PASS as the exact expectation.
 
 Run: `pnpm check:ci-wiring`
-Expected: PASS. No new CI job is required — the SDK's unit/boundary/mounted tests run under `turbo run test`, and typecheck under `turbo run typecheck`, both of which glob `packages/*`.
+Expected: PASS. The dedicated `c7-editor-sdk` job must run `pnpm --filter @movp/editor-sdk test`, and `REQUIRED_JOBS` plus its sabotage test must fail if that invocation is removed. Root typecheck continues to cover the package through `turbo run typecheck`.
 
-- [ ] **Step 5: Full local verification of the package**
+- [ ] **Step 6: Full local verification of the package**
 
 Run: `pnpm --filter @movp/editor-sdk test && pnpm --filter @movp/editor-sdk typecheck`
-Expected: PASS — **32 tests across 8 files**: canonical 10, adapter 7, save 4, presentational 3, public-surface 1, jsdom smoke 1, mounted 5, boundary 1; typecheck clean.
+Expected: PASS — **33 tests across 8 files**: canonical 10, adapter 7, save 4, presentational 3, public-surface 1, jsdom smoke 1, mounted 6, boundary 1; typecheck clean.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-git add scripts/check-package-artifacts.mjs scripts/check-publishable-versions.mjs
+git add .github/workflows/ci.yml scripts/check-package-artifacts.mjs scripts/check-publishable-versions.mjs scripts/check-ci-wiring.mjs scripts/test/check-ci-wiring.test.mjs
 git commit -m "chore(editor-sdk): register with release and version gates"
 ```
 
@@ -1264,8 +1292,8 @@ Expected: exit 0 — no retired harness path remains tracked.
 
 - Dependency approval obtained before install (Task 0).
 - `@movp/editor-sdk` exists as a publishable workspace package at `0.1.0`, installs, builds to `dist/`, and typechecks.
-- Public surface exports: `MovpEditor`, `EditorStatus`, `MovpEditorProps`, `tipTapAdapter`, `canonicalizeInnerJson`, `INNER_CANONICAL_VERSION`, `classifySaveOutcome`, `SaveResult`/`SaveHandler`, `Toolbar`, `ConflictSurface`, `EditorAdapter`, `TipTapDoc`, `ToolbarCommands`.
-- **32 tests green across 8 files:** canonical byte-stability (ported §5.2), adapter shape-validation + idempotency, normalized `classifySaveOutcome` (no message leak), presentational a11y + SSR safety, durable public-surface barrel, jsdom viability, mounted render/save/conflict/refresh/read-only, client-boundary walk.
+- Public surface exports: `MovpEditor`, `EditorStatus`, `MovpEditorProps`, `tipTapAdapter`, `canonicalizeInnerJson`, `INNER_CANONICAL_VERSION`, `classifySaveOutcome`, `SaveResult`/`SaveHandler`, `Toolbar`, `ConflictSurface`, `EditorAdapter`, `TipTapDoc`, `ToolbarCommands`, `ToolbarActiveState`.
+- **33 tests green across 8 files:** canonical byte-stability (ported §5.2), adapter shape-validation + idempotency, normalized `classifySaveOutcome` (no message leak), presentational a11y + SSR safety, durable public-surface barrel, jsdom viability, mounted render/save/revision-feedback/conflict/refresh/read-only, client-boundary walk.
 - The editor mounts, saves via injected `onSave`, prevents concurrent saves, surfaces conflict, and reloads on refresh — all proven mounted.
 - Client boundary proven (no `@movp/domain|auth|graphql`, `@supabase`, or service-role token in `src/`) and sabotage-verified against every import form.
 - `pnpm check:packages`, `pnpm check:publishable-versions`, `pnpm check:ci-wiring` pass; roadmap + stack docs updated in the landing commit.

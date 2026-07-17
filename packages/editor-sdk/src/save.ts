@@ -8,19 +8,16 @@ export type SaveResult =
   | { status: 'conflict' }
   | { status: 'error'; code: 'save_failed' }
 
-/** The host implements this (server-side, via content.update); the SDK only calls it. */
+/**
+ * The host implements this via content.update. It must translate transport-specific conflicts into
+ * `{ status: 'conflict' }`; transport errors are deliberately not inferred by this client package.
+ */
 export type SaveHandler = (body: string) => Promise<SaveResult>
-
-const hasConflictCode = (value: unknown): boolean => {
-  if (typeof value !== 'object' || value === null) return false
-  const ext = (value as { extensions?: unknown }).extensions
-  return typeof ext === 'object' && ext !== null && (ext as { code?: unknown }).code === 'CONFLICT'
-}
 
 /** Map a caught save error to a SaveResult. Conflict is retryable via refresh; everything else is terminal. */
 export function classifySaveOutcome(err: unknown): SaveResult {
   const message = err instanceof Error ? err.message : ''
-  if (message.includes('content_update_conflict') || hasConflictCode(err)) {
+  if (message.includes('content_update_conflict')) {
     return { status: 'conflict' }
   }
   return { status: 'error', code: 'save_failed' }

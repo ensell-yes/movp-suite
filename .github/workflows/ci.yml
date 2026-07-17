@@ -24,6 +24,17 @@ jobs:
       - run: pnpm build
       - run: pnpm typecheck
 
+  c7-editor-sdk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v6
+        with: { version: 9.12.0 }
+      - uses: actions/setup-node@v6
+        with: { node-version: 22, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @movp/editor-sdk test
+
   schema-codegen-unit:
     runs-on: ubuntu-latest
     steps:
