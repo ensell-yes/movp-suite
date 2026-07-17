@@ -1,5 +1,5 @@
 begin;
-select plan(16);
+select plan(23);
 
 select has_function('public', 'create_content_with_revision',
   array['uuid','uuid','text','jsonb','text','text','text'], 'create_content_with_revision exists');
@@ -89,6 +89,53 @@ select is(
      join public.content_item ci on ci.id = r.content_item_id
     where ci.slug = 'about' and r.workspace_id = ci.workspace_id),
   2, 'every revision inherits the item workspace_id (workspace-scoped)');
+
+-- C7.3a hash-first: an identical effective payload is idempotent even with a stale expected revision.
+select public.update_content(
+  (select id from public.content_item where slug = 'about'),
+  '{"title":"About Us"}'::jsonb, 'hash-B', 'About Us', '',
+  '00000000-0000-0000-0000-000000000000');
+select is(
+  (select count(*)::int from public.content_revision r
+     join public.content_item ci on ci.id = r.content_item_id where ci.slug = 'about'),
+  2, 'identical-hash retry with a stale expected revision adds no revision');
+select is(
+  (select r.revision_number::int from public.content_item ci
+     join public.content_revision r on r.id = ci.current_revision_id where ci.slug = 'about'),
+  2, 'identical-hash retry leaves current at revision #2');
+
+-- A DIFFERING payload on a stale expected revision is a conflict (raise_exception -> SQLSTATE P0001).
+select throws_ok(
+  $$ select public.update_content(
+       (select id from public.content_item where slug = 'about'),
+       '{"title":"Different"}'::jsonb, 'hash-C', 'Different', '',
+       '00000000-0000-0000-0000-000000000000') $$,
+  'P0001', 'content_update_conflict',
+  'differing payload on a stale expected revision raises content_update_conflict');
+
+-- The rejected conflict mutated nothing.
+select is(
+  (select count(*)::int from public.content_revision r
+     join public.content_item ci on ci.id = r.content_item_id where ci.slug = 'about'),
+  2, 'a rejected conflict adds no revision');
+select is(
+  (select r.revision_number::int from public.content_item ci
+     join public.content_revision r on r.id = ci.current_revision_id where ci.slug = 'about'),
+  2, 'a rejected conflict leaves current at revision #2');
+
+-- Regression: matching expected revision + a changed hash still creates a new revision.
+select public.update_content(
+  (select id from public.content_item where slug = 'about'),
+  '{"title":"Third"}'::jsonb, 'hash-D', 'Third', '',
+  (select ci.current_revision_id from public.content_item ci where ci.slug = 'about'));
+select is(
+  (select count(*)::int from public.content_revision r
+     join public.content_item ci on ci.id = r.content_item_id where ci.slug = 'about'),
+  3, 'matching expected + changed hash adds revision #3');
+select is(
+  (select r.revision_number::int from public.content_item ci
+     join public.content_revision r on r.id = ci.current_revision_id where ci.slug = 'about'),
+  3, 'matching expected + changed hash advances current to revision #3');
 
 select * from finish();
 rollback;

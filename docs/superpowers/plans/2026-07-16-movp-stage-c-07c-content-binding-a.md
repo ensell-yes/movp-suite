@@ -588,6 +588,10 @@ select is(
   (select count(*)::int from public.content_revision r
      join public.content_item ci on ci.id = r.content_item_id where ci.slug = 'about'),
   3, 'matching expected + changed hash adds revision #3');
+select is(
+  (select r.revision_number::int from public.content_item ci
+     join public.content_revision r on r.id = ci.current_revision_id where ci.slug = 'about'),
+  3, 'matching expected + changed hash advances current to revision #3');
 ```
 
 - [ ] **Step 4: Run the DB gate (RED before the migration is applied, GREEN after)**
