@@ -198,9 +198,29 @@ describe('GET returns the field body + revision', () => {
 })
 
 describe('boundedText', () => {
-  it('returns null when the stream exceeds the cap', async () => {
-    const big = new Request('http://x', { method: 'POST', body: 'x'.repeat(300_000) })
-    expect(await boundedText(big, 262_144)).toBeNull()
+  it('drains without cancelling when the stream exceeds the cap', async () => {
+    let step = 0
+    let trailingChunkRead = false
+    let cancelled = false
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (step === 0) controller.enqueue(new Uint8Array(4))
+        else if (step === 1) controller.enqueue(new Uint8Array(4))
+        else if (step === 2) {
+          trailingChunkRead = true
+          controller.enqueue(new Uint8Array(4))
+        } else controller.close()
+        step += 1
+      },
+      cancel() {
+        cancelled = true
+      },
+    })
+    const request = { body: stream } as Request
+
+    expect(await boundedText(request, 5)).toBeNull()
+    expect(trailingChunkRead).toBe(true)
+    expect(cancelled).toBe(false)
   })
 
   it('returns the decoded body under the cap', async () => {
