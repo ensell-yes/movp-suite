@@ -29,10 +29,12 @@ export function MovpEditor({
   onSave,
   onSaved,
   onRefresh,
+  onLoadLatest,
   onDirtyChange,
   readOnly = false,
 }: MovpEditorProps) {
   const [status, setStatus] = useState<EditorStatus>('idle')
+  const [hostActionError, setHostActionError] = useState(false)
   const savingRef = useRef(false)
   const baselineRef = useRef('')
   const dirtyRef = useRef<boolean | null>(null)
@@ -99,6 +101,28 @@ export function MovpEditor({
     editor?.setEditable(!readOnly)
   }, [editor, readOnly])
 
+  const safeRefresh = useCallback(() => {
+    setHostActionError(false)
+    try {
+      onRefresh()
+    } catch {
+      setHostActionError(true)
+    }
+  }, [onRefresh])
+
+  const safeLoadLatest = useCallback(() => {
+    setHostActionError(false)
+    try {
+      onLoadLatest?.()
+    } catch {
+      setHostActionError(true)
+    }
+  }, [onLoadLatest])
+
+  useEffect(() => {
+    if (status !== 'conflict') setHostActionError(false)
+  }, [status])
+
   const save = useCallback(async () => {
     if (!editor || savingRef.current) return
     savingRef.current = true
@@ -146,7 +170,15 @@ export function MovpEditor({
   return (
     <div>
       {!readOnly && <Toolbar commands={commands} active={active} />}
-      {status === 'conflict' && <ConflictSurface onRefresh={onRefresh} />}
+      {status === 'conflict' && (
+        <ConflictSurface
+          onRefresh={safeRefresh}
+          onLoadLatest={onLoadLatest ? safeLoadLatest : undefined}
+        />
+      )}
+      {hostActionError && (
+        <div role="alert">Could not refresh or load latest. Your draft is unchanged.</div>
+      )}
       {status === 'error' && <div role="alert">Save failed. Please try again.</div>}
       <EditorContent editor={editor} />
       {!readOnly && (

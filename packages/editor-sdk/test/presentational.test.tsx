@@ -22,7 +22,8 @@ describe('ConflictSurface', () => {
   it('renders an alert with a refresh affordance', () => {
     const html = renderToStaticMarkup(<ConflictSurface onRefresh={() => {}} />)
     expect(html).toContain('role="alert"')
-    expect(html).toContain('aria-label="Refresh and reload latest content"')
+    expect(html).toContain('aria-label="Refresh revision"')
+    expect(html).not.toContain('Load latest field')
   })
 })
 

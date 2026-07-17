@@ -7,10 +7,6 @@ import { MovpEditor } from '../src/editor.tsx'
 const BODY_A = tipTapAdapter.encode({
   type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'alpha' }] }],
 })
-const BODY_B = tipTapAdapter.encode({
-  type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'bravo' }] }],
-})
-
 afterEach(cleanup)
 
 describe('MovpEditor (mounted)', () => {
@@ -86,21 +82,62 @@ describe('MovpEditor (mounted)', () => {
     render(<MovpEditor initialBody={BODY_A} onSave={onSave} onRefresh={vi.fn()} />)
     fireEvent.click(await screen.findByRole('button', { name: 'Save content' }))
     await screen.findByRole('alert')
-    expect(screen.getByRole('button', { name: 'Refresh and reload latest content' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Refresh revision' })).toBeTruthy()
   })
 
-  it('requests refresh, then reloads the new body and clears the conflict', async () => {
+  it('conflict keeps the draft and offers refresh + load-latest without replacing content', async () => {
     const onSave = vi.fn().mockResolvedValue({ status: 'conflict' })
     const onRefresh = vi.fn()
-    const { rerender } = render(
-      <MovpEditor initialBody={BODY_A} onSave={onSave} onRefresh={onRefresh} />,
+    const onLoadLatest = vi.fn()
+    render(
+      <MovpEditor
+        initialBody={BODY_A}
+        onSave={onSave}
+        onRefresh={onRefresh}
+        onLoadLatest={onLoadLatest}
+      />,
     )
     fireEvent.click(await screen.findByRole('button', { name: 'Save content' }))
-    fireEvent.click(await screen.findByRole('button', { name: 'Refresh and reload latest content' }))
+    await screen.findByRole('alert')
+    expect(document.body.textContent).toContain('alpha')
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh revision' }))
     expect(onRefresh).toHaveBeenCalledTimes(1)
-    rerender(<MovpEditor initialBody={BODY_B} onSave={onSave} onRefresh={onRefresh} />)
-    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull())
-    await waitFor(() => expect(document.body.textContent).toContain('bravo'))
+    expect(document.body.textContent).toContain('alpha')
+    fireEvent.click(screen.getByRole('button', { name: 'Load latest field and discard my changes' }))
+    expect(onLoadLatest).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([
+    ['Refresh revision', { onRefresh: () => { throw new Error('refresh host fault') }, onLoadLatest: vi.fn() }],
+    ['Load latest field and discard my changes', { onRefresh: vi.fn(), onLoadLatest: () => { throw new Error('load host fault') } }],
+  ] as const)('contains a throwing host callback from %s and keeps the draft', async (button, callbacks) => {
+    const onSave = vi.fn().mockResolvedValue({ status: 'conflict' })
+    render(<MovpEditor initialBody={BODY_A} onSave={onSave} {...callbacks} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Save content' }))
+    fireEvent.click(await screen.findByRole('button', { name: button }))
+    await screen.findByText('Could not refresh or load latest. Your draft is unchanged.')
+    expect(document.body.textContent).toContain('alpha')
+    const save = screen.getByRole('button', { name: 'Save content' }) as HTMLButtonElement
+    expect(save.disabled).toBe(false)
+  })
+
+  it('clears the host-action error once a retry Save succeeds', async () => {
+    const onSave = vi.fn()
+      .mockResolvedValueOnce({ status: 'conflict' })
+      .mockResolvedValueOnce({ status: 'saved', revisionId: 'r1' })
+    render(
+      <MovpEditor
+        initialBody={BODY_A}
+        onSave={onSave}
+        onRefresh={() => { throw new Error('host fault') }}
+        onLoadLatest={vi.fn()}
+      />,
+    )
+    fireEvent.click(await screen.findByRole('button', { name: 'Save content' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Refresh revision' }))
+    await screen.findByText('Could not refresh or load latest. Your draft is unchanged.')
+    fireEvent.click(screen.getByRole('button', { name: 'Save content' }))
+    await waitFor(() => expect(screen.queryByText(/Could not refresh or load latest/)).toBeNull())
   })
 
   it('hides the toolbar and save control in read-only mode', async () => {
