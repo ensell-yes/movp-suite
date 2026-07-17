@@ -13,10 +13,10 @@
 - **Precondition:** C7.3a is merged. This plan consumes `@movp/richtext` (`normalizeToCanonicalDoc`, `isDocShape`, `canonicalizeInnerJson`) and the hash-first `update_content`. Before starting, run the **reconciliation checkpoint** below.
 - Client-safe boundary (enforced by `scripts/check-boundary.sh` over all of `templates/`): the island and any component MUST NOT import `@movp/auth`, `@movp/domain`, or reference `service_role`/`SERVICE_ROLE_KEY`/`SUPABASE_SERVICE_ROLE`. Islands reach the server only through the API route + `gqlRequest`.
 - API routes use the real pattern: `export const POST: APIRoute = async ({ request, cookies }) => { … }`, `getSessionToken(cookies)`, `readServerEnv()`, `gqlRequest(opts, query, vars)`, and `Response.json(body, { status })`. Do NOT use `Astro.cookies` or `new Response(JSON.stringify(...))`.
-- Conflict is recognized by **message substring** `content_update_conflict` on a `{ ok: false }` `gqlRequest` result (the existing page pattern, `content/[id].astro:124-130`), NOT by an extension `code`.
+- The domain's internal `content_update_conflict` error is sanitized at the GraphQL boundary into `extensions.code === 'CONFLICT'`; frontend callers classify only the surfaced `errorCode`, never message text.
 - `MAX_BODY_BYTES = 262_144` (256 KiB). Bound the request stream BEFORE buffering (untrusted-I/O rule).
 - Observability: emit exactly one content-disciplined event per POST outcome; never log the body, the token, or an unvalidated `fieldKey`.
-- `onSave`/`onSaved`/`onLoadLatest`/`onDirtyChange` host callbacks are contained: a throwing host callback must not corrupt SDK state (the F5 pattern, already in `editor.tsx`).
+- `onSave`/`onSaved`/`onRefresh`/`onLoadLatest`/`onDirtyChange` host callbacks are contained: a throwing host callback must not corrupt SDK state (the F5 pattern, already in `editor.tsx`).
 
 ### Reconciliation checkpoint (run BEFORE Task 1)
 
@@ -39,13 +39,13 @@ If any differ (export name, conflict string, migration name), update the affecte
 - `packages/editor-sdk/src/editor.tsx` (modify) — add `onDirtyChange` + `onLoadLatest`; dirty baseline + reconciliation timer.
 - `packages/editor-sdk/src/conflict-surface.tsx` (modify) — optional destructive "Load latest field" action + reworded copy.
 - `packages/editor-sdk/test/dirty-signal.test.tsx` (new) — dirty-signal tests; `packages/editor-sdk/test/mounted.test.tsx` (modify) — conflict-action tests.
-- `templates/frontend-astro/package.json` (modify) — add SDK + richtext + tiptap deps.
+- `templates/frontend-astro/package.json` (modify) — add SDK + richtext runtime deps and component-test devDeps; TipTap remains transitive through the SDK.
 - `templates/frontend-astro/src/pages/api/content/[id]/richtext.ts` (new) — the save/read endpoint.
 - `templates/frontend-astro/src/pages/api/content/[id]/richtext.test.ts` (new) — endpoint unit tests.
 - `templates/frontend-astro/src/components/content/RichTextFieldsIsland.tsx` (new) — coordinator island.
 - `templates/frontend-astro/src/components/content/RichTextFieldsIsland.test.tsx` (new) — island unit test.
 - `templates/frontend-astro/src/pages/content/[id].astro` (modify) — mount the island for richtext fields.
-- `templates/frontend-astro/tests/mock/graphql-mock.mjs` (modify) — stateful `updateContent` + a richtext-primary fixture + a `/counts` read-counter.
+- `templates/frontend-astro/tests/mock/graphql-mock.mjs` (modify) — token-scoped stateful `updateContent` + a richtext-primary fixture + a `/counts` read-counter.
 - `templates/frontend-astro/tests/e2e/content.spec.ts` (modify) — two-editor + two-field + dirty-guard tests.
 
 ---
@@ -92,9 +92,10 @@ async function mount(props: Omit<Parameters<typeof MovpEditor>[0], never>): Prom
 }
 
 describe('MovpEditor dirty signal', () => {
-  it('is clean at mount and dirty immediately on a doc-changing edit', async () => {
+  it('emits clean at mount and dirty immediately on a doc-changing edit', async () => {
     const onDirtyChange = vi.fn()
     const ed = await mount({ initialBody: BODY_A, onSave: vi.fn(), onRefresh: vi.fn(), onDirtyChange })
+    await waitFor(() => expect(onDirtyChange).toHaveBeenLastCalledWith(false))
     onDirtyChange.mockClear()
     act(() => { ed.commands.insertContent(' x') })
     expect(onDirtyChange).toHaveBeenLastCalledWith(true)        // immediate, before reconciliation
@@ -165,7 +166,8 @@ Inside `MovpEditor`, add a baseline ref, a dirty ref, and a reconciliation timer
 
 ```tsx
   const baselineRef = useRef<string>('')
-  const dirtyRef = useRef(false)
+  // null ensures the first loaded document emits the promised initial clean state.
+  const dirtyRef = useRef<boolean | null>(null)
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const emitDirty = useCallback((next: boolean) => {
@@ -282,6 +284,19 @@ it('conflict keeps the draft and offers refresh + load-latest without replacing 
   fireEvent.click(screen.getByRole('button', { name: 'Load latest field and discard my changes' }))
   expect(onLoadLatest).toHaveBeenCalledTimes(1)
 })
+
+it.each([
+  ['Refresh revision', { onRefresh: () => { throw new Error('refresh host fault') }, onLoadLatest: vi.fn() }],
+  ['Load latest field and discard my changes', { onRefresh: vi.fn(), onLoadLatest: () => { throw new Error('load host fault') } }],
+] as const)('contains a throwing host callback from %s and keeps the draft', async (button, callbacks) => {
+  const onSave = vi.fn().mockResolvedValue({ status: 'conflict' })
+  render(<MovpEditor initialBody={BODY_A} onSave={onSave} {...callbacks} />)
+  fireEvent.click(await screen.findByRole('button', { name: 'Save content' }))
+  fireEvent.click(await screen.findByRole('button', { name: button }))
+  await screen.findByText('Could not refresh or load latest. Your draft is unchanged.')
+  expect(document.body.textContent).toContain('alpha')
+  expect(screen.getByRole('button', { name: 'Save content' })).toBeEnabled()
+})
 ```
 
 - [ ] **Step 2: Run to verify it fails**
@@ -310,10 +325,25 @@ export function ConflictSurface({ onRefresh, onLoadLatest }: { onRefresh(): void
 }
 ```
 
-In `editor.tsx`, pass `onLoadLatest` through to the rendered `ConflictSurface`:
+In `editor.tsx`, contain both host callbacks before passing them to `ConflictSurface`. Keep this error separate from the save status: a synchronous host fault is loud, but the editor stays in `conflict` so the draft and retry actions remain available.
 
 ```tsx
-      {status === 'conflict' && <ConflictSurface onRefresh={onRefresh} onLoadLatest={onLoadLatest} />}
+  const [hostActionError, setHostActionError] = useState(false)
+
+  const safeRefresh = useCallback(() => {
+    setHostActionError(false)
+    try { onRefresh() } catch { setHostActionError(true) }
+  }, [onRefresh])
+  const safeLoadLatest = useCallback(() => {
+    setHostActionError(false)
+    try { onLoadLatest?.() } catch { setHostActionError(true) }
+  }, [onLoadLatest])
+
+  // ...inside render...
+      {status === 'conflict' && (
+        <ConflictSurface onRefresh={safeRefresh} onLoadLatest={onLoadLatest ? safeLoadLatest : undefined} />
+      )}
+      {hostActionError && <div role="alert">Could not refresh or load latest. Your draft is unchanged.</div>}
 ```
 
 > **Invariant (spec §5):** the editor document equals the user's draft while `status==='conflict'` until the host calls `onLoadLatest` (which changes `initialBody` → `setContent`). `onRefresh` only re-syncs the host's revision; it must not change `initialBody`. A retry Save is available directly from the conflict state (the Save button is only disabled while `status==='saving'`).
@@ -446,34 +476,25 @@ describe('updateContent conflict boundary', () => {
 Run: `pnpm --filter @movp/graphql test`
 Expected: FAIL — the conflict is currently masked to `INTERNAL_SERVER_ERROR`/`"Unexpected error."`.
 
-- [ ] **Step 3: Map the conflict in the resolver.** `GraphQLError` is already imported in `schema.ts` (used at `:79`). Wrap the `updateContent` resolver (`:1518-1530`) so a domain `content_update_conflict` becomes a sanitized structured error; other errors propagate unchanged (still masked):
+- [ ] **Step 3: Map the conflict in the resolver.** `GraphQLError` is already imported in `schema.ts` (used at `:79`). Make a targeted edit to the existing `updateContent` resolver (`:1518-1530`): retain its surrounding Pothos field/signature unchanged and replace only its resolver body with the following. A domain `content_update_conflict` becomes a sanitized structured error; other errors propagate unchanged (still masked):
 
 ```ts
-    builder.mutationField('updateContent', (t: any) =>
-      t.field({
-        type: contentItemRef,
-        complexity: 10,
-        args: { id: t.arg.id({ required: true }), data: t.arg.string({ required: true }), expectedRevisionId: t.arg.id({ required: false }) },
-        resolve: async (_r: unknown, a: any, ctx: GraphQLContext) => {
-          try {
-            return await domainFrom(ctx).content.update({
-              itemId: String(a.id),
-              data: JSON.parse(String(a.data)),
-              expectedRevisionId: a.expectedRevisionId ? String(a.expectedRevisionId) : undefined,
-            })
-          } catch (error) {
-            if (error instanceof Error && error.message.includes('content_update_conflict')) {
-              throw new GraphQLError('This content was updated by someone else.', { extensions: { code: 'CONFLICT' } })
-            }
-            throw error   // ordinary errors stay masked by maskMovpError
-          }
-        },
-      }),
-    )
+try {
+  return await domainFrom(ctx).content.update({
+    itemId: String(a.id),
+    data: JSON.parse(String(a.data)),
+    expectedRevisionId: a.expectedRevisionId ? String(a.expectedRevisionId) : undefined,
+  })
+} catch (error) {
+  if (error instanceof Error && error.message.includes('content_update_conflict')) {
+    throw new GraphQLError('This content was updated by someone else.', { extensions: { code: 'CONFLICT' } })
+  }
+  throw error   // ordinary errors stay masked by maskMovpError
+}
 ```
 
 > **Gotcha:** an intentionally-thrown `GraphQLError` with `extensions` is NOT masked by `maskError` (that is exactly how the admin path at `schema.ts:64-80` surfaces `CONFLICT`). A plain `throw error` remains masked. Do not widen the `catch` to re-wrap non-conflict errors.
-> **On `(t: any)`/`a: any`:** kept to match `schema.ts` — EVERY mutation field in that file is typed `(t: any) => … resolve: (_r, a: any, ctx) =>` (Pothos builder types are not written explicitly anywhere in the file). This is deliberate consistency with the surrounding code, not a new `any`; typing this one resolver differently would diverge from the file's established pattern. If a repo-wide Pothos-typing refactor is desired, it is out of scope for C7.3.
+> **Type rule:** do not add or reproduce `any` annotations while making this focused edit. The existing surrounding signature is outside this task; the new catch body narrows `error` from `unknown` with `instanceof Error`.
 
 - [ ] **Step 4: Surface the extension code in the frontend client.** In `templates/frontend-astro/src/lib/graphql.ts`, add `errorCode?: string` to the `ok:false` variant of `GqlResult`, and populate it from the first field error that carries a code (the parser already extracts `extensions.code` into `GqlFieldError.code`):
 
@@ -489,13 +510,13 @@ Because the resolver now emits a SANITIZED message, the **existing** page's mess
 
 ```ts
 function saveErrorMessage(result: { code: string; message?: string; errorCode?: string }): string {
-  if (result.errorCode === 'CONFLICT' || (result.message ?? '').includes('content_update_conflict')) {
+  if (result.errorCode === 'CONFLICT') {
     return 'This content was changed by someone else. Reload to see the latest, then reapply your edits.'
   }
   return 'Could not save. Try again.'
 }
 ```
-> The `|| message.includes(...)` clause is a belt-and-suspenders fallback; the `errorCode` path is authoritative.
+Do not retain the old message-substring fallback: the structured code is the single public contract, and Task 4 tests that leaked message text alone is not treated as a conflict.
 
 - [ ] **Step 5: Run to verify it passes**
 
@@ -528,9 +549,13 @@ git commit -m "fix(graphql): surface content-update conflict as sanitized CONFLI
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 // Mock the server-only modules so importing the route never evaluates `cloudflare:workers`.
-const h = vi.hoisted(() => ({ token: 'tok' as string | null, gql: vi.fn() }))
+const h = vi.hoisted(() => ({
+  token: 'tok' as string | null,
+  gql: vi.fn(),
+  env: vi.fn(() => ({ graphqlEndpoint: 'http://x/graphql', workspaceId: 'w', supabaseUrl: 'http://x', supabaseAnonKey: 'anon' })),
+}))
 vi.mock('../../../../lib/env.ts', () => ({
-  readServerEnv: () => ({ graphqlEndpoint: 'http://x/graphql', workspaceId: 'w', supabaseUrl: 'http://x', supabaseAnonKey: 'anon' }),
+  readServerEnv: () => h.env(),
 }))
 vi.mock('../../../../lib/session.ts', () => ({ getSessionToken: () => h.token }))
 vi.mock('../../../../lib/graphql.ts', () => ({ gqlRequest: h.gql }))
@@ -546,8 +571,22 @@ const itemOk = { ok: true, data: { contentItem: {
 } } }
 
 let logs: string[] = []
-afterEach(() => { vi.restoreAllMocks(); h.token = 'tok'; h.gql.mockReset() })
+afterEach(() => {
+  vi.restoreAllMocks()
+  h.token = 'tok'
+  h.gql.mockReset()
+  h.env.mockReset()
+  h.env.mockReturnValue({ graphqlEndpoint: 'http://x/graphql', workspaceId: 'w', supabaseUrl: 'http://x', supabaseAnonKey: 'anon' })
+})
 const spyLogs = () => { logs = []; vi.spyOn(console, 'log').mockImplementation((l: unknown) => { logs.push(String(l)) }) }
+const expectEvent = (outcome: string) => {
+  expect(logs).toHaveLength(1)
+  const line = JSON.parse(logs[0]!) as Record<string, unknown>
+  expect(line.outcome).toBe(outcome)
+  expect(logs[0]).not.toContain('tok')
+  expect(logs[0]).not.toContain('"text":"hi"')
+  return line
+}
 const call = (fn: typeof POST, id: string, init: RequestInit & { url?: string }) =>
   fn({ params: { id }, cookies: {}, request: new Request(init.url ?? `http://x/api/content/${id}/richtext`, init) } as unknown as Parameters<typeof POST>[0])
 const post = (body: unknown, id = ITEM) => call(POST, id, { method: 'POST', body: JSON.stringify(body) })
@@ -556,50 +595,53 @@ describe('POST outcomes — exactly one content-disciplined event each', () => {
   it('401 when the session cookie is missing', async () => {
     h.token = null; spyLogs()
     const res = await post({ fieldKey: 'body', body: okDoc, expectedRevisionId: REV })
-    expect(res.status).toBe(401); expect(logs).toHaveLength(1)
-    expect(JSON.parse(logs[0]!).outcome).toBe('unauthorized')
+    expect(res.status).toBe(401); expectEvent('unauthorized')
   })
   it('422 for a non-doc body, before any upstream read', async () => {
     spyLogs()
     const res = await post({ fieldKey: 'body', body: '"nope"', expectedRevisionId: REV })
     expect(res.status).toBe(422); expect(h.gql).not.toHaveBeenCalled()
-    expect(JSON.parse(logs[0]!).outcome).toBe('validation')
+    expectEvent('validation')
   })
   it('413 for an oversized body, before parse/read', async () => {
     spyLogs()
     const res = await post({ fieldKey: 'body', body: okDoc + ' '.repeat(300_000), expectedRevisionId: REV })
     expect(res.status).toBe(413); expect(h.gql).not.toHaveBeenCalled()
-    expect(JSON.parse(logs[0]!).outcome).toBe('too_large')
+    expectEvent('too_large')
   })
   it('404 when the combined read returns no item', async () => {
     h.gql.mockResolvedValueOnce({ ok: true, data: { contentItem: null } }); spyLogs()
     expect((await post({ fieldKey: 'body', body: okDoc, expectedRevisionId: REV })).status).toBe(404)
+    expectEvent('not_found')
   })
   it('500 when persisted state is structurally malformed (quarantine, not crash)', async () => {
     h.gql.mockResolvedValueOnce({ ok: true, data: { contentItem: {
       data: 'not json', current_revision_id: REV, content_type: { field_schema: '[{"name":"body","type":"richtext"}]' } } } }); spyLogs()
     expect((await post({ fieldKey: 'body', body: okDoc, expectedRevisionId: REV })).status).toBe(500)
+    expectEvent('error')
   })
   it('422 for a non-richtext fieldKey — and the key is NOT logged', async () => {
     h.gql.mockResolvedValueOnce(itemOk); spyLogs()
     const res = await post({ fieldKey: 'nope', body: okDoc, expectedRevisionId: REV })
-    expect(res.status).toBe(422); expect(JSON.parse(logs[0]!).field_key).toBeUndefined()
+    expect(res.status).toBe(422); expect(expectEvent('validation').field_key).toBeUndefined()
   })
   it('409 on a structured CONFLICT from the write', async () => {
     h.gql.mockResolvedValueOnce(itemOk).mockResolvedValueOnce({ ok: false, code: 'graphql_error', errorCode: 'CONFLICT' }); spyLogs()
     const res = await post({ fieldKey: 'body', body: okDoc, expectedRevisionId: REV })
     expect(res.status).toBe(409); expect(await res.json()).toEqual({ status: 'conflict' })
-    expect(JSON.parse(logs[0]!).outcome).toBe('conflict')
+    expectEvent('conflict')
   })
   it('200 on success — new revision id, ONE combined read, no payload in the event', async () => {
     h.gql.mockResolvedValueOnce(itemOk).mockResolvedValueOnce({ ok: true, data: { updateContent: { current_revision_id: 'rNEW' } } }); spyLogs()
     const res = await post({ fieldKey: 'body', body: okDoc, expectedRevisionId: REV })
     expect(res.status).toBe(200); expect(await res.json()).toEqual({ status: 'saved', revisionId: 'rNEW' })
     expect(h.gql).toHaveBeenCalledTimes(2)                 // one combined read + one write
-    expect(logs).toHaveLength(1)
-    const line = JSON.parse(logs[0]!)
-    expect(line.outcome).toBe('saved'); expect(line.field_key).toBe('body')
-    expect(JSON.stringify(line)).not.toContain('hi')       // the event never carries the doc text
+    expect(expectEvent('saved').field_key).toBe('body')
+  })
+  it('500 + one error event when a request-bound dependency throws unexpectedly', async () => {
+    h.env.mockImplementationOnce(() => { throw new Error('env unavailable') }); spyLogs()
+    const res = await post({ fieldKey: 'body', body: okDoc, expectedRevisionId: REV })
+    expect(res.status).toBe(500); expectEvent('error')
   })
 })
 
@@ -608,6 +650,7 @@ describe('GET returns the field body + revision', () => {
     h.gql.mockResolvedValueOnce(itemOk); spyLogs()
     const res = await call(GET, ITEM, { method: 'GET', url: `http://x/api/content/${ITEM}/richtext?fieldKey=body` })
     expect(res.status).toBe(200); expect(await res.json()).toEqual({ body: '', revisionId: REV })
+    expectEvent('read_ok')
   })
 })
 
@@ -672,7 +715,7 @@ describe('emit content discipline', () => {
 
 - [ ] **Step 2: Run to verify it fails**
 
-Run: `pnpm --filter @movp/frontend-astro exec vitest run src/pages/api/content/[id]/richtext.test.ts`
+Run: `pnpm --filter @movp/frontend-astro exec vitest run "src/pages/api/content/[id]/richtext.test.ts"`
 Expected: FAIL — module not found.
 
 - [ ] **Step 3: Implement the route** `templates/frontend-astro/src/pages/api/content/[id]/richtext.ts`:
@@ -762,73 +805,84 @@ export const POST: APIRoute = async ({ params, request, cookies }) => {
   const startedAt = Date.now()
   const id = String(params.id ?? '')
   const vid = UUID.test(id) ? id : undefined   // log the id ONLY once it is a valid UUID (content discipline)
-  const token = getSessionToken(cookies)
-  if (!token) { emit({ outcome: 'unauthorized', startedAt }); return Response.json({ status: 'error', code: 'auth_error' }, { status: 401 }) }
+  try {
+    const token = getSessionToken(cookies)
+    if (!token) { emit({ outcome: 'unauthorized', startedAt }); return Response.json({ status: 'error', code: 'auth_error' }, { status: 401 }) }
 
-  const raw = await boundedText(request, MAX_BODY_BYTES)
-  if (raw === null) { emit({ outcome: 'too_large', itemId: vid, startedAt }); return Response.json({ status: 'error', code: 'body_too_large' }, { status: 413 }) }
+    const raw = await boundedText(request, MAX_BODY_BYTES)
+    if (raw === null) { emit({ outcome: 'too_large', itemId: vid, startedAt }); return Response.json({ status: 'error', code: 'body_too_large' }, { status: 413 }) }
 
-  let input: { fieldKey?: unknown; body?: unknown; expectedRevisionId?: unknown }
-  try { input = JSON.parse(raw || '{}') } catch { input = {} }
-  const fieldKey = typeof input.fieldKey === 'string' ? input.fieldKey : ''
-  const body = typeof input.body === 'string' ? input.body : ''
-  const expectedRevisionId = typeof input.expectedRevisionId === 'string' ? input.expectedRevisionId : ''
-  const invalid = !UUID.test(id) || !UUID.test(expectedRevisionId) || !fieldKey || fieldKeyBytes(fieldKey) > 256
-  let parsedBody: unknown
-  try { parsedBody = JSON.parse(body) } catch { parsedBody = undefined }
-  // Do NOT log the unvalidated fieldKey on a validation reject.
-  if (invalid || !isDocShape(parsedBody)) { emit({ outcome: 'validation', itemId: vid, startedAt }); return Response.json({ status: 'error', code: 'invalid_request' }, { status: 422 }) }
+    let input: { fieldKey?: unknown; body?: unknown; expectedRevisionId?: unknown }
+    try { input = JSON.parse(raw || '{}') } catch { input = {} }
+    const fieldKey = typeof input.fieldKey === 'string' ? input.fieldKey : ''
+    const body = typeof input.body === 'string' ? input.body : ''
+    const expectedRevisionId = typeof input.expectedRevisionId === 'string' ? input.expectedRevisionId : ''
+    const invalid = !UUID.test(id) || !UUID.test(expectedRevisionId) || !fieldKey || fieldKeyBytes(fieldKey) > 256
+    let parsedBody: unknown
+    try { parsedBody = JSON.parse(body) } catch { parsedBody = undefined }
+    // Do NOT log the unvalidated fieldKey on a validation reject.
+    if (invalid || !isDocShape(parsedBody)) { emit({ outcome: 'validation', itemId: vid, startedAt }); return Response.json({ status: 'error', code: 'invalid_request' }, { status: 422 }) }
 
-  const { graphqlEndpoint } = readServerEnv()
-  const read = await gqlRequest<{ contentItem: { data?: string | null; current_revision_id?: string | null; content_type: { field_schema: string | null } } | null }>(
-    { endpoint: graphqlEndpoint, token }, CONTENT_ITEM_QUERY, { id },
-  )
-  if (!read.ok) { const o = classifyOutcome(read); emit({ outcome: o.outcome, itemId: vid, startedAt }); return Response.json(o.body, { status: o.status }) }
-  const itemNode = read.data.contentItem
-  if (!itemNode) { emit({ outcome: 'not_found', itemId: vid, startedAt }); return Response.json({ status: 'error', code: 'not_found' }, { status: 404 }) }
+    const { graphqlEndpoint } = readServerEnv()
+    const read = await gqlRequest<{ contentItem: { data?: string | null; current_revision_id?: string | null; content_type: { field_schema: string | null } } | null }>(
+      { endpoint: graphqlEndpoint, token }, CONTENT_ITEM_QUERY, { id },
+    )
+    if (!read.ok) { const o = classifyOutcome(read); emit({ outcome: o.outcome, itemId: vid, startedAt }); return Response.json(o.body, { status: o.status }) }
+    const itemNode = read.data.contentItem
+    if (!itemNode) { emit({ outcome: 'not_found', itemId: vid, startedAt }); return Response.json({ status: 'error', code: 'not_found' }, { status: 404 }) }
 
-  // Structurally validate persisted state (untrusted-I/O: quarantine malformed, don't crash) BEFORE use.
-  const schema = parseSchema(itemNode.content_type.field_schema)
-  const current = parseData(itemNode.data ?? '{}')
-  if (!schema || !current) { emit({ outcome: 'error', itemId: vid, startedAt }); return Response.json({ status: 'error', code: 'save_failed' }, { status: 500 }) }
-  if (!schema.some((f) => f.name === fieldKey && f.type === 'richtext')) {
-    // fieldKey did not pass the schema check → still unvalidated → do not log it.
-    emit({ outcome: 'validation', itemId: vid, startedAt }); return Response.json({ status: 'error', code: 'invalid_request' }, { status: 422 })
+    // Structurally validate persisted state (untrusted-I/O: quarantine malformed, don't crash) BEFORE use.
+    const schema = parseSchema(itemNode.content_type.field_schema)
+    const current = parseData(itemNode.data ?? '{}')
+    if (!schema || !current) { emit({ outcome: 'error', itemId: vid, startedAt }); return Response.json({ status: 'error', code: 'save_failed' }, { status: 500 }) }
+    if (!schema.some((f) => f.name === fieldKey && f.type === 'richtext')) {
+      // fieldKey did not pass the schema check → still unvalidated → do not log it.
+      emit({ outcome: 'validation', itemId: vid, startedAt }); return Response.json({ status: 'error', code: 'invalid_request' }, { status: 422 })
+    }
+
+    const merged = { ...current, [fieldKey]: body }   // body sent unchanged; domain prepare() canonicalizes once
+    const write = await gqlRequest<{ updateContent: { id: string; status: string; current_revision_id: string } }>(
+      { endpoint: graphqlEndpoint, token }, UPDATE_CONTENT_MUTATION, { id, data: JSON.stringify(merged), expectedRevisionId },
+    )
+    if (!write.ok) { const o = classifyOutcome(write); emit({ outcome: o.outcome, itemId: vid, fieldKey, startedAt }); return Response.json(o.body, { status: o.status }) }
+    emit({ outcome: 'saved', itemId: vid, fieldKey, startedAt })
+    return Response.json({ status: 'saved', revisionId: write.data.updateContent.current_revision_id }, { status: 200 })
+  } catch {
+    // Unexpected request/runtime failures still fail hard with the authoritative 500 + exactly one event.
+    emit({ outcome: 'error', itemId: vid, startedAt })
+    return Response.json({ status: 'error', code: 'save_failed' }, { status: 500 })
   }
-
-  const merged = { ...current, [fieldKey]: body }   // body sent unchanged; domain prepare() canonicalizes once
-  const write = await gqlRequest<{ updateContent: { id: string; status: string; current_revision_id: string } }>(
-    { endpoint: graphqlEndpoint, token }, UPDATE_CONTENT_MUTATION, { id, data: JSON.stringify(merged), expectedRevisionId },
-  )
-  if (!write.ok) { const o = classifyOutcome(write); emit({ outcome: o.outcome, itemId: vid, fieldKey, startedAt }); return Response.json(o.body, { status: o.status }) }
-  emit({ outcome: 'saved', itemId: vid, fieldKey, startedAt })
-  return Response.json({ status: 'saved', revisionId: write.data.updateContent.current_revision_id }, { status: 200 })
 }
 
 export const GET: APIRoute = async ({ params, request, cookies }) => {
   const startedAt = Date.now()
   const id = String(params.id ?? '')
   const vid = UUID.test(id) ? id : undefined   // log the id ONLY once it is a valid UUID (content discipline)
-  const fieldKey = new URL(request.url).searchParams.get('fieldKey') ?? ''
-  const token = getSessionToken(cookies)
-  if (!token) { emit({ outcome: 'unauthorized', startedAt }); return Response.json({ status: 'error', code: 'auth_error' }, { status: 401 }) }
-  if (!UUID.test(id) || !fieldKey || fieldKeyBytes(fieldKey) > 256) { emit({ outcome: 'validation', itemId: vid, startedAt }); return Response.json({ status: 'error', code: 'invalid_request' }, { status: 422 }) }
-  const { graphqlEndpoint } = readServerEnv()
-  const read = await gqlRequest<{ contentItem: { data?: string | null; current_revision_id?: string | null; content_type: { field_schema: string | null } } | null }>(
-    { endpoint: graphqlEndpoint, token }, CONTENT_ITEM_QUERY, { id },
-  )
-  if (!read.ok) { const o = classifyOutcome(read); emit({ outcome: o.outcome, itemId: vid, startedAt }); return Response.json(o.body, { status: o.status }) }
-  const itemNode = read.data.contentItem
-  if (!itemNode) { emit({ outcome: 'not_found', itemId: vid, startedAt }); return Response.json({ status: 'error', code: 'not_found' }, { status: 404 }) }
-  const schema = parseSchema(itemNode.content_type.field_schema)
-  const data = parseData(itemNode.data ?? '{}')
-  if (!schema || !data) { emit({ outcome: 'error', itemId: vid, startedAt }); return Response.json({ status: 'error', code: 'save_failed' }, { status: 500 }) }
-  if (!schema.some((f) => f.name === fieldKey && f.type === 'richtext')) {
-    emit({ outcome: 'validation', itemId: vid, startedAt }); return Response.json({ status: 'error', code: 'invalid_request' }, { status: 422 })
+  try {
+    const fieldKey = new URL(request.url).searchParams.get('fieldKey') ?? ''
+    const token = getSessionToken(cookies)
+    if (!token) { emit({ outcome: 'unauthorized', startedAt }); return Response.json({ status: 'error', code: 'auth_error' }, { status: 401 }) }
+    if (!UUID.test(id) || !fieldKey || fieldKeyBytes(fieldKey) > 256) { emit({ outcome: 'validation', itemId: vid, startedAt }); return Response.json({ status: 'error', code: 'invalid_request' }, { status: 422 }) }
+    const { graphqlEndpoint } = readServerEnv()
+    const read = await gqlRequest<{ contentItem: { data?: string | null; current_revision_id?: string | null; content_type: { field_schema: string | null } } | null }>(
+      { endpoint: graphqlEndpoint, token }, CONTENT_ITEM_QUERY, { id },
+    )
+    if (!read.ok) { const o = classifyOutcome(read); emit({ outcome: o.outcome, itemId: vid, startedAt }); return Response.json(o.body, { status: o.status }) }
+    const itemNode = read.data.contentItem
+    if (!itemNode) { emit({ outcome: 'not_found', itemId: vid, startedAt }); return Response.json({ status: 'error', code: 'not_found' }, { status: 404 }) }
+    const schema = parseSchema(itemNode.content_type.field_schema)
+    const data = parseData(itemNode.data ?? '{}')
+    if (!schema || !data) { emit({ outcome: 'error', itemId: vid, startedAt }); return Response.json({ status: 'error', code: 'save_failed' }, { status: 500 }) }
+    if (!schema.some((f) => f.name === fieldKey && f.type === 'richtext')) {
+      emit({ outcome: 'validation', itemId: vid, startedAt }); return Response.json({ status: 'error', code: 'invalid_request' }, { status: 422 })
+    }
+    const value = data[fieldKey]
+    emit({ outcome: 'read_ok', itemId: vid, fieldKey, startedAt })
+    return Response.json({ body: typeof value === 'string' ? value : '', revisionId: itemNode.current_revision_id ?? '' }, { status: 200 })
+  } catch {
+    emit({ outcome: 'error', itemId: vid, startedAt })
+    return Response.json({ status: 'error', code: 'save_failed' }, { status: 500 })
   }
-  const value = data[fieldKey]
-  emit({ outcome: 'read_ok', itemId: vid, fieldKey, startedAt })
-  return Response.json({ body: typeof value === 'string' ? value : '', revisionId: itemNode.current_revision_id ?? '' }, { status: 200 })
 }
 ```
 
@@ -854,57 +908,90 @@ git commit -m "feat(frontend): bounded, observable richtext save/read endpoint"
 
 **Files:** Modify `templates/frontend-astro/tests/mock/graphql-mock.mjs`
 
-- [ ] **Step 1: Add a richtext-primary content type + item to the seed.** After the existing `contentTypes`/`contentItems`/`contentRevisions` (~`graphql-mock.mjs:145-180`), add a second content type whose primary field is `richtext`, and a matching item + revision, so the two-editor e2e has a clean conflict signal AND a two-richtext-field case:
+- [ ] **Step 1: Add a richtext-primary content type plus token-scoped mutable state.** Playwright runs spec files in parallel, so a single global mutable item can be reset by an unrelated worker's `/scenario` call. Keep one independent richtext item/revision chain per bearer token, matching the mock's existing token-scoped scenarios and counts:
 
 ```js
 // C7.3b: a richtext-primary type (two richtext fields) for the conflict/coordinator e2e.
-contentTypes.push({
+const rtContentType = {
   id: 'ct-rt', key: 'note', label: 'Note',
   field_schema: JSON.stringify([
     { name: 'body', type: 'richtext', label: 'Body' },
     { name: 'summary', type: 'richtext', label: 'Summary' },
   ]),
-})
-// IDs MUST be UUID-shaped: the endpoint validates `id` and `expectedRevisionId` with a UUID regex, so
-// non-UUID ids (e.g. 'rt1') would 422 every save. `content_type_id` is not validated, so it may stay 'ct-rt'.
-export const RT_ITEM_ID = 'd1000000-0000-4000-8000-000000000001'   // also used by the e2e (Task 8)
-const rtRevId = (n) => `d2000000-0000-4000-8000-${String(n).padStart(12, '0')}`
-let rtRevSeq = 1
-const rtItem = {
-  id: RT_ITEM_ID, slug: 'note-1', status: 'draft', content_type_id: 'ct-rt',
-  data: JSON.stringify({ body: '', summary: '' }),
-  current_revision_id: rtRevId(1), approved_revision_id: null, published_revision_id: null,
-  updated_at: '2026-07-02T00:00:00Z', content_type: contentTypes[contentTypes.length - 1],
 }
-contentItems.push(rtItem)
-contentRevisions.push({ id: rtRevId(1), parent_id: null, revision_number: 1, data: rtItem.data, author_id: 'u1', created_at: '2026-07-01T00:00:00Z' })
+contentTypes.push(rtContentType)
+// IDs MUST be UUID-shaped: the endpoint validates `id` and `expectedRevisionId` with a UUID regex, so
+// a short fixture id would 422 every save. `content_type_id` is not validated, so it may stay 'ct-rt'.
+const RT_ITEM_ID = 'd1000000-0000-4000-8000-000000000001'
+const rtRevId = (n) => `d2000000-0000-4000-8000-${String(n).padStart(12, '0')}`
+
+function freshRtState() {
+  const data = JSON.stringify({ body: '', summary: '' })
+  const item = {
+    id: RT_ITEM_ID, slug: 'note-1', status: 'draft', content_type_id: 'ct-rt', data,
+    current_revision_id: rtRevId(1), approved_revision_id: null, published_revision_id: null,
+    updated_at: '2026-07-02T00:00:00Z', content_type: rtContentType,
+  }
+  return {
+    item,
+    revSeq: 1,
+    revisions: [{ id: rtRevId(1), parent_id: null, revision_number: 1, data, author_id: 'u1', created_at: '2026-07-01T00:00:00Z' }],
+  }
+}
+const rtStates = new Map()
+function rtStateFor(token) {
+  let state = rtStates.get(token)
+  if (!state) {
+    state = freshRtState()
+    rtStates.set(token, state)
+  }
+  return state
+}
 ```
 
-- [ ] **Step 2: Make `updateContent` stateful** for the richtext item (replace the `mutation UpdateContent` branch at `graphql-mock.mjs:440-449`). Keep the scenario-driven conflict for the legacy `ci1` path; add real revision tracking for `rt1`:
+- [ ] **Step 2: Route reads and writes through the caller's state.** Update the three content query handlers and replace the `mutation UpdateContent` branch. `token` is already obtained with `tokenFor(req)` before these branches:
 
 ```js
+  if (query.includes('query Content(')) {
+    const items = scenario === 'empty' ? [] : [...contentItems, rtStateFor(token).item]
+    return json(res, 200, { data: { content: { items, nextCursor: null } } })
+  }
+  if (query.includes('query ContentItem')) {
+    bump(token, 'contentItemRead')
+    const requested = parsed.variables?.id
+    const item = requested === RT_ITEM_ID
+      ? rtStateFor(token).item
+      : contentItems.find((candidate) => candidate.id === requested) ?? null
+    return json(res, 200, { data: { contentItem: scenario === 'empty' ? null : item } })
+  }
+  if (query.includes('query ContentRevisions')) {
+    const revisions = parsed.variables?.itemId === RT_ITEM_ID ? rtStateFor(token).revisions : contentRevisions
+    return json(res, 200, { data: { contentRevisions: scenario === 'empty' ? [] : revisions } })
+  }
+
   if (query.includes('mutation UpdateContent')) {
     const vid = parsed.variables?.id
-    const item = contentItems.find((i) => i.id === vid)
     // Legacy scenario-driven conflict for the existing ci1 test:
     if (scenario === 'conflict' && vid === 'ci1') {
       return json(res, 200, { errors: [{ message: 'This content was updated by someone else.', extensions: { code: 'CONFLICT' } }] })
     }
-    if (item && item.content_type_id === 'ct-rt') {
+    if (vid === RT_ITEM_ID) {
+      const state = rtStateFor(token)
+      const item = state.item
       const expected = parsed.variables?.expectedRevisionId
       const submitted = JSON.parse(parsed.variables?.data ?? '{}')
       const submittedHash = JSON.stringify(submitted)
       // hash-first idempotency: identical payload returns current revision even if expected is stale.
-      const currentRev = contentRevisions.find((r) => r.id === item.current_revision_id)
+      const currentRev = state.revisions.find((r) => r.id === item.current_revision_id)
       if (currentRev && currentRev.data === submittedHash) {
         return json(res, 200, { data: { updateContent: { id: vid, status: item.status, current_revision_id: item.current_revision_id } } })
       }
       if (expected && expected !== item.current_revision_id) {
         return json(res, 200, { errors: [{ message: 'This content was updated by someone else.', extensions: { code: 'CONFLICT' } }] })
       }
-      rtRevSeq += 1
-      const newRev = { id: rtRevId(rtRevSeq), parent_id: item.current_revision_id, revision_number: rtRevSeq, data: submittedHash, author_id: 'u1', created_at: '2026-07-02T00:00:00Z' }
-      contentRevisions.push(newRev)
+      state.revSeq += 1
+      const newRev = { id: rtRevId(state.revSeq), parent_id: item.current_revision_id, revision_number: state.revSeq, data: submittedHash, author_id: 'u1', created_at: '2026-07-02T00:00:00Z' }
+      state.revisions.push(newRev)
       item.current_revision_id = newRev.id
       item.data = submittedHash
       return json(res, 200, { data: { updateContent: { id: vid, status: item.status, current_revision_id: newRev.id } } })
@@ -918,7 +1005,22 @@ contentRevisions.push({ id: rtRevId(1), parent_id: null, revision_number: 1, dat
   }
 ```
 
-- [ ] **Step 3: Add a `ContentItem` read counter** so the endpoint's "one combined read" is provable. The mock ALREADY serves `/counts` (`graphql-mock.mjs:361`) and has `bump()` (`:24`) — do NOT re-add them. Just add `bump(token, 'contentItemRead')` inside the `query ContentItem` handler (`graphql-mock.mjs:417-419`) before it returns. Also FULLY reset the richtext fixture per test: on the `/scenario` reset (`:349-364`, which already does `counts.set(token, {})`), splice out **every** generated `d2000000-…` row from `contentRevisions` and re-push only `rtRevId(1)`; set the richtext item's `current_revision_id = rtRevId(1)` and `data = JSON.stringify({ body: '', summary: '' })`; and `rtRevSeq = 1`. (Leaving old `rtRevId(2+)` rows would let a later `.find()` select a stale/duplicate-id revision after `rtRevSeq` resets — N-5.)
+- [ ] **Step 3: Reset only the addressed token.** The mock ALREADY serves `/counts` and has `bump()`; do not re-add them. In `/scenario`, reset `counts` and richtext state under the same key without touching other workers:
+
+```js
+  if (url.pathname === '/scenario') {
+    const next = url.searchParams.get('name') ?? 'ok'
+    const requestedToken = url.searchParams.get('token')
+    const stateKey = requestedToken ?? 'fallback'
+    if (requestedToken) scenarios.set(requestedToken, next)
+    else fallbackScenario = next
+    counts.set(stateKey, {})
+    rtStates.set(stateKey, freshRtState())
+    return json(res, 200, { scenario: next })
+  }
+```
+
+Task 8 adds a two-token isolation test: resetting or mutating token B must not change token A's richtext revision/body.
 
 - [ ] **Step 4: Verify the mock boots**
 
@@ -950,25 +1052,38 @@ git commit -m "test(frontend): stateful mock updateContent + richtext-primary fi
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-// Mock the SDK editor so onDirtyChange/onRefresh/onLoadLatest can be driven deterministically.
-// Precedent: vi.mock of a @movp/* workspace package (e.g. packages/graphql/test/reporting.test.ts:27).
-// (No jsdom mechanism drives a real TipTap doc edit — see Task 1 — so the coordinator is tested via this fake.)
-vi.mock('@movp/editor-sdk', () => ({
-  MovpEditor: (props: { onDirtyChange?: (d: boolean) => void; onRefresh?: () => void; onLoadLatest?: () => void }) => (
-    <div data-testid="editor">
-      <button type="button" onClick={() => props.onDirtyChange?.(true)}>mark-dirty</button>
-      <button type="button" onClick={() => props.onDirtyChange?.(false)}>mark-clean</button>
-      <button type="button" onClick={() => props.onRefresh?.()}>do-refresh</button>
-      <button type="button" onClick={() => props.onLoadLatest?.()}>do-load-latest</button>
-    </div>
-  ),
-}))
+// Mock the SDK editor so coordinator callbacks are deterministic. Local draft state plus a mount counter
+// prove that an unchanged server body still forces a destructive remount (the N-1 regression).
+const sdkProbe = vi.hoisted(() => ({ mounts: 0 }))
+vi.mock('@movp/editor-sdk', async () => {
+  const { useEffect, useState } = await import('react')
+  return {
+    MovpEditor: (props: {
+      initialBody: string
+      onDirtyChange?: (d: boolean) => void
+      onRefresh?: () => void
+      onLoadLatest?: () => void
+    }) => {
+      const [draft, setDraft] = useState(props.initialBody)
+      useEffect(() => { sdkProbe.mounts += 1 }, [])
+      return (
+        <div data-testid="editor">
+          <output data-testid="editor-body">{draft}</output>
+          <button type="button" onClick={() => { setDraft('LOCAL-DRAFT'); props.onDirtyChange?.(true) }}>mark-dirty</button>
+          <button type="button" onClick={() => props.onDirtyChange?.(false)}>mark-clean</button>
+          <button type="button" onClick={() => props.onRefresh?.()}>do-refresh</button>
+          <button type="button" onClick={() => props.onLoadLatest?.()}>do-load-latest</button>
+        </div>
+      )
+    },
+  }
+})
 
 import RichTextFieldsIsland from './RichTextFieldsIsland.tsx'
 
-afterEach(() => { cleanup(); vi.restoreAllMocks() })
+afterEach(() => { cleanup(); vi.restoreAllMocks(); sdkProbe.mounts = 0 })
 
-const twoFields = [{ key: 'body', label: 'Body', body: '' }, { key: 'summary', label: 'Summary', body: '' }]
+const twoFields = [{ key: 'body', label: 'Body', body: 'server A' }, { key: 'summary', label: 'Summary', body: '' }]
 
 describe('RichTextFieldsIsland', () => {
   it('hydrates and renders one editor per richtext field, clean', async () => {
@@ -1009,18 +1124,24 @@ describe('RichTextFieldsIsland', () => {
     render(<RichTextFieldsIsland itemId="rtx" initialRevisionId="r0" fields={[twoFields[0]!]} />)
     fireEvent.click(screen.getByRole('button', { name: 'do-refresh' }))
     await screen.findByText('Revision updated — Save to retry.')
+    expect(screen.getByTestId('editor-body').textContent).toContain('server A')
     fetchMock.mockResolvedValueOnce(new Response('nope', { status: 500 }))
     fireEvent.click(screen.getByRole('button', { name: 'do-refresh' }))
     await screen.findByText(/Could not refresh/)
   })
 
-  it('load-latest clears the dirty guard for that field (N-1)', async () => {
+  it('load-latest remounts with the server body even when it equals initialBody, and clears dirty (N-1)', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch')
     render(<RichTextFieldsIsland itemId="rtx" initialRevisionId="r0" fields={[twoFields[0]!]} />)
+    await waitFor(() => expect(sdkProbe.mounts).toBe(1))
     fireEvent.click(screen.getByRole('button', { name: 'mark-dirty' }))
+    expect(screen.getByTestId('editor-body').textContent).toBe('LOCAL-DRAFT')
     expect(screen.getByTestId('richtext-island').getAttribute('data-dirty')).toBe('true')
-    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ body: '', revisionId: 'r9' }), { status: 200 }))
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ body: 'server A', revisionId: 'r9' }), { status: 200 }))
     fireEvent.click(screen.getByRole('button', { name: 'do-load-latest' }))
+    await waitFor(() => expect(sdkProbe.mounts).toBe(2))
+    expect(screen.getByTestId('editor-body').textContent).toContain('server A')
+    expect(screen.getByTestId('editor-body').textContent).not.toContain('LOCAL-DRAFT')
     await waitFor(() => expect(screen.getByTestId('richtext-island').getAttribute('data-dirty')).toBe('false'))
   })
 })
@@ -1125,7 +1246,7 @@ function RichTextField(
   const onDirtyChange = (d: boolean) => setFieldDirty(field.key, d)
 
   return (
-    <section aria-label={field.label}>
+    <section aria-label={field.label} data-field-control>
       <MovpEditor key={editorEpoch} initialBody={initialBody} onSave={onSave} onSaved={onSaved}
         onRefresh={onRefresh} onLoadLatest={onLoadLatest} onDirtyChange={onDirtyChange} />
       {refreshState === 'ready_to_retry' && <span role="status">Revision updated — Save to retry.</span>}
@@ -1153,7 +1274,7 @@ git commit -m "feat(frontend): RichTextFieldsIsland coordinator over a shared re
 
 ## Task 7: Mount the island on the editor page
 
-**Files:** Modify `templates/frontend-astro/src/pages/content/[id].astro`
+**Files:** Modify `templates/frontend-astro/src/pages/content/[id].astro`, `templates/frontend-astro/tests/e2e/content.spec.ts`
 
 - [ ] **Step 1: Import the island** at the top of the frontmatter:
 ```astro
@@ -1174,7 +1295,14 @@ In the existing `.map(...)` field loop, filter richtext out of the form (add `(f
 
 > **Page rule (spec §6/D5):** the form save still full-page-reloads on success, re-mounting the island at the fresh revision; document the "save rich-text before a form save" behavior in a short comment above the island. The island's `beforeunload` guard protects unsaved rich-text edits.
 
-- [ ] **Step 3: Verify build + existing content e2e still pass.** Note: `ci1`'s content type ALREADY has a `body` richtext field (`graphql-mock.mjs:151`), so its editor page now ALSO mounts the island (the `body` textarea is removed from the form). The existing `ci1` specs are unaffected because they interact only with the non-richtext form fields (Priority/Featured/Category) and the form Save; the form still merges `body` from the loaded `values`. Confirm those specs stay green:
+- [ ] **Step 3: Verify build + existing content e2e still pass.** Note: `ci1`'s content type ALREADY has a `body` richtext field (`graphql-mock.mjs:151`), so its editor page now ALSO mounts the island (the `body` textarea is removed from the form). Each island field keeps `data-field-control`, preserving the existing semantic assertion of six schema-field controls; add an assertion that the Body region contains the richtext editor. The existing specs otherwise interact only with Priority/Featured/Category and the form Save; the form still merges `body` from loaded `values`.
+
+In `templates/frontend-astro/tests/e2e/content.spec.ts`, retain:
+
+```ts
+await expect(page.getByTestId('content-fields').locator('[data-field-control]')).toHaveCount(6)
+await expect(page.getByRole('region', { name: 'Body' }).getByRole('textbox', { name: 'Rich text editor' })).toBeVisible()
+```
 
 Run: `pnpm --filter @movp/frontend-astro build`
 Expected: PASS.
@@ -1182,7 +1310,7 @@ Expected: PASS.
 - [ ] **Step 4: Commit**
 
 ```bash
-git add "templates/frontend-astro/src/pages/content/[id].astro"
+git add "templates/frontend-astro/src/pages/content/[id].astro" templates/frontend-astro/tests/e2e/content.spec.ts
 git commit -m "feat(frontend): mount RichTextFieldsIsland on the content editor page"
 ```
 
@@ -1193,16 +1321,24 @@ git commit -m "feat(frontend): mount RichTextFieldsIsland on the content editor 
 **Files:** Modify `templates/frontend-astro/tests/e2e/content.spec.ts`
 
 **Interfaces:**
-- Consumes: `seedSession`, `scenario` (`tests/e2e/scenario.ts`); the `rt1` fixture (Task 5).
+- Consumes: `seedSession`, `scenario`, `scenarioToken`, `mockCounts` (`tests/e2e/scenario.ts`); the UUID-shaped, token-scoped richtext fixture (Task 5).
 
 - [ ] **Step 1: Write the failing tests** — add to `templates/frontend-astro/tests/e2e/content.spec.ts`:
 
 ```ts
+// Update the Playwright import: import { expect, test, type BrowserContext } from '@playwright/test'
 // The richtext fixture ids — UUID-shaped so the endpoint's UUID validation accepts them
-// (match graphql-mock.mjs `RT_ITEM_ID`/`rtRevId(1)`; a non-UUID like 'rt1' would 422 every save).
-// Add `mockCounts` to the scenario import: import { mockCounts, scenario, seedSession } from './scenario.ts'
+// (match graphql-mock.mjs `RT_ITEM_ID`/`rtRevId(1)`; a short non-UUID id would 422 every save).
+// Import: import { mockCounts, scenario, scenarioToken, seedSession } from './scenario.ts'
 const RT = 'd1000000-0000-4000-8000-000000000001'
 const RT_REV = 'd2000000-0000-4000-8000-000000000001'
+
+async function seedNamedSession(context: BrowserContext, token: string): Promise<void> {
+  await fetch(`http://127.0.0.1:4322/scenario?name=ok&token=${encodeURIComponent(token)}`)
+  await context.addCookies([{
+    name: 'sb-access-token', value: token, domain: '127.0.0.1', path: '/', httpOnly: true, sameSite: 'Lax',
+  }])
+}
 
 test('two editors on DIFFERENT fields: stale save conflicts, refresh+retry preserves BOTH fields', async ({ browser }) => {
   const ctxA = await browser.newContext(); const ctxB = await browser.newContext()
@@ -1265,6 +1401,25 @@ test('editing arms the beforeunload guard; saving disarms it', async ({ page }) 
   await expect(island).toHaveAttribute('data-dirty', 'false')          // disarmed after a successful save
 })
 
+test('richtext mock state and scenario resets are isolated by bearer token', async ({ browser }) => {
+  const ctxA = await browser.newContext(); const ctxB = await browser.newContext()
+  const base = scenarioToken(); const tokenA = `${base}-A`; const tokenB = `${base}-B`
+  await seedNamedSession(ctxA, tokenA); await seedNamedSession(ctxB, tokenB)
+  const a = await ctxA.newPage(); await a.goto(`/content/${RT}`)
+  const aBody = a.getByRole('region', { name: 'Body' }).getByRole('textbox', { name: 'Rich text editor' })
+  await aBody.click(); await aBody.pressSequentially('token A body')
+  await a.getByRole('region', { name: 'Body' }).getByRole('button', { name: 'Save content' }).click()
+  await expect(a.getByRole('region', { name: 'Body' })).toContainText('Saved')
+
+  // Reset only B after A has mutated; A must retain its own revision/body.
+  await fetch(`http://127.0.0.1:4322/scenario?name=ok&token=${encodeURIComponent(tokenB)}`)
+  const aFresh = await ctxA.newPage(); await aFresh.goto(`/content/${RT}`)
+  await expect(aFresh.getByRole('region', { name: 'Body' })).toContainText('token A body')
+  const b = await ctxB.newPage(); await b.goto(`/content/${RT}`)
+  await expect(b.getByRole('region', { name: 'Body' })).not.toContainText('token A body')
+  await ctxA.close(); await ctxB.close()
+})
+
 // Handler contract proven against the REAL route (wrangler) + stateful mock — the frontend has no
 // route-handler unit-test harness, so this is the authoritative gate for status codes + one-combined-read.
 test('richtext endpoint contract: 422/413/200/409 and exactly one combined read per reaching POST', async ({ page }) => {
@@ -1303,7 +1458,7 @@ Expected: FAIL — island/regions not mounted until Tasks 6–7 are wired (if ru
 - [ ] **Step 3: Run to verify they pass** (after Tasks 5–7)
 
 Run: `pnpm --filter @movp/frontend-astro e2e`
-Expected: PASS — all three new tests + the existing content specs green.
+Expected: PASS — all new conflict, sequential-save, guard, token-isolation, and endpoint-contract tests plus the existing content specs are green.
 
 - [ ] **Step 4: Commit**
 
@@ -1322,7 +1477,7 @@ pnpm --filter @movp/graphql test             # Task 3G: sanitized CONFLICT survi
 pnpm --filter @movp/frontend-astro test      # endpoint unit (bounds/guards/code-classify) + island unit
 pnpm --filter @movp/frontend-astro build
 bash scripts/check-boundary.sh               # island stays client-safe
-pnpm --filter @movp/frontend-astro e2e       # two-editor cross-field + two-field + beforeunload(data-dirty)
+pnpm --filter @movp/frontend-astro e2e       # conflict + cross-field + guard + token isolation + route contract
 pnpm typecheck
 ```
 Then update the Stage C EXECUTION STATUS table for C7.3b, and mark **C7.3 complete only when both C7.3a and C7.3b parts and their gates pass** (CLAUDE.md "Phase Completion Signal").
@@ -1337,7 +1492,7 @@ The masking risk — a production `updateContent` conflict masked to `save_faile
 - Coordinator island over one shared revision; client-safe; page rule + beforeunload (spec §6, §6.1) → Tasks 6, 7. ✅
 - `onDirtyChange` docChanged-gated + reconciliation (spec §6.1) → Task 1. ✅
 - Endpoint: bounds/validation/one-combined-read/outcome table/observability (spec §7) → Task 4. ✅
-- Stateful mock + read-counter (spec §8) → Task 5. ✅
+- Token-scoped stateful mock + read-counter (spec §8) → Tasks 5, 8. ✅
 - Two-editor + two-field + dirty-guard e2e (spec §8) → Task 8. ✅
 - Frontend deps + Verdaccio consumer (spec §3.1 item 4) → Task 3 (+ C7.3a registered the packages in the Verdaccio publish lists). ✅
 - Production conflict surfacing as a structured `CONFLICT` code, not a masked internal error (F-1) → Task 3G. ✅
@@ -1345,4 +1500,5 @@ The masking risk — a production `updateContent` conflict masked to `save_faile
 - Dirty stays true when the user edits during an in-flight save (F-2) → Task 1. ✅
 - Refresh feedback states + caught GET-failure + deterministic guard install/remove (F-5) → Tasks 6, 8. ✅
 - Review round 2 (R-1…R-5): UUID-shaped fixtures so saves reach 409/200 (R-1) → Tasks 5, 8; item id logged only after UUID validation + GET byte bound (R-2) → Task 4; handler contract (413/422/409/200 + one combined read via `mockCounts`) proven in e2e, `emit` discipline + closed `Outcome` union unit-tested (R-3) → Tasks 4, 8; real listener install/remove/unmount + refresh-state test via `vi.mock('@movp/editor-sdk')` (R-4) → Task 6; executable samples — real yoga `handleRequest` harness, `useEditor` mock-probed TipTap edits (no new production API), frontend component-test infra (R-5) → Tasks 1, 3, 3G, 6. ✅
-- Review round 3 (N-1…N-7): destructive Load-latest forces a remount via `editorEpoch` key (N-1) → Tasks 2, 6; endpoint e2e uses a distinct `staleDoc` for the 409 + keeps a same-payload 200 idempotency case (N-2) → Task 8; `vi.hoisted` in the yoga test (N-3) → Task 3G; endpoint tests mock `env`/`session`/`graphql` and drive `POST`/`GET` directly with a per-outcome console spy (N-4, N-6) → Task 4; `/scenario` reset drops accumulated richtext revisions (N-5) → Task 5; only `@movp/*` added to frontend, tiptap transitive (N-7) → Task 3; `onReady` dropped for `useEditor` mock-probe. ✅
+- Review round 3 (N-1…N-7): destructive Load-latest forces a remount via `editorEpoch` key (N-1) → Tasks 2, 6; endpoint e2e uses a distinct `staleDoc` for the 409 + keeps a same-payload 200 idempotency case (N-2) → Task 8; `vi.hoisted` in the yoga test (N-3) → Task 3G; endpoint tests mock `env`/`session`/`graphql` and drive `POST`/`GET` directly with a per-outcome console spy (N-4, N-6) → Task 4; richtext state is replaced atomically per bearer token rather than accumulating revisions (N-5) → Tasks 5, 8; only `@movp/*` added to frontend, TipTap transitive (N-7) → Task 3; `onReady` dropped for `useEditor` mock-probe. ✅
+- Review round 4 (P-1…P-7): richtext fields preserve the existing `data-field-control` contract (P-1) → Tasks 6, 7; structured `CONFLICT` code is the sole public invariant (P-2) → Task 3G; mutable mock state/reset is bearer-token scoped with a cross-token e2e (P-3) → Tasks 5, 8; conflict host callbacks are contained and fail loud without replacing the draft (P-4) → Task 2; every handler outcome, including unexpected request-bound dependency failure, emits exactly one content-disciplined event (P-5) → Task 4; unchanged-body destructive reload proves an editor remount plus body restoration (P-6) → Task 6; initial clean emission is implemented and tested (P-7) → Task 1. ✅
