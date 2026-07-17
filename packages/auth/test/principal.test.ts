@@ -83,6 +83,7 @@ describe('resolvePrincipal', () => {
     if (r.ok) {
       expect(r.userId).toBe(SUB)
       expect(r.db).toBeDefined()
+      expect(r.accessToken).toBe(token)
     }
   })
 
@@ -149,6 +150,7 @@ describe('resolvePrincipal PAT branch (production-shaped: real branch, injected 
     expect(r.ok).toBe(true)
     if (r.ok) {
       expect(r.userId).toBe(SUB)
+      expect(r.accessToken).toBe('minted.jwt.token')
       const dbState = r.db as unknown as { headers?: Record<string, string> }
       expect(dbState.headers?.Authorization).toBe('Bearer minted.jwt.token')
     }

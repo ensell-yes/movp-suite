@@ -364,6 +364,7 @@ jobs:
         with: { node-version: 22, cache: pnpm }
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @movp/frontend-astro build
+      - run: pnpm --filter @movp/frontend-astro exec wrangler deploy --dry-run --outdir /tmp/movp-frontend-deploy-dry-run
       - run: pnpm --filter @movp/frontend-astro test
       - run: pnpm --filter @movp/frontend-astro exec playwright install --with-deps chromium
       - run: pnpm --filter @movp/frontend-astro e2e

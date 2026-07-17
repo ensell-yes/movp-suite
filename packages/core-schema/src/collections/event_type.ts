@@ -6,6 +6,7 @@ export const eventType = defineCollection({
   label: 'Event Type',
   labelPlural: 'Event Types',
   workspaceScoped: false,
+  genericWrite: 'none',
   fields: {
     key: f.text({ label: 'Key', required: true, reporting: { role: 'dimension' } }),
     domain: f.enum(['collaboration', 'task', 'cms', 'campaign', 'segmentation', 'lifecycle', 'workflow'], {

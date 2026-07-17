@@ -4,9 +4,11 @@ export type {
   EventDef,
   FieldDef,
   FieldType,
+  GenericWriteMode,
   MovpSchema,
   ReportingRole,
 } from './types.ts'
+export { genericWriteMode, isGenericInputField, isStoredRelation } from './operations.ts'
 export {
   metadataProjection,
   runtimeFingerprint,

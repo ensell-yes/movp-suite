@@ -1,6 +1,6 @@
 {
   "name": "__PROJECT_NAME__",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
   "packageManager": "npm@10.8.0",
@@ -17,9 +17,9 @@
   "dependencies": {
     "@astrojs/cloudflare": "^13.1.10",
     "@astrojs/react": "^4.0.0",
-    "@movp/cli": "^0.1.0",
-    "@movp/codegen": "^0.1.0",
-    "@movp/core-schema": "^0.1.0",
+    "@movp/cli": "^0.1.1",
+    "@movp/codegen": "^0.1.1",
+    "@movp/core-schema": "^0.1.1",
     "astro": "^6.0.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"

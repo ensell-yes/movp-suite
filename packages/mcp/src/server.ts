@@ -1,6 +1,13 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
-import type { CollectionDef, FieldDef, MovpSchema } from '@movp/core-schema'
+import {
+  genericWriteMode,
+  isGenericInputField,
+  isStoredRelation,
+  type CollectionDef,
+  type FieldDef,
+  type MovpSchema,
+} from '@movp/core-schema'
 import { createDomain, type CollectionService, type Domain, type EmbeddingProvider } from '@movp/domain'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
@@ -18,11 +25,46 @@ function service(domain: Domain, name: string): AnyService {
   return domain.collection(name) as unknown as AnyService
 }
 
-function createShape(c: CollectionDef): Record<string, z.ZodTypeAny> {
-  const shape: Record<string, z.ZodTypeAny> = { workspace_id: z.string() }
+function fieldInput(def: FieldDef): z.ZodType<unknown> {
+  if (def.type === 'number') return z.number()
+  if (def.type === 'boolean') return z.boolean()
+  if (def.type === 'json') {
+    return z.union([
+      z.string(),
+      z.number(),
+      z.boolean(),
+      z.null(),
+      z.array(z.unknown()),
+      z.record(z.unknown()),
+    ])
+  }
+  if (def.type === 'enum') {
+    return z.string().refine((value) => def.values?.includes(value) === true, {
+      message: `Expected one of: ${(def.values ?? []).join(', ')}`,
+    })
+  }
+  return z.string()
+}
+
+function inputName(name: string, def: FieldDef): string {
+  return isStoredRelation(def) ? `${name}_id` : name
+}
+
+function createShape(c: CollectionDef): Record<string, z.ZodType<unknown>> {
+  const shape: Record<string, z.ZodType<unknown>> = { workspace_id: z.string() }
   for (const [name, def] of Object.entries(c.fields) as [string, FieldDef][]) {
-    if (def.type === 'relation') continue
-    shape[name] = def.required ? z.string() : z.string().optional()
+    if (!isGenericInputField(def)) continue
+    const schema = fieldInput(def)
+    shape[inputName(name, def)] = def.required ? schema : schema.optional()
+  }
+  return shape
+}
+
+function updateShape(c: CollectionDef): Record<string, z.ZodType<unknown>> {
+  const shape: Record<string, z.ZodType<unknown>> = { id: z.string() }
+  for (const [name, def] of Object.entries(c.fields) as [string, FieldDef][]) {
+    if (!isGenericInputField(def)) continue
+    shape[inputName(name, def)] = fieldInput(def).optional()
   }
   return shape
 }
@@ -86,11 +128,14 @@ export function buildMcpServer(schema: MovpSchema, ctx: McpCtx): McpServer {
     if (c.internal) continue
     const svc = service(domain, c.name)
 
-    server.registerTool(
-      `${c.name}.create`,
-      { title: `Create ${c.label}`, description: `Create a ${c.label}`, inputSchema: createShape(c) },
-      async (args: Record<string, unknown>) => text(await svc.create(args)),
-    )
+    const writeMode = genericWriteMode(c)
+    if (writeMode !== 'none') {
+      server.registerTool(
+        `${c.name}.create`,
+        { title: `Create ${c.label}`, description: `Create a ${c.label}`, inputSchema: createShape(c) },
+        async (args: Record<string, unknown>) => text(await svc.create(args)),
+      )
+    }
 
     server.registerTool(
       `${c.name}.get`,
@@ -148,6 +193,21 @@ export function buildMcpServer(schema: MovpSchema, ctx: McpCtx): McpServer {
       async (args: Record<string, unknown>) =>
         text(await (domain.graph as { link: (a: unknown) => Promise<unknown> }).link({ srcType: c.name, ...args })),
     )
+
+    if (writeMode === 'crud') {
+      server.registerTool(
+        `${c.name}.update`,
+        {
+          title: `Update ${c.label}`,
+          description: `Update a ${c.label} by id`,
+          inputSchema: updateShape(c),
+        },
+        async ({ id, ...patch }: Record<string, unknown>) => {
+          if (Object.keys(patch).length === 0) throw new Error('no_update_fields')
+          return text(await svc.update(String(id), patch))
+        },
+      )
+    }
   }
 
   server.registerTool(

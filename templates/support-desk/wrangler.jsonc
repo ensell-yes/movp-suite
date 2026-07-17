@@ -1,12 +1,11 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "__PROJECT_NAME__",
-  "main": "./dist/_worker.js/index.js",
-  "compatibility_date": "2025-05-05",
+  "main": "@astrojs/cloudflare/entrypoints/server",
+  "compatibility_date": "2026-07-07",
   "compatibility_flags": ["nodejs_compat"],
-  "assets": { "directory": "./dist", "binding": "ASSETS" },
-  "r2_buckets": [
-    { "binding": "MEDIA_BUCKET", "bucket_name": "movp-frontend-media" }
+  "kv_namespaces": [
+    { "binding": "SESSION" }
   ],
   "vars": {
     "GRAPHQL_ENDPOINT": "http://127.0.0.1:64721/functions/v1/graphql",

@@ -6,6 +6,7 @@ export const note = defineCollection({
   label: 'Note',
   labelPlural: 'Notes',
   workspaceScoped: true,
+  genericWrite: 'crud',
   fields: {
     title: f.text({ label: 'Title', required: true, searchable: true }),
     body: f.richText({ label: 'Body', searchable: true, embeddable: true }),

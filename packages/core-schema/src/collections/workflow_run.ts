@@ -6,6 +6,7 @@ export const workflowRun = defineCollection({
   label: 'Workflow Run',
   labelPlural: 'Workflow Runs',
   workspaceScoped: true,
+  genericWrite: 'none',
   fields: {
     source_event_id: f.uuid({ label: 'Source Event ID', required: true }),
     event_type: f.text({ label: 'Event Type', required: true, reporting: { role: 'dimension' } }),

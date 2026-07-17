@@ -2,7 +2,7 @@ import SchemaBuilder from '@pothos/core'
 import ComplexityPlugin from '@pothos/plugin-complexity'
 import DataloaderPlugin from '@pothos/plugin-dataloader'
 import { GraphQLError, type GraphQLSchema } from 'graphql'
-import type { CollectionDef, FieldDef, MovpSchema } from '@movp/core-schema'
+import { genericWriteMode, type CollectionDef, type FieldDef, type MovpSchema } from '@movp/core-schema'
 import {
   createDomain,
   AdminDomainError,
@@ -852,6 +852,7 @@ export function buildSchema(schema: MovpSchema): GraphQLSchema {
     const page = pages.get(c.name)
     const input = inputs.get(c.name)
     const updateInput = updateInputs.get(c.name)
+    const writeMode = genericWriteMode(c)
 
     builder.queryField(c.name, (t: any) =>
       t.field({
@@ -881,28 +882,32 @@ export function buildSchema(schema: MovpSchema): GraphQLSchema {
       }),
     )
 
-    builder.mutationField(`create${pascal(c.name)}`, (t: any) =>
-      t.field({
-        type: ref,
-        complexity: 10,
-        args: { input: t.arg({ type: input, required: true }) },
-        resolve: (_r: unknown, args: any, ctx: GraphQLContext) => service(domainFrom(ctx), c.name).create(args.input),
-      }),
-    )
+    if (writeMode !== 'none') {
+      builder.mutationField(`create${pascal(c.name)}`, (t: any) =>
+        t.field({
+          type: ref,
+          complexity: 10,
+          args: { input: t.arg({ type: input, required: true }) },
+          resolve: (_r: unknown, args: any, ctx: GraphQLContext) => service(domainFrom(ctx), c.name).create(args.input),
+        }),
+      )
+    }
 
-    builder.mutationField(`update${pascal(c.name)}`, (t: any) =>
-      t.field({
-        type: ref,
-        complexity: 10,
-        args: { id: t.arg.id({ required: true }), input: t.arg({ type: updateInput, required: true }) },
-        resolve: (_r: unknown, args: any, ctx: GraphQLContext) => {
-          const patch = { ...(args.input as Record<string, unknown>) }
-          delete patch.id
-          delete patch.workspace_id
-          return service(domainFrom(ctx), c.name).update(String(args.id), patch)
-        },
-      }),
-    )
+    if (writeMode === 'crud') {
+      builder.mutationField(`update${pascal(c.name)}`, (t: any) =>
+        t.field({
+          type: ref,
+          complexity: 10,
+          args: { id: t.arg.id({ required: true }), input: t.arg({ type: updateInput, required: true }) },
+          resolve: (_r: unknown, args: any, ctx: GraphQLContext) => {
+            const patch = { ...(args.input as Record<string, unknown>) }
+            delete patch.id
+            delete patch.workspace_id
+            return service(domainFrom(ctx), c.name).update(String(args.id), patch)
+          },
+        }),
+      )
+    }
   }
 
   builder.queryField('search', (t: any) =>

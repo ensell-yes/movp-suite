@@ -6,6 +6,7 @@ export const automationRule = defineCollection({
   label: 'Automation Rule',
   labelPlural: 'Automation Rules',
   workspaceScoped: true,
+  genericWrite: 'none',
   fields: {
     trigger_event_type: f.relation('event_type', { label: 'Trigger Event Type', cardinality: 'many-to-one', required: true }),
     condition: f.json({ label: 'Condition', required: true }),

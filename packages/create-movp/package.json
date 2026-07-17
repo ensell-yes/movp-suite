@@ -1,6 +1,6 @@
 {
   "name": "create-movp",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "bin": {
     "create-movp": "./dist/cli.js"
@@ -27,9 +27,9 @@
     "@types/node": "^26.0.1"
   },
   "dependencies": {
-    "@movp/codegen": "^0.1.0",
-    "@movp/core-schema": "^0.1.0",
-    "@movp/platform": "^0.1.0"
+    "@movp/codegen": "^0.1.1",
+    "@movp/core-schema": "^0.1.1",
+    "@movp/platform": "^0.1.1"
   },
   "publishConfig": {
     "main": "./dist/index.js",

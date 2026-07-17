@@ -6,6 +6,7 @@ export const segment = defineCollection({
   label: 'Segment',
   labelPlural: 'Segments',
   workspaceScoped: true,
+  genericWrite: 'crud',
   fields: {
     name: f.text({ label: 'Name', required: true, searchable: true }),
     description: f.richText({ label: 'Description', searchable: true }),

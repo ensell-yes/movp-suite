@@ -9,6 +9,7 @@ export const platformEvent = defineCollection({
   label: 'Platform Event',
   labelPlural: 'Platform Events',
   workspaceScoped: true,
+  genericWrite: 'append-only',
   fields: {
     // NOT searchable: FTS would emit a `search_vector` column + GIN index + a BEFORE INSERT/UPDATE
     // tsvector trigger on this highest-volume append-only fact (bridge + 500-row ingest batches).

@@ -6,6 +6,7 @@ export const tag = defineCollection({
   label: 'Tag',
   labelPlural: 'Tags',
   workspaceScoped: true,
+  genericWrite: 'crud',
   fields: {
     name: f.text({ label: 'Name', required: true, searchable: true }),
   },

@@ -72,6 +72,21 @@
   a pinned, repeatable smoke that keeps credentials out of argv and logs.
 - Agent-facing auth codes are `missing_token`, `invalid_token`, `expired_token`, and
   `invalid_claims`. A revoked PAT maps to `invalid_token` at every public boundary.
+- `pnpm docs:agent-contract -- --out-dir <existing-directory>` atomically exports the authoritative
+  `schema.json`, `mcp-tools.json`, and generated `schema-reference.md` from the real schema and MCP
+  registry. The deterministic exporter test pins 46 collections, 35 events, and the capability-safe
+  176-tool registry for release `0.1.1`.
+
+## Astro Cloudflare Templates
+
+- Astro 6 source configs use `@astrojs/cloudflare/entrypoints/server`. Never point source
+  `wrangler.jsonc` at generated `dist/server/entry.mjs` or the removed `dist/_worker.js` layout.
+- `astro build` owns `dist/server/wrangler.json` and Wrangler's redirected deploy config; the deploy
+  gate is build first, then `wrangler deploy --dry-run`.
+- The adapter requires `SESSION` KV. Keep the ID-less binding in source so Wrangler auto-provisions
+  it; do not manually create or commit an account-specific namespace id.
+- Frontend bindings are the four public vars plus `SESSION`/adapter-generated `ASSETS`. Do not add an
+  R2 binding until code has a real runtime consumer. Regenerate binding types after config changes.
 
 ## Schema Productization
 
@@ -123,6 +138,14 @@
   event. Form saves still reload the page, so save rich-text first; the dirty-only `beforeunload` guard protects drafts.
 
 ## Task/CMS Agent Contracts
+
+- Generic public-collection MCP and CLI creates accept relation columns as snake-case `<field>_id`
+  inputs, and both surfaces expose generic `update` operations. Preserve schema-derived number,
+  boolean, JSON, and enum validation in `packages/mcp/src/server.ts` and
+  `packages/cli/src/program.ts`; the real-schema surface gate pins the complete tool inventory.
+- The published `@movp/cli` executable is built JavaScript and must retain
+  `#!/usr/bin/env node`. It must never invoke `npx tsx` or download a runtime on first use;
+  `packages/cli/test/bin-runtime-gate.mjs` is the packaged-executable boundary.
 
 - Consumer contracts live in `docs/agents/task-cms-{data-contract,interface-contract,scaffolding}.md` and
   are indexed by `llms.txt`. Keep them aligned with the schema, domain types, MCP registry, and CLI commands;

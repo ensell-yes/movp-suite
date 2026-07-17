@@ -129,7 +129,7 @@ done
 
 PLATFORM_CHECK="$WORK/platform-check"
 npm install --prefix "$PLATFORM_CHECK" --registry "$REGISTRY" --ignore-scripts --no-package-lock \
-  @movp/platform@0.1.0 >/dev/null
+  @movp/platform@0.1.1 >/dev/null
 PLATFORM_DIST="$PLATFORM_CHECK/node_modules/@movp/platform/dist"
 [ -f "$PLATFORM_DIST/index.js" ] || {
   echo "published @movp/platform artifact is missing dist/index.js" >&2
@@ -138,7 +138,7 @@ PLATFORM_DIST="$PLATFORM_CHECK/node_modules/@movp/platform/dist"
 
 cd "$WORK"
 printf '%s\n%s\n%s\n' "$TEMPLATE" "$PROJECT" "$WS" >"$WORK/scaffold-input"
-npm --registry "$REGISTRY" create movp@0.1.0 <"$WORK/scaffold-input"
+npm --registry "$REGISTRY" create movp@0.1.1 <"$WORK/scaffold-input"
 [ -d "$PROJECT" ] || { echo "scaffold did not create $PROJECT" >&2; exit 1; }
 cd "$PROJECT"
 echo "gallery gate [$TEMPLATE]: install"

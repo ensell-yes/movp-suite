@@ -2,6 +2,7 @@
 // 'one-to-many' is the inverse side. 'many-to-many' uses the typed edges graph.
 export type Cardinality = 'one-to-one' | 'one-to-many' | 'many-to-one' | 'many-to-many'
 export type ReportingRole = 'dimension' | 'measure'
+export type GenericWriteMode = 'crud' | 'append-only' | 'none'
 export type FieldType =
   | 'text'
   | 'richText'
@@ -34,6 +35,8 @@ export interface CollectionDef {
   label: string
   labelPlural: string
   workspaceScoped: boolean
+  /** Generic GraphQL/MCP/CLI writes. Reads remain available unless `internal` is true. */
+  genericWrite?: GenericWriteMode
   /**
    * Internal collections still generate tables/types, but are intentionally
    * skipped by generic public surfaces when writes need bespoke atomic logic.

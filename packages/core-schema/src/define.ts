@@ -10,7 +10,6 @@ export function defineCollection(def: CollectionDef): CollectionDef {
   if (!def.label || !def.labelPlural) {
     throw new Error(`collection "${def.name}" requires both label and labelPlural`)
   }
-
   for (const [fname, field] of Object.entries(def.fields)) {
     if (!IDENT.test(fname)) {
       throw new Error(`field name must be snake_case matching ${IDENT} (got "${fname}" in "${def.name}")`)

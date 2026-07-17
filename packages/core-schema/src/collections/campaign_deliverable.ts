@@ -9,6 +9,7 @@ export const campaignDeliverable = defineCollection({
   label: 'Campaign Deliverable',
   labelPlural: 'Campaign Deliverables',
   workspaceScoped: true,
+  genericWrite: 'crud',
   fields: {
     campaign: f.relation('campaign', { label: 'Campaign', cardinality: 'many-to-one', required: true }),
     // Optional relation -> `channel_id uuid references public.campaign_channel(id) on delete set null`.

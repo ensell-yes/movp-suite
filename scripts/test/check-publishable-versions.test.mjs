@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, it } from 'node:test'
 import {
-  PUBLISHABLE, checkPublishableVersions, pinnedZeroConsumers,
+  EXPECTED_VERSION, PUBLISHABLE, checkPublishableVersions, pinnedZeroConsumers,
 } from '../check-publishable-versions.mjs'
 
 // A SYNTHETIC repo root under $TMPDIR — the gate is driven against it, never against the real
@@ -18,7 +18,7 @@ beforeEach(() => {
     mkdirSync(join(repoRoot, 'packages', name), { recursive: true })
     writeFileSync(
       join(repoRoot, 'packages', name, 'package.json'),
-      `${JSON.stringify({ name: `@movp/${name}`, version: '0.1.0' }, null, 2)}\n`,
+      `${JSON.stringify({ name: `@movp/${name}`, version: EXPECTED_VERSION }, null, 2)}\n`,
     )
   }
 })
@@ -54,7 +54,7 @@ describe('pinnedZeroConsumers — the git exit status is DISCRIMINATED, never sw
 })
 
 describe('checkPublishableVersions', () => {
-  it('PASSES when every publishable is 0.1.0 and git reports no match (status 1)', () => {
+  it('PASSES when every publishable matches EXPECTED_VERSION and git reports no match (status 1)', () => {
     assert.deepEqual(checkPublishableVersions(repoRoot, stubGit({ status: 1 })), [])
   })
 
@@ -78,7 +78,10 @@ describe('checkPublishableVersions', () => {
     )
     const problems = checkPublishableVersions(repoRoot, stubGit({ status: 1 }))
     assert.equal(problems.length, 1)
-    assert.match(problems[0], /@movp\/auth is 0\.0\.0, expected 0\.1\.0/)
+    assert.equal(
+      problems[0],
+      `version check failed: @movp/auth is 0.0.0, expected ${EXPECTED_VERSION}`,
+    )
   })
 
   it('THROWS on a symlinked manifest instead of following it, and leaks no target bytes', () => {

@@ -6,6 +6,7 @@ export const campaignChannel = defineCollection({
   label: 'Campaign Channel',
   labelPlural: 'Campaign Channels',
   workspaceScoped: true,
+  genericWrite: 'crud',
   fields: {
     // Required relation -> `campaign_id uuid not null references public.campaign(id) on delete cascade`.
     campaign: f.relation('campaign', { label: 'Campaign', cardinality: 'many-to-one', required: true }),

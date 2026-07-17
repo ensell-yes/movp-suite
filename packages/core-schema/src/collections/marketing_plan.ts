@@ -6,6 +6,7 @@ export const marketingPlan = defineCollection({
   label: 'Marketing Plan',
   labelPlural: 'Marketing Plans',
   workspaceScoped: true,
+  genericWrite: 'crud',
   fields: {
     name: f.text({ label: 'Name', required: true, searchable: true }),
     description: f.richText({ label: 'Description', searchable: true }),

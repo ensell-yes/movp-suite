@@ -91,6 +91,7 @@ function runtimeCollection(collection: CollectionDef) {
     label: collection.label,
     labelPlural: collection.labelPlural,
     workspaceScoped: collection.workspaceScoped,
+    genericWrite: collection.genericWrite ?? (collection.internal ? 'none' : 'crud'),
     internal: collection.internal === true,
     layer: collection.layer ?? 'platform',
     fields: Object.entries(collection.fields)

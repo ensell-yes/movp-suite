@@ -6,6 +6,7 @@ export const segmentRecomputeRun = defineCollection({
   label: 'Segment Recompute Run',
   labelPlural: 'Segment Recompute Runs',
   workspaceScoped: true,
+  genericWrite: 'none',
   fields: {
     // Required relation -> `segment_id uuid not null references public.segment(id) on delete cascade`.
     segment: f.relation('segment', { label: 'Segment', cardinality: 'many-to-one', required: true }),

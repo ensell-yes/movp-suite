@@ -6,13 +6,13 @@ import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { readJsonGuarded } from './lib/guarded-read.mjs'
 
-/** The set Verdaccio publishes and scaffolds pin at ^0.1.0. `mcp-bridge` is private/unpublished and
+/** The set Verdaccio publishes and scaffolds pin at ^0.1.1. `mcp-bridge` is private/unpublished and
  *  intentionally excluded (it stays 0.0.0). */
 export const PUBLISHABLE = [
   'auth', 'cli', 'codegen', 'core-schema', 'domain', 'editor-sdk', 'flows',
   'graphql', 'mcp', 'notifications', 'obs', 'platform', 'richtext', 'search',
 ]
-export const EXPECTED_VERSION = '0.1.0'
+export const EXPECTED_VERSION = '0.1.1'
 /** POSIX ERE for `git grep -E`. `workspace:*` is fine — only a literal 0.0.0 version pin is a hit. */
 export const ZERO_PIN_PATTERN = '"@movp/[a-z-]+":[[:space:]]*"0\\.0\\.0"'
 // GOTCHA: scope the grep to MANIFESTS. An UNSCOPED `git grep` over the worktree also matches this

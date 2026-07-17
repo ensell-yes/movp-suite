@@ -140,13 +140,13 @@ importers:
   packages/create-movp:
     dependencies:
       '@movp/codegen':
-        specifier: ^0.1.0
+        specifier: ^0.1.1
         version: link:../codegen
       '@movp/core-schema':
-        specifier: ^0.1.0
+        specifier: ^0.1.1
         version: link:../core-schema
       '@movp/platform':
-        specifier: ^0.1.0
+        specifier: ^0.1.1
         version: link:../platform
     devDependencies:
       '@types/node':

@@ -10,6 +10,7 @@ export const campaignSegment = defineCollection({
   label: 'Campaign Segment',
   labelPlural: 'Campaign Segments',
   workspaceScoped: true,
+  genericWrite: 'crud',
   fields: {
     campaign: f.relation('campaign', { label: 'Campaign', cardinality: 'many-to-one', required: true }),
     targeting_role: f.enum(['primary', 'lookalike', 'exclusion'], {

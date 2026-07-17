@@ -6,6 +6,7 @@ export const campaign = defineCollection({
   label: 'Campaign',
   labelPlural: 'Campaigns',
   workspaceScoped: true,
+  genericWrite: 'crud',
   fields: {
     // Optional relation -> `marketing_plan_id uuid references public.marketing_plan(id) on delete set null`.
     marketing_plan: f.relation('marketing_plan', { label: 'Marketing Plan', cardinality: 'many-to-one' }),
