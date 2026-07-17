@@ -12,6 +12,7 @@
     "build": "tsup src/index.ts --format esm --dts --sourcemap --clean --target node20 --out-dir dist"
   },
   "dependencies": {
+    "@movp/richtext": "workspace:*",
     "@supabase/supabase-js": "^2.45.0",
     "zod": "^3.23.8"
   },

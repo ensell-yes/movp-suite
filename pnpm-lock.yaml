@@ -164,6 +164,9 @@ importers:
 
   packages/domain:
     dependencies:
+      '@movp/richtext':
+        specifier: workspace:*
+        version: link:../richtext
       '@supabase/supabase-js':
         specifier: ^2.45.0
         version: 2.110.0
