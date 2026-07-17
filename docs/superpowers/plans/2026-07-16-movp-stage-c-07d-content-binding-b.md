@@ -85,6 +85,21 @@ describe('MovpEditor dirty signal', () => {
     // still dirty because content differs from baseline:
     expect(onDirtyChange).toHaveBeenLastCalledWith(true)
   })
+
+  it('stays dirty when the user edits DURING an in-flight save (F-2 race)', async () => {
+    let resolveSave!: (r: { status: 'saved'; revisionId: string }) => void
+    const onSave = vi.fn(() => new Promise<{ status: 'saved'; revisionId: string }>((r) => { resolveSave = r }))
+    const onDirtyChange = vi.fn()
+    render(<MovpEditor initialBody={BODY_A} onSave={onSave} onRefresh={vi.fn()} onDirtyChange={onDirtyChange} />)
+    const saveBtn = await screen.findByRole('button', { name: 'Save content' })
+    // edit -> dirty, then click Save (captures submittedBody), then edit AGAIN while the promise is pending
+    // ...drive edit #1 (same mechanism as the test above)...
+    fireEvent.click(saveBtn)
+    // ...drive edit #2 while onSave is unresolved...
+    onDirtyChange.mockClear()
+    act(() => { resolveSave({ status: 'saved', revisionId: 'r1' }) })
+    await vi.waitFor(() => expect(onDirtyChange).toHaveBeenLastCalledWith(true)) // edits #2 were NOT submitted
+  })
 })
 ```
 
@@ -158,14 +173,30 @@ Set the baseline (and clear dirty) in the load effect and after a successful sav
   useEffect(() => () => { if (timerRef.current) clearTimeout(timerRef.current) }, [])
 ```
 
-In the existing `save` callback, on a `saved` result set the baseline to the submitted body and clear dirty (place AFTER `setStatus`, alongside the F5-contained `onSaved`):
+Rework the `save` callback so the SUBMITTED body — not the post-await live document — becomes the baseline. Capture `submittedBody` BEFORE calling `onSave`; submit exactly that; after a `saved` result set the baseline to it and reconcile against the current document (so edits typed DURING the in-flight save keep the editor dirty):
 
 ```tsx
+  const save = useCallback(async () => {
+    if (!editor || savingRef.current) return
+    savingRef.current = true
+    setStatus('saving')
+    const submittedBody = tipTapAdapter.encode(editor.getJSON())   // capture BEFORE the await
+    let result: SaveResult
+    try {
+      result = await onSave(submittedBody)
+    } catch (err) {
+      result = classifySaveOutcome(err)
+    }
+    savingRef.current = false
+    setStatus(result.status)
     if (result.status === 'saved') {
-      baselineRef.current = tipTapAdapter.encode(editor.getJSON())
-      emitDirty(false)
+      baselineRef.current = submittedBody
+      // If the user typed during the in-flight save, the live doc differs from what was submitted:
+      // those edits were NOT saved, so remain dirty.
+      emitDirty(editorRef.current ? tipTapAdapter.encode(editorRef.current.getJSON()) !== submittedBody : false)
       try { onSaved?.(result.revisionId) } catch { /* contained */ }
     }
+  }, [editor, onSave, onSaved, emitDirty])
 ```
 
 > **Gotcha:** `setContent(doc, false)` — the second arg `false` suppresses the `onUpdate` emit, so a programmatic load/`initialBody` change never flashes `dirty:true` (spec §6.1). Set the baseline in the SAME effect immediately after.
@@ -298,6 +329,102 @@ git commit -m "chore(frontend): depend on @movp/editor-sdk and @movp/richtext"
 
 ---
 
+## Task 3G: GraphQL production conflict boundary (execute BEFORE Task 4)
+
+**Why:** production `updateContent` throws a plain domain `Error`; graphql-yoga's `maskError` (via `maskMovpError`, `packages/graphql/src/yoga.ts:11`) replaces it with `"Unexpected error."` and code `INTERNAL_SERVER_ERROR`. The mock returns the real conflict string, so an e2e would pass while production silently degrades a conflict to `save_failed`. The resolver must emit a **sanitized, structured** conflict that survives masking, and the endpoint must classify that **code** (not message text).
+
+**Files:**
+- Modify: `packages/graphql/src/schema.ts` (the `updateContent` resolver, `:1518-1530`)
+- Modify: `templates/frontend-astro/src/lib/graphql.ts` (surface the first error's extension `code` on the `ok:false` path)
+- Modify: `templates/frontend-astro/src/pages/content/[id].astro` (`saveErrorMessage` → code-based)
+- Test: `packages/graphql/test/*` (yoga-through test) — match the existing graphql test harness
+
+**Interfaces:**
+- Produces: on a content-update conflict, GraphQL responds with an error carrying `extensions.code === 'CONFLICT'` and a sanitized message; `gqlRequest` exposes it as `{ ok: false, code: 'graphql_error', errorCode: 'CONFLICT' }`.
+
+- [ ] **Step 1: Write the failing graphql test** (match the existing `packages/graphql/test` harness that builds the real yoga server). Assert: an `updateContent` that hits `content_update_conflict` returns an error whose `extensions.code === 'CONFLICT'` (and message is NOT the raw domain string), while an unrelated internal error is masked to `"Unexpected error."`.
+
+```ts
+// shape (adapt to the existing graphql test harness that POSTs to createYoga(...)):
+it('surfaces a content-update conflict as a sanitized CONFLICT, not a masked internal error', async () => {
+  // ...drive updateContent so domain.content.update throws '... [content_update_conflict]' ...
+  const body = await postGraphql(UPDATE_CONTENT, { id, data, expectedRevisionId: staleId })
+  expect(body.errors[0].extensions.code).toBe('CONFLICT')
+  expect(body.errors[0].message).not.toContain('content_update_conflict') // sanitized
+})
+```
+
+- [ ] **Step 2: Run to verify it fails**
+
+Run: `pnpm --filter @movp/graphql test`
+Expected: FAIL — the conflict is currently masked to `INTERNAL_SERVER_ERROR`/`"Unexpected error."`.
+
+- [ ] **Step 3: Map the conflict in the resolver.** `GraphQLError` is already imported in `schema.ts` (used at `:79`). Wrap the `updateContent` resolver (`:1518-1530`) so a domain `content_update_conflict` becomes a sanitized structured error; other errors propagate unchanged (still masked):
+
+```ts
+    builder.mutationField('updateContent', (t: any) =>
+      t.field({
+        type: contentItemRef,
+        complexity: 10,
+        args: { id: t.arg.id({ required: true }), data: t.arg.string({ required: true }), expectedRevisionId: t.arg.id({ required: false }) },
+        resolve: async (_r: unknown, a: any, ctx: GraphQLContext) => {
+          try {
+            return await domainFrom(ctx).content.update({
+              itemId: String(a.id),
+              data: JSON.parse(String(a.data)),
+              expectedRevisionId: a.expectedRevisionId ? String(a.expectedRevisionId) : undefined,
+            })
+          } catch (error) {
+            if (error instanceof Error && error.message.includes('content_update_conflict')) {
+              throw new GraphQLError('This content was updated by someone else.', { extensions: { code: 'CONFLICT' } })
+            }
+            throw error   // ordinary errors stay masked by maskMovpError
+          }
+        },
+      }),
+    )
+```
+
+> **Gotcha:** an intentionally-thrown `GraphQLError` with `extensions` is NOT masked by `maskError` (that is exactly how the admin path at `schema.ts:64-80` surfaces `CONFLICT`). A plain `throw error` remains masked. Do not widen the `catch` to re-wrap non-conflict errors.
+
+- [ ] **Step 4: Surface the extension code in the frontend client.** In `templates/frontend-astro/src/lib/graphql.ts`, add `errorCode?: string` to the `ok:false` variant of `GqlResult`, and populate it from the first field error that carries a code (the parser already extracts `extensions.code` into `GqlFieldError.code`):
+
+```ts
+// in the GqlResult union, the failure arm becomes:
+  | { ok: false; code: GqlErrorCode; message?: string; errorCode?: string }
+// ...and the non-partial error return becomes:
+    const message = errors.map((error) => error.message).filter(Boolean).join('; ')
+    return { ok: false, code: 'graphql_error', message: message || undefined, errorCode: errors.find((e) => e.code)?.code }
+```
+
+Because the resolver now emits a SANITIZED message, the **existing** page's message-substring conflict check would stop matching in prod. Update `saveErrorMessage` in `templates/frontend-astro/src/pages/content/[id].astro:124-130` to classify on the structured code (the mock returns `extensions.code: 'CONFLICT'`, so the existing `ci1` conflict e2e keeps passing):
+
+```ts
+function saveErrorMessage(result: { code: string; message?: string; errorCode?: string }): string {
+  if (result.errorCode === 'CONFLICT' || (result.message ?? '').includes('content_update_conflict')) {
+    return 'This content was changed by someone else. Reload to see the latest, then reapply your edits.'
+  }
+  return 'Could not save. Try again.'
+}
+```
+> The `|| message.includes(...)` clause is a belt-and-suspenders fallback; the `errorCode` path is authoritative.
+
+- [ ] **Step 5: Run to verify it passes**
+
+Run: `pnpm --filter @movp/graphql test`
+Expected: PASS.
+Run: `pnpm --filter @movp/graphql typecheck && pnpm --filter @movp/frontend-astro build`
+Expected: PASS.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add packages/graphql/src/schema.ts packages/graphql/test templates/frontend-astro/src/lib/graphql.ts "templates/frontend-astro/src/pages/content/[id].astro"
+git commit -m "fix(graphql): surface content-update conflict as sanitized CONFLICT code"
+```
+
+---
+
 ## Task 4: Rich-text save/read endpoint
 
 **Files:**
@@ -311,7 +438,7 @@ git commit -m "chore(frontend): depend on @movp/editor-sdk and @movp/richtext"
 
 ```ts
 import { describe, expect, it } from 'vitest'
-import { boundedText, classifyOutcome } from './richtext.ts'
+import { boundedText, classifyOutcome, fieldKeyBytes, parseData, parseSchema } from './richtext.ts'
 
 describe('boundedText', () => {
   it('returns null when the stream exceeds the cap', async () => {
@@ -324,17 +451,32 @@ describe('boundedText', () => {
   })
 })
 
-describe('classifyOutcome', () => {
-  it('maps a content_update_conflict gql failure to conflict/409', () => {
-    expect(classifyOutcome({ ok: false, code: 'graphql_error', message: 'x content_update_conflict' }))
+describe('classifyOutcome (code-based, not message-based)', () => {
+  it('maps the structured CONFLICT extension code to conflict/409', () => {
+    expect(classifyOutcome({ ok: false, code: 'graphql_error', errorCode: 'CONFLICT' }))
       .toEqual({ outcome: 'conflict', status: 409, body: { status: 'conflict' } })
   })
   it('maps auth_error to 401', () => {
     expect(classifyOutcome({ ok: false, code: 'auth_error' }).status).toBe(401)
   })
-  it('maps any other gql failure to 500 save_failed (no message leak)', () => {
-    const out = classifyOutcome({ ok: false, code: 'graphql_error', message: 'secret 10.0.0.1' })
+  it('does NOT infer conflict from message text alone (a masked prod error is 500)', () => {
+    const out = classifyOutcome({ ok: false, code: 'graphql_error', message: 'content_update_conflict leaked' })
     expect(out).toEqual({ outcome: 'error', status: 500, body: { status: 'error', code: 'save_failed' } })
+  })
+})
+
+describe('parseSchema / parseData reject malformed persisted JSON', () => {
+  it('parseSchema returns null for non-array / bad elements', () => {
+    expect(parseSchema('{}')).toBeNull()
+    expect(parseSchema('[{"type":"richtext"}]')).toBeNull()   // missing name
+    expect(parseSchema('not json')).toBeNull()
+  })
+  it('parseData returns null for non-object', () => {
+    expect(parseData('[]')).toBeNull()
+    expect(parseData('null')).toBeNull()
+  })
+  it('fieldKeyBytes measures UTF-8 bytes, not UTF-16 units', () => {
+    expect(fieldKeyBytes('€')).toBe(3)   // 1 UTF-16 unit, 3 UTF-8 bytes
   })
 })
 ```
@@ -378,11 +520,43 @@ export async function boundedText(request: Request, max: number): Promise<string
   return new TextDecoder().decode(merged)
 }
 
-/** Map a failed gqlRequest to the authoritative outcome row (spec §7). */
-export function classifyOutcome(r: Extract<GqlResult<unknown>, { ok: false }>): OutcomeRow {
+/**
+ * Map a failed gqlRequest to the authoritative outcome row (spec §7). Classify conflict by the STRUCTURED
+ * extension code the graphql layer emits (Task 3G) — NOT by message text, which prod masking would drop.
+ */
+export function classifyOutcome(r: { ok: false; code: string; message?: string; errorCode?: string }): OutcomeRow {
   if (r.code === 'auth_error') return { outcome: 'unauthorized', status: 401, body: { status: 'error', code: 'auth_error' } }
-  if ((r.message ?? '').includes('content_update_conflict')) return { outcome: 'conflict', status: 409, body: { status: 'conflict' } }
+  if (r.errorCode === 'CONFLICT') return { outcome: 'conflict', status: 409, body: { status: 'conflict' } }
   return { outcome: 'error', status: 500, body: { status: 'error', code: 'save_failed' } }
+}
+
+type FieldDef = { name: string; type?: string }
+
+/** UTF-8 byte length of a string (spec §7 bounds are in bytes, not UTF-16 units). */
+export function fieldKeyBytes(s: string): number { return new TextEncoder().encode(s).length }
+
+/** Structurally validate a persisted field_schema. Returns null (→ quarantine, not crash) if malformed. */
+export function parseSchema(raw: string | null): FieldDef[] | null {
+  let parsed: unknown
+  try { parsed = JSON.parse(raw ?? '[]') } catch { return null }
+  if (!Array.isArray(parsed)) return null
+  const out: FieldDef[] = []
+  for (const f of parsed) {
+    if (!f || typeof f !== 'object') return null
+    const name = (f as { name?: unknown }).name
+    const type = (f as { type?: unknown }).type
+    if (typeof name !== 'string') return null
+    out.push({ name, type: typeof type === 'string' ? type : undefined })
+  }
+  return out
+}
+
+/** Structurally validate persisted item data. Returns null if not a JSON object. */
+export function parseData(raw: string | null): Record<string, unknown> | null {
+  let parsed: unknown
+  try { parsed = JSON.parse(raw ?? '{}') } catch { return null }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null
+  return parsed as Record<string, unknown>
 }
 
 function emit(row: { outcome: string; itemId?: string; fieldKey?: string; startedAt: number }) {
@@ -391,8 +565,6 @@ function emit(row: { outcome: string; itemId?: string; fieldKey?: string; starte
     request_id: crypto.randomUUID(), latency_ms: Date.now() - row.startedAt,
   }))
 }
-
-type FieldDef = { name: string; type?: string }
 
 export const POST: APIRoute = async ({ params, request, cookies }) => {
   const startedAt = Date.now()
@@ -408,9 +580,10 @@ export const POST: APIRoute = async ({ params, request, cookies }) => {
   const fieldKey = typeof input.fieldKey === 'string' ? input.fieldKey : ''
   const body = typeof input.body === 'string' ? input.body : ''
   const expectedRevisionId = typeof input.expectedRevisionId === 'string' ? input.expectedRevisionId : ''
-  const invalid = !UUID.test(id) || !UUID.test(expectedRevisionId) || !fieldKey || fieldKey.length > 256
+  const invalid = !UUID.test(id) || !UUID.test(expectedRevisionId) || !fieldKey || fieldKeyBytes(fieldKey) > 256
   let parsedBody: unknown
   try { parsedBody = JSON.parse(body) } catch { parsedBody = undefined }
+  // Do NOT log the unvalidated fieldKey on a validation reject.
   if (invalid || !isDocShape(parsedBody)) { emit({ outcome: 'validation', itemId: id, startedAt }); return Response.json({ status: 'error', code: 'invalid_request' }, { status: 422 }) }
 
   const { graphqlEndpoint } = readServerEnv()
@@ -421,12 +594,15 @@ export const POST: APIRoute = async ({ params, request, cookies }) => {
   const itemNode = read.data.contentItem
   if (!itemNode) { emit({ outcome: 'not_found', itemId: id, startedAt }); return Response.json({ status: 'error', code: 'not_found' }, { status: 404 }) }
 
-  const schema = JSON.parse(itemNode.content_type.field_schema ?? '[]') as FieldDef[]
+  // Structurally validate persisted state (untrusted-I/O: quarantine malformed, don't crash) BEFORE use.
+  const schema = parseSchema(itemNode.content_type.field_schema)
+  const current = parseData(itemNode.data ?? '{}')
+  if (!schema || !current) { emit({ outcome: 'error', itemId: id, startedAt }); return Response.json({ status: 'error', code: 'save_failed' }, { status: 500 }) }
   if (!schema.some((f) => f.name === fieldKey && f.type === 'richtext')) {
+    // fieldKey did not pass the schema check → still unvalidated → do not log it.
     emit({ outcome: 'validation', itemId: id, startedAt }); return Response.json({ status: 'error', code: 'invalid_request' }, { status: 422 })
   }
 
-  const current = JSON.parse(itemNode.data ?? '{}') as Record<string, unknown>
   const merged = { ...current, [fieldKey]: body }   // body sent unchanged; domain prepare() canonicalizes once
   const write = await gqlRequest<{ updateContent: { id: string; status: string; current_revision_id: string } }>(
     { endpoint: graphqlEndpoint, token }, UPDATE_CONTENT_MUTATION, { id, data: JSON.stringify(merged), expectedRevisionId },
@@ -450,13 +626,15 @@ export const GET: APIRoute = async ({ params, request, cookies }) => {
   if (!read.ok) { const o = classifyOutcome(read); emit({ outcome: o.outcome, itemId: id, startedAt }); return Response.json(o.body, { status: o.status }) }
   const itemNode = read.data.contentItem
   if (!itemNode) { emit({ outcome: 'not_found', itemId: id, startedAt }); return Response.json({ status: 'error', code: 'not_found' }, { status: 404 }) }
-  const schema = JSON.parse(itemNode.content_type.field_schema ?? '[]') as FieldDef[]
+  const schema = parseSchema(itemNode.content_type.field_schema)
+  const data = parseData(itemNode.data ?? '{}')
+  if (!schema || !data) { emit({ outcome: 'error', itemId: id, startedAt }); return Response.json({ status: 'error', code: 'save_failed' }, { status: 500 }) }
   if (!schema.some((f) => f.name === fieldKey && f.type === 'richtext')) {
     emit({ outcome: 'validation', itemId: id, startedAt }); return Response.json({ status: 'error', code: 'invalid_request' }, { status: 422 })
   }
-  const data = JSON.parse(itemNode.data ?? '{}') as Record<string, string>
-  emit({ outcome: 'saved', itemId: id, fieldKey, startedAt })   // read-ok reuses 'saved'-shaped success; latency logged
-  return Response.json({ body: data[fieldKey] ?? '', revisionId: itemNode.current_revision_id ?? '' }, { status: 200 })
+  const value = data[fieldKey]
+  emit({ outcome: 'read_ok', itemId: id, fieldKey, startedAt })
+  return Response.json({ body: typeof value === 'string' ? value : '', revisionId: itemNode.current_revision_id ?? '' }, { status: 200 })
 }
 ```
 
@@ -512,7 +690,7 @@ contentRevisions.push({ id: 'rt-rev-1', parent_id: null, revision_number: 1, dat
     const item = contentItems.find((i) => i.id === vid)
     // Legacy scenario-driven conflict for the existing ci1 test:
     if (scenario === 'conflict' && vid === 'ci1') {
-      return json(res, 200, { errors: [{ message: 'domain.content.update failed [40001] content_update_conflict' }] })
+      return json(res, 200, { errors: [{ message: 'This content was updated by someone else.', extensions: { code: 'CONFLICT' } }] })
     }
     if (item && item.content_type_id === 'ct-rt') {
       const expected = parsed.variables?.expectedRevisionId
@@ -524,7 +702,7 @@ contentRevisions.push({ id: 'rt-rev-1', parent_id: null, revision_number: 1, dat
         return json(res, 200, { data: { updateContent: { id: vid, status: item.status, current_revision_id: item.current_revision_id } } })
       }
       if (expected && expected !== item.current_revision_id) {
-        return json(res, 200, { errors: [{ message: 'domain.content.update failed [40001] content_update_conflict' }] })
+        return json(res, 200, { errors: [{ message: 'This content was updated by someone else.', extensions: { code: 'CONFLICT' } }] })
       }
       rtRevSeq += 1
       const newRev = { id: `rt-rev-${rtRevSeq}`, parent_id: item.current_revision_id, revision_number: rtRevSeq, data: submittedHash, author_id: 'u1', created_at: '2026-07-02T00:00:00Z' }
@@ -592,6 +770,15 @@ describe('RichTextFieldsIsland', () => {
     await waitFor(() => expect(screen.getByTestId('richtext-island').getAttribute('data-ready')).toBe('true'))
     expect(screen.getAllByRole('textbox', { name: 'Rich text editor' }).length).toBe(2)
   })
+
+  it('does not install a beforeunload guard while clean (spec §6.1)', () => {
+    const add = vi.spyOn(window, 'addEventListener')
+    render(<RichTextFieldsIsland itemId="rt1" initialRevisionId="rt-rev-1"
+      fields={[{ key: 'body', label: 'Body', body: '' }]} />)
+    expect(add.mock.calls.some(([type]) => type === 'beforeunload')).toBe(false)
+    expect(screen.getByTestId('richtext-island').getAttribute('data-dirty')).toBe('false')
+    add.mockRestore()
+  })
 })
 ```
 
@@ -603,7 +790,7 @@ Expected: FAIL — module not found.
 - [ ] **Step 3: Implement** `templates/frontend-astro/src/components/content/RichTextFieldsIsland.tsx` (client-safe: only `@movp/editor-sdk` + `@movp/richtext` + react):
 
 ```tsx
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { MovpEditor } from '@movp/editor-sdk'
 import { normalizeToCanonicalDoc } from '@movp/richtext'
 
@@ -617,28 +804,43 @@ export default function RichTextFieldsIsland(
 
   // One shared, authoritative revision across sibling editors (spec §6).
   const revisionRef = useRef(initialRevisionId)
-  const dirty = useRef<Set<string>>(new Set())
+  const dirtyKeys = useRef<Set<string>>(new Set())
+  const handlerRef = useRef<((e: BeforeUnloadEvent) => void) | null>(null)
+  const [dirtyCount, setDirtyCount] = useState(0)   // drives data-dirty for a deterministic e2e assertion
 
-  useEffect(() => {
-    const onBeforeUnload = (e: BeforeUnloadEvent) => { if (dirty.current.size > 0) { e.preventDefault(); e.returnValue = '' } }
-    window.addEventListener('beforeunload', onBeforeUnload)
-    return () => window.removeEventListener('beforeunload', onBeforeUnload)
+  // Install the beforeunload guard ONLY while at least one editor is dirty; remove it when clean (spec §6.1).
+  const setFieldDirty = useCallback((key: string, isDirty: boolean) => {
+    if (isDirty) dirtyKeys.current.add(key)
+    else dirtyKeys.current.delete(key)
+    const has = dirtyKeys.current.size > 0
+    if (has && !handlerRef.current) {
+      const h = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = '' }
+      handlerRef.current = h
+      window.addEventListener('beforeunload', h)
+    } else if (!has && handlerRef.current) {
+      window.removeEventListener('beforeunload', handlerRef.current)
+      handlerRef.current = null
+    }
+    setDirtyCount(dirtyKeys.current.size)
   }, [])
 
+  useEffect(() => () => { if (handlerRef.current) window.removeEventListener('beforeunload', handlerRef.current) }, [])
+
   return (
-    <div data-testid="richtext-island" data-ready={hydrated ? 'true' : 'false'}>
+    <div data-testid="richtext-island" data-ready={hydrated ? 'true' : 'false'} data-dirty={dirtyCount > 0 ? 'true' : 'false'}>
       {fields.map((f) => (
-        <RichTextField key={f.key} itemId={itemId} field={f} revisionRef={revisionRef} dirty={dirty} />
+        <RichTextField key={f.key} itemId={itemId} field={f} revisionRef={revisionRef} setFieldDirty={setFieldDirty} />
       ))}
     </div>
   )
 }
 
 function RichTextField(
-  { itemId, field, revisionRef, dirty }:
-  { itemId: string; field: Field; revisionRef: { current: string }; dirty: { current: Set<string> } },
+  { itemId, field, revisionRef, setFieldDirty }:
+  { itemId: string; field: Field; revisionRef: { current: string }; setFieldDirty: (key: string, isDirty: boolean) => void },
 ) {
   const [initialBody, setInitialBody] = useState(() => normalizeToCanonicalDoc(field.body))
+  const [refreshState, setRefreshState] = useState<'idle' | 'refreshing' | 'ready_to_retry' | 'refresh_error'>('idle')
 
   const onSave = async (body: string) => {
     const res = await fetch(`/api/content/${itemId}/richtext`, {
@@ -649,28 +851,34 @@ function RichTextField(
     if (res.status === 409) return { status: 'conflict' as const }
     return { status: 'error' as const, code: 'save_failed' as const }
   }
-  const onSaved = (revisionId: string) => { revisionRef.current = revisionId }
+  const onSaved = (revisionId: string) => { revisionRef.current = revisionId; setRefreshState('idle') }
+
+  const fetchLatest = async (): Promise<{ body: string; revisionId: string }> => {
+    const r = await fetch(`/api/content/${itemId}/richtext?fieldKey=${encodeURIComponent(field.key)}`)
+    if (!r.ok) throw new Error('refresh_failed')
+    return (await r.json()) as { body: string; revisionId: string }
+  }
   const onRefresh = () => {
-    // Re-sync the shared revision WITHOUT touching the draft (spec §5).
-    void fetch(`/api/content/${itemId}/richtext?fieldKey=${encodeURIComponent(field.key)}`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((j: { revisionId: string } | null) => { if (j) revisionRef.current = j.revisionId })
+    // Re-sync the shared revision WITHOUT touching the draft (spec §5). GET-failure keeps draft + conflict.
+    setRefreshState('refreshing')
+    fetchLatest()
+      .then((j) => { revisionRef.current = j.revisionId; setRefreshState('ready_to_retry') })
+      .catch(() => setRefreshState('refresh_error'))
   }
   const onLoadLatest = () => {
-    void fetch(`/api/content/${itemId}/richtext?fieldKey=${encodeURIComponent(field.key)}`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((j: { body: string; revisionId: string } | null) => {
-        if (!j) return
-        revisionRef.current = j.revisionId
-        setInitialBody(normalizeToCanonicalDoc(j.body))   // changes initialBody -> SDK setContent (destructive)
-      })
+    setRefreshState('refreshing')
+    fetchLatest()
+      .then((j) => { revisionRef.current = j.revisionId; setInitialBody(normalizeToCanonicalDoc(j.body)); setRefreshState('idle') })
+      .catch(() => setRefreshState('refresh_error'))   // destructive path: only replaces the draft on success
   }
-  const onDirtyChange = (d: boolean) => { if (d) dirty.current.add(field.key); else dirty.current.delete(field.key) }
+  const onDirtyChange = (d: boolean) => setFieldDirty(field.key, d)
 
   return (
     <section aria-label={field.label}>
       <MovpEditor initialBody={initialBody} onSave={onSave} onSaved={onSaved}
         onRefresh={onRefresh} onLoadLatest={onLoadLatest} onDirtyChange={onDirtyChange} />
+      {refreshState === 'ready_to_retry' && <span role="status">Revision updated — Save to retry.</span>}
+      {refreshState === 'refresh_error' && <span role="alert">Could not refresh. Your draft is safe; try again.</span>}
     </section>
   )
 }
@@ -715,7 +923,7 @@ In the existing `.map(...)` field loop, filter richtext out of the form (add `(f
 
 > **Page rule (spec §6/D5):** the form save still full-page-reloads on success, re-mounting the island at the fresh revision; document the "save rich-text before a form save" behavior in a short comment above the island. The island's `beforeunload` guard protects unsaved rich-text edits.
 
-- [ ] **Step 3: Verify build + existing content e2e still pass** (the `ci1` legacy test uses non-richtext fields and is unaffected):
+- [ ] **Step 3: Verify build + existing content e2e still pass.** Note: `ci1`'s content type ALREADY has a `body` richtext field (`graphql-mock.mjs:151`), so its editor page now ALSO mounts the island (the `body` textarea is removed from the form). The existing `ci1` specs are unaffected because they interact only with the non-richtext form fields (Priority/Featured/Category) and the form Save; the form still merges `body` from the loaded `values`. Confirm those specs stay green:
 
 Run: `pnpm --filter @movp/frontend-astro build`
 Expected: PASS.
@@ -739,30 +947,38 @@ git commit -m "feat(frontend): mount RichTextFieldsIsland on the content editor 
 - [ ] **Step 1: Write the failing tests** — add to `templates/frontend-astro/tests/e2e/content.spec.ts`:
 
 ```ts
-test('two editors: the stale second save conflicts, keeps the draft, refresh+resave preserves other field', async ({ browser }) => {
+test('two editors on DIFFERENT fields: stale save conflicts, refresh+retry preserves BOTH fields', async ({ browser }) => {
   const ctxA = await browser.newContext(); const ctxB = await browser.newContext()
   await seedSession(ctxA); await seedSession(ctxB)
   const a = await ctxA.newPage(); const b = await ctxB.newPage()
   await a.goto('/content/rt1'); await b.goto('/content/rt1')
-  await Promise.all([
-    a.getByTestId('richtext-island').waitFor(), b.getByTestId('richtext-island').waitFor(),
-  ])
-  // A edits the Body field and saves -> revision advances.
-  const aBody = a.getByRole('region', { name: 'Body' }).getByRole('textbox', { name: 'Rich text editor' })
-  await aBody.click(); await aBody.pressSequentially('alpha edit')
-  await a.getByRole('region', { name: 'Body' }).getByRole('button', { name: 'Save content' }).click()
-  await a.getByRole('region', { name: 'Body' }).getByRole('status').waitFor()
-  // B (opened at the old revision) edits + saves -> conflict, draft preserved.
+  await Promise.all([a.getByTestId('richtext-island').waitFor(), b.getByTestId('richtext-island').waitFor()])
+
+  // A edits SUMMARY and saves -> revision advances, A's summary is persisted.
+  const aSummary = a.getByRole('region', { name: 'Summary' }).getByRole('textbox', { name: 'Rich text editor' })
+  await aSummary.click(); await aSummary.pressSequentially('alpha summary')
+  await a.getByRole('region', { name: 'Summary' }).getByRole('button', { name: 'Save content' }).click()
+  await expect(a.getByRole('region', { name: 'Summary' })).toContainText('Saved')
+
+  // B (opened at the OLD revision) edits BODY and saves -> stale expected revision -> conflict, draft kept.
   const bBody = b.getByRole('region', { name: 'Body' }).getByRole('textbox', { name: 'Rich text editor' })
-  await bBody.click(); await bBody.pressSequentially('bravo edit')
+  await bBody.click(); await bBody.pressSequentially('bravo body')
   await b.getByRole('region', { name: 'Body' }).getByRole('button', { name: 'Save content' }).click()
-  await b.getByRole('region', { name: 'Body' }).getByRole('alert').waitFor()
-  await expect(b.getByRole('region', { name: 'Body' })).toContainText('bravo edit')   // draft preserved
-  // B refreshes the revision (draft stays) then re-saves successfully.
+  await b.getByRole('region', { name: 'Body' }).getByRole('alert').waitFor()          // ConflictSurface
+  await expect(b.getByRole('region', { name: 'Body' })).toContainText('bravo body')    // draft preserved
+
+  // B refreshes the revision (draft untouched -> ready_to_retry), then re-saves.
   await b.getByRole('button', { name: 'Refresh revision' }).click()
-  await expect(b.getByRole('region', { name: 'Body' })).toContainText('bravo edit')
+  await expect(b.getByRole('region', { name: 'Body' })).toContainText('Revision updated')
+  await expect(b.getByRole('region', { name: 'Body' })).toContainText('bravo body')    // still the draft
   await b.getByRole('region', { name: 'Body' }).getByRole('button', { name: 'Save content' }).click()
-  await b.getByRole('region', { name: 'Body' }).getByRole('status').waitFor()
+  await expect(b.getByRole('region', { name: 'Body' })).toContainText('Saved')
+
+  // Fresh load proves the server-merge kept A's Summary AND B's Body (cross-field preservation).
+  const c = await ctxA.newPage(); await c.goto('/content/rt1')
+  await c.getByTestId('richtext-island').waitFor()
+  await expect(c.getByRole('region', { name: 'Summary' })).toContainText('alpha summary')
+  await expect(c.getByRole('region', { name: 'Body' })).toContainText('bravo body')
   await ctxA.close(); await ctxB.close()
 })
 
@@ -779,21 +995,21 @@ test('two richtext fields save sequentially in one session without a self-confli
   }
 })
 
-test('beforeunload guards an unsaved richtext edit', async ({ page }) => {
+test('editing arms the beforeunload guard; saving disarms it', async ({ page }) => {
   await page.goto('/content/rt1')
-  await page.getByTestId('richtext-island').waitFor()
+  const island = page.getByTestId('richtext-island')
+  await island.waitFor()
+  await expect(island).toHaveAttribute('data-dirty', 'false')          // clean: no guard installed (spec §6.1)
   const body = page.getByRole('region', { name: 'Body' }).getByRole('textbox', { name: 'Rich text editor' })
   await body.click(); await body.pressSequentially('unsaved')
-  let dialogSeen = false
-  page.once('dialog', (d) => { dialogSeen = d.type() === 'beforeunload'; void d.dismiss() })
-  await page.evaluate(() => { window.location.href = '/content' }).catch(() => {})
-  // The navigation is blocked; we remain on the item page with the draft intact.
-  await expect(page).toHaveURL(/\/content\/rt1$/)
-  await expect(page.getByRole('region', { name: 'Body' })).toContainText('unsaved')
+  await expect(island).toHaveAttribute('data-dirty', 'true')           // deterministic proof the guard is armed
+  await page.getByRole('region', { name: 'Body' }).getByRole('button', { name: 'Save content' }).click()
+  await expect(page.getByRole('region', { name: 'Body' })).toContainText('Saved')
+  await expect(island).toHaveAttribute('data-dirty', 'false')          // disarmed after a successful save
 })
 ```
 
-> **Playwright beforeunload note (spec §6.1):** register `page.once('dialog', …)` BEFORE triggering navigation; assert `dialog.type() === 'beforeunload'`; the completed-navigation-or-stay is the assertion bound, not a `waitForTimeout`. If the harness auto-dismisses beforeunload such that the URL still changes, assert instead on the dirty-set via a `data-dirty` attribute the island can expose — decide during execution based on observed Playwright behavior.
+> **Deterministic dirty/guard proof (spec §6.1, F-5):** the island's `data-dirty` attribute reflects exactly whether the `beforeunload` listener is installed (it is installed iff the dirty-key set is nonempty). Asserting `data-dirty` transitions `false→true→false` deterministically proves the guard arms on edit and disarms on save — without depending on Playwright's non-deterministic native-`beforeunload` dialog handling. This replaces the earlier dialog-interception approach.
 
 - [ ] **Step 2: Run to verify they fail**
 
@@ -817,18 +1033,19 @@ git commit -m "test(frontend): two-editor conflict, two-field, and beforeunload 
 ## C7.3b completion gate
 
 ```bash
-pnpm --filter @movp/editor-sdk test          # dirty signal + conflict actions
-pnpm --filter @movp/frontend-astro test      # endpoint unit + island unit
+pnpm --filter @movp/editor-sdk test          # dirty signal (incl. in-flight-edit race) + conflict actions
+pnpm --filter @movp/graphql test             # Task 3G: sanitized CONFLICT survives masking
+pnpm --filter @movp/frontend-astro test      # endpoint unit (bounds/guards/code-classify) + island unit
 pnpm --filter @movp/frontend-astro build
 bash scripts/check-boundary.sh               # island stays client-safe
-pnpm --filter @movp/frontend-astro e2e       # two-editor + two-field + beforeunload
+pnpm --filter @movp/frontend-astro e2e       # two-editor cross-field + two-field + beforeunload(data-dirty)
 pnpm typecheck
 ```
 Then update the Stage C EXECUTION STATUS table for C7.3b, and mark **C7.3 complete only when both C7.3a and C7.3b parts and their gates pass** (CLAUDE.md "Phase Completion Signal").
 
-## Known risk / reconciliation item (verify during execution)
+## Production conflict surfacing (closed by Task 3G)
 
-- **Production conflict surfacing.** The endpoint (and the existing page) recognize a conflict by the `content_update_conflict` **message substring**. The stateful mock returns that string, so the e2e passes. In production, the GraphQL `updateContent` resolver throws a plain domain `Error`; graphql-yoga's `maskError` may replace the message with a generic masked string, in which case a real cross-user conflict would surface as `save_failed`, not `conflict`. **Verify against the real GraphQL boundary** during execution; if masked, add a small graphql task to map the `updateContent` conflict to a `GraphQLError` carrying `content_update_conflict` (unmasked) so the message-substring contract holds in prod. This is out of the mock-based gate's reach — do not let a green e2e certify the production conflict path.
+The masking risk — a production `updateContent` conflict masked to `save_failed` — is closed by **Task 3G**: the resolver emits a sanitized `GraphQLError` with `extensions.code === 'CONFLICT'`, `gqlRequest` surfaces it as `errorCode`, and BOTH the new endpoint (`classifyOutcome`) and the existing page (`saveErrorMessage`) classify on that **structured code**, not message text. Task 3G's yoga-through test asserts the conflict stays identifiable while ordinary internal errors remain `"Unexpected error."`, and the mock returns the same `CONFLICT` code so the e2e and production classify identically. No message-substring dependency remains on the authoritative path.
 
 ## Spec coverage self-check (C7.3b scope)
 
@@ -839,3 +1056,7 @@ Then update the Stage C EXECUTION STATUS table for C7.3b, and mark **C7.3 comple
 - Stateful mock + read-counter (spec §8) → Task 5. ✅
 - Two-editor + two-field + dirty-guard e2e (spec §8) → Task 8. ✅
 - Frontend deps + Verdaccio consumer (spec §3.1 item 4) → Task 3 (+ C7.3a registered the packages in the Verdaccio publish lists). ✅
+- Production conflict surfacing as a structured `CONFLICT` code, not a masked internal error (F-1) → Task 3G. ✅
+- Endpoint structural validation of persisted state + UTF-8 byte key length + content-disciplined events (F-4) → Task 4. ✅
+- Dirty stays true when the user edits during an in-flight save (F-2) → Task 1. ✅
+- Refresh feedback states + caught GET-failure + deterministic guard install/remove (F-5) → Tasks 6, 8. ✅
