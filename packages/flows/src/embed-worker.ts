@@ -12,8 +12,11 @@ interface EmbedPayload {
 
 class PermanentEmbedJobError extends Error {}
 
-const EMBEDDABLE_FIELDS: Record<string, readonly string[]> = {
+export const EMBEDDABLE_FIELDS: Record<string, readonly string[]> = {
   note: ['body'],
+  task_revision: ['body'],
+  content_item: ['search_body'],
+  campaign: ['brief'],
 }
 
 function assertEmbeddablePayload(p: EmbedPayload): void {

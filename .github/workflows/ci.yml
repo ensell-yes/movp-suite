@@ -106,6 +106,8 @@ jobs:
         run: pnpm --filter @movp/domain exec vitest run --config vitest.unit.config.ts
       - name: Run flow schema-injection gate
         run: pnpm --filter @movp/flows exec vitest run test/schema-injection.test.ts
+      - name: Run embed-worker allow-list and drift gates
+        run: pnpm --filter @movp/flows exec vitest run test/embed-worker.test.ts test/embed-allowlist-drift.test.ts
       - name: Run complete surface-wiring gate
         run: pnpm --filter @movp/mcp exec vitest run test/surface-wiring.test.ts
       - name: Run project-codegen refusal gate
