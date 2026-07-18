@@ -1,41 +1,59 @@
 ---
+import Base from '../../layouts/Base.astro'
 import { SESSION_COOKIE, verifyMagicLink } from '../../lib/auth.ts'
 import { readServerEnv } from '../../lib/env.ts'
 
 const url = new URL(Astro.request.url)
-const tokenHash = url.searchParams.get('token_hash')
-const linkType = url.searchParams.get('type') ?? 'email'
+Astro.response.headers.set('Cache-Control', 'no-store')
+Astro.response.headers.set('Referrer-Policy', 'same-origin')
 
-const env = readServerEnv()
-
-let token = ''
-if (tokenHash) {
-  const session = await verifyMagicLink(
-    {
-      supabaseUrl: env.supabaseUrl,
-      anonKey: env.supabaseAnonKey,
-    },
-    tokenHash,
-    linkType,
-  )
-  token = session?.accessToken ?? ''
+function linkType(value: FormDataEntryValue | string | null): 'email' | 'magiclink' | null {
+  if (value === 'email' || value === 'magiclink') return value
+  return null
 }
 
-if (!token && !tokenHash) {
+let tokenHash = url.searchParams.get('token_hash') ?? ''
+let type = linkType(url.searchParams.get('type'))
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData()
+  tokenHash = String(form.get('token_hash') ?? '')
+  type = linkType(form.get('type'))
+  if (!tokenHash || !type) return Astro.redirect('/login?error=missing_token')
+
+  const env = readServerEnv()
+  const session = await verifyMagicLink(
+    { supabaseUrl: env.supabaseUrl, anonKey: env.supabaseAnonKey },
+    tokenHash,
+    type,
+  )
+  const token = session?.accessToken ?? ''
+  if (!token) {
+    Astro.cookies.delete(SESSION_COOKIE, { path: '/' })
+    return Astro.redirect('/login?error=invalid_token')
+  }
+
+  Astro.cookies.set(SESSION_COOKIE, token, {
+    path: '/',
+    httpOnly: true,
+    secure: url.protocol === 'https:',
+    sameSite: 'lax',
+  })
+  return Astro.redirect('/')
+}
+
+if (!tokenHash || !type) {
   return Astro.redirect('/login?error=missing_token')
 }
-
-if (!token) {
-  Astro.cookies.delete(SESSION_COOKIE, { path: '/' })
-  return Astro.redirect('/login?error=invalid_token')
-}
-
-Astro.cookies.set(SESSION_COOKIE, token, {
-  path: '/',
-  httpOnly: true,
-  secure: url.protocol === 'https:',
-  sameSite: 'lax',
-})
-
-return Astro.redirect('/')
 ---
+<Base title="Confirm sign in">
+  <section data-testid="auth-confirm" aria-labelledby="auth-confirm-heading">
+    <h1 id="auth-confirm-heading" tabindex="-1">Confirm sign in</h1>
+    <p>Continue to finish signing in. This link can only be used once.</p>
+    <form method="post">
+      <input type="hidden" name="token_hash" value={tokenHash} />
+      <input type="hidden" name="type" value={type} />
+      <button type="submit">Continue sign in</button>
+    </form>
+  </section>
+</Base>

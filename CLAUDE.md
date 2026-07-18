@@ -64,6 +64,11 @@
 
 - Personal Access Tokens are user-scoped credentials. `default_workspace_id` is a CLI home hint,
   not an authorization boundary; MCP, GraphQL, and CLI operations reuse the user's normal RLS.
+- Frontend magic-link GETs render a confirmation page and consume the token only after a same-origin
+  POST. Keep that two-step boundary so email-security prefetchers cannot consume a user's one-time link;
+  use `Referrer-Policy: same-origin` so Astro's origin check still receives the CSRF signal.
+- Frontend OTP requests set `create_user: false`. Login authenticates existing members; it must not
+  create an Auth account merely because an unknown email address submitted the form.
 - The hosted MCP transport is streamable HTTP at `/functions/v1/mcp`. Stdio-only clients use the
   narrow `@movp/mcp-bridge` workspace package with `MOVP_MCP_URL` + `MOVP_PAT`; local gateways may
   additionally require `MOVP_MCP_APIKEY`.

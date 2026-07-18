@@ -396,7 +396,12 @@ createServer(async (req, res) => {
     const parsed = JSON.parse(body || '{}')
     const redirectTo = url.searchParams.get('redirect_to') ?? ''
     const redirectPath = redirectTo ? new URL(redirectTo).pathname : ''
-    if (typeof parsed.email === 'string' && parsed.email.includes('@') && redirectPath === '/auth/callback') {
+    if (
+      typeof parsed.email === 'string' &&
+      parsed.email.includes('@') &&
+      parsed.create_user === false &&
+      redirectPath === '/auth/callback'
+    ) {
       return json(res, 200, {})
     }
     return json(res, 400, { error: 'invalid_otp_request' })

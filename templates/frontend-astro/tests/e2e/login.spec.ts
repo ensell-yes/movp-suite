@@ -18,8 +18,12 @@ test('login page renders and submits a magic-link request', async ({ page }) => 
   await expect(page.getByTestId('login-sent')).toContainText('Check your email')
 })
 
-test('token_hash callback verifies with Supabase Auth and sets the session cookie', async ({ page, context }) => {
+test('token_hash callback waits for human confirmation before setting the session cookie', async ({ page, context }) => {
   await page.goto('/auth/callback?token_hash=valid-token-hash&type=email')
+  await expect(page.getByTestId('auth-confirm')).toBeVisible()
+  expect((await context.cookies()).find((c) => c.name === 'sb-access-token')).toBeUndefined()
+
+  await page.getByRole('button', { name: 'Continue sign in' }).click()
   await page.waitForURL('/')
   const cookie = (await context.cookies()).find((c) => c.name === 'sb-access-token')
   expect(cookie?.value).toBe('verified-login-token-1234567890')
@@ -28,6 +32,8 @@ test('token_hash callback verifies with Supabase Auth and sets the session cooki
 
 test('invalid token_hash renders login error without setting a cookie', async ({ page, context }) => {
   await page.goto('/auth/callback?token_hash=bad-token&type=email')
+  await expect(page.getByTestId('auth-confirm')).toBeVisible()
+  await page.getByRole('button', { name: 'Continue sign in' }).click()
   await page.waitForURL('/login?error=invalid_token')
   expect((await context.cookies()).find((c) => c.name === 'sb-access-token')).toBeUndefined()
   await expect(page.getByTestId('login-error')).toBeVisible()

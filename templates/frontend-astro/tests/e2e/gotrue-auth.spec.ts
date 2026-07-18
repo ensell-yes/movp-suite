@@ -63,6 +63,9 @@ test('real GoTrue magic-link email feeds the server callback', async ({ page, co
   expect(new URL(link).pathname).toBe('/auth/callback')
 
   await page.goto(link)
+  await expect(page.getByTestId('auth-confirm')).toBeVisible()
+  expect((await context.cookies()).find((candidate) => candidate.name === 'sb-access-token')).toBeUndefined()
+  await page.getByRole('button', { name: 'Continue sign in' }).click()
   await page.waitForURL('/')
   const cookie = (await context.cookies()).find((candidate) => candidate.name === 'sb-access-token')
   expect(cookie?.value).toBeTruthy()
@@ -71,6 +74,8 @@ test('real GoTrue magic-link email feeds the server callback', async ({ page, co
 
 test('real GoTrue callback rejects an invalid token_hash', async ({ page, context }) => {
   await page.goto('/auth/callback?token_hash=invalid-token-hash&type=email')
+  await expect(page.getByTestId('auth-confirm')).toBeVisible()
+  await page.getByRole('button', { name: 'Continue sign in' }).click()
   await page.waitForURL('/login?error=invalid_token')
   expect((await context.cookies()).find((candidate) => candidate.name === 'sb-access-token')).toBeUndefined()
   await expect(page.getByTestId('login-error')).toBeVisible()
