@@ -88,6 +88,7 @@ jobs:
     steps:
       - run: pnpm --filter @movp/domain exec vitest run --config vitest.unit.config.ts
       - run: pnpm --filter @movp/flows exec vitest run test/schema-injection.test.ts
+      - run: pnpm --filter @movp/flows exec vitest run test/embed-worker.test.ts test/embed-allowlist-drift.test.ts
       - run: pnpm --filter @movp/mcp exec vitest run test/surface-wiring.test.ts
       - run: pnpm --filter @movp/cli exec vitest run test/codegen-refusal.test.ts
 `
@@ -102,6 +103,17 @@ jobs:
     })
     assert.equal(problems.length, 1)
     assert.match(problems[0], /ci_wiring_run_missing: .* job "c6-productization" does not invoke `bash fixtures\/platform-consumer\/gate\.sh`/)
+  })
+
+  it('fails when the embed-worker allow-list and drift gates are removed', () => {
+    const embedGate = '      - run: pnpm --filter @movp/flows exec vitest run test/embed-worker.test.ts test/embed-allowlist-drift.test.ts\n'
+    const withoutEmbedGate = workflow.replace(embedGate, '')
+    const problems = checkCiWiring(fixture('c6-embed-gates-missing', withoutEmbedGate), {
+      'c6-productization': REQUIRED_JOBS['c6-productization'],
+      'c6-surface-wiring': REQUIRED_JOBS['c6-surface-wiring'],
+    })
+    assert.equal(problems.length, 1)
+    assert.match(problems[0], /ci_wiring_run_missing: .*test\/embed-worker\.test\.ts test\/embed-allowlist-drift\.test\.ts/)
   })
 })
 
@@ -421,6 +433,7 @@ ${ARMED_JOB}
     steps:
       - run: pnpm --filter @movp/domain exec vitest run --config vitest.unit.config.ts
       - run: pnpm --filter @movp/flows exec vitest run test/schema-injection.test.ts
+      - run: pnpm --filter @movp/flows exec vitest run test/embed-worker.test.ts test/embed-allowlist-drift.test.ts
       - run: pnpm --filter @movp/mcp exec vitest run test/surface-wiring.test.ts
       - run: pnpm --filter @movp/cli exec vitest run test/codegen-refusal.test.ts
 

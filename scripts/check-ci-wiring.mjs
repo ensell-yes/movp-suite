@@ -77,6 +77,7 @@ export const REQUIRED_JOBS = {
     runs: [
       'pnpm --filter @movp/domain exec vitest run --config vitest.unit.config.ts',
       'pnpm --filter @movp/flows exec vitest run test/schema-injection.test.ts',
+      'pnpm --filter @movp/flows exec vitest run test/embed-worker.test.ts test/embed-allowlist-drift.test.ts',
       'pnpm --filter @movp/mcp exec vitest run test/surface-wiring.test.ts',
       'pnpm --filter @movp/cli exec vitest run test/codegen-refusal.test.ts',
     ],
