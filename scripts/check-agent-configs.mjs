@@ -7,7 +7,7 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { dirname, extname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { docHasLiteralPatExport, codexTomlHasRetiredRmcp, codexTomlHasBearerEnvVar, authIsValidBearer } from './lib/agent-config-checks.mjs'
+import { docHasLiteralPatExport, codexTomlHasRetiredRmcp, codexTomlHasBearerEnvVar, authIsSecurePlaceholder } from './lib/agent-config-checks.mjs'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const MCP_ENDPOINT_PATH = '/functions/v1/mcp'
@@ -54,8 +54,8 @@ for (const s of samples) {
     try { cfg = JSON.parse(raw) } catch (e) { fail(`${s.file}: invalid JSON: ${e.message}`); continue }
     checkUrl(s.file, s.url(cfg))
     const auth = s.auth(cfg)
-    if (!authIsValidBearer(auth)) {
-      fail(`${s.file}: headers.Authorization must be "Bearer movp_pat_…" or an env placeholder, got ${JSON.stringify(auth)}`)
+    if (!authIsSecurePlaceholder(auth)) {
+      fail(`${s.file}: headers.Authorization must be an env placeholder like "Bearer \${MOVP_PAT}" (or client form ${'$'}{env:…}/${'$'}{input:…}), never a literal movp_pat_ token, got ${JSON.stringify(auth)}`)
     }
   } else {
     // Codex TOML: no built-in parser + no new dependency -> regex-extract the fixed keys.

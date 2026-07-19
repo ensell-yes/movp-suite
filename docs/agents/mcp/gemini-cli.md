@@ -4,11 +4,17 @@ Gemini CLI reads MCP config from `~/.gemini/settings.json`. The **streamable-HTT
 the `httpUrl` key (not `url`, which is SSE) plus `headers`.
 
 ## Option A — CLI
+
+Load `MOVP_PAT` from a credential store without typing its value into a command or shell history.
+
 ```sh
+: "${MOVP_PAT:?MOVP_PAT is not set; load it from your credential store}"
 gemini mcp add --transport http \
-  --header "Authorization: Bearer movp_pat_REPLACE_WITH_YOUR_TOKEN" \
+  --header 'Authorization: Bearer ${MOVP_PAT}' \
   movp https://your-project-ref.supabase.co/functions/v1/mcp
 ```
+
+The single quotes write the literal `${MOVP_PAT}` into `settings.json`; Gemini expands it at load.
 
 ## Option B — settings.json
 Merge `gemini-cli.json` in this directory into `~/.gemini/settings.json`. `${VAR}` expansion is

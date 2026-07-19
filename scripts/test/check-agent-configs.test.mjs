@@ -11,7 +11,7 @@ import {
   docHasLiteralPatExport,
   codexTomlHasRetiredRmcp,
   codexTomlHasBearerEnvVar,
-  authIsValidBearer,
+  authIsSecurePlaceholder,
 } from '../lib/agent-config-checks.mjs'
 
 test('docHasLiteralPatExport flags a literal PAT export, allows secure injection', () => {
@@ -33,11 +33,14 @@ test('codexTomlHasBearerEnvVar requires a non-empty env-var name', () => {
   assert.equal(codexTomlHasBearerEnvVar('url = "https://x"'), false)
 })
 
-test('authIsValidBearer accepts placeholder/movp_pat_ prefix, rejects hardcoded/absent', () => {
-  assert.equal(authIsValidBearer('Bearer ${MOVP_PAT}'), true)
-  assert.equal(authIsValidBearer('Bearer $MOVP_PAT'), true)
-  assert.equal(authIsValidBearer('Bearer movp_pat_ABC'), true)
-  assert.equal(authIsValidBearer('Bearer hardcoded-secret'), false)
-  assert.equal(authIsValidBearer(undefined), false)
-  assert.equal(authIsValidBearer(''), false)
+test('authIsSecurePlaceholder accepts env placeholders, rejects literal PAT and hardcoded/absent', () => {
+  assert.equal(authIsSecurePlaceholder('Bearer ${MOVP_PAT}'), true)       // Claude Code / Gemini
+  assert.equal(authIsSecurePlaceholder('Bearer ${env:MOVP_PAT}'), true)   // Cursor
+  assert.equal(authIsSecurePlaceholder('Bearer ${input:movpPat}'), true)  // Copilot
+  assert.equal(authIsSecurePlaceholder('Bearer $MOVP_PAT'), true)
+  assert.equal(authIsSecurePlaceholder('Bearer movp_pat_REPLACE_WITH_YOUR_TOKEN'), false) // a committed literal PAT
+  assert.equal(authIsSecurePlaceholder('Bearer movp_pat_ABC'), false)
+  assert.equal(authIsSecurePlaceholder('Bearer hardcoded-secret'), false)
+  assert.equal(authIsSecurePlaceholder(undefined), false)
+  assert.equal(authIsSecurePlaceholder(''), false)
 })

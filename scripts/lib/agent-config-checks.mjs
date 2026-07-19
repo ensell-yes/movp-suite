@@ -18,7 +18,8 @@ export const codexTomlHasRetiredRmcp = (raw) => RETIRED_RMCP.test(raw)
 export const BEARER_ENV_VAR = /^\s*bearer_token_env_var\s*=\s*"[^"]+"/m
 export const codexTomlHasBearerEnvVar = (raw) => BEARER_ENV_VAR.test(raw)
 
-// A sample Authorization header must be a literal movp_pat_ prefix or an
-// env-expansion placeholder (${VAR} / $VAR) — never a hardcoded arbitrary secret.
-export const BEARER_RE = /^Bearer\s+(movp_pat_|\$\{|\$[A-Za-z])/
-export const authIsValidBearer = (auth) => typeof auth === 'string' && BEARER_RE.test(auth)
+// A committed sample Authorization header must be an env-expansion placeholder
+// — ${VAR} (incl. ${env:VAR} / ${input:x}) or $VAR — never a literal movp_pat_
+// token (all supported clients: Claude Code, Cursor, Gemini, Copilot expand one).
+export const BEARER_PLACEHOLDER_RE = /^Bearer\s+(\$\{|\$[A-Za-z])/
+export const authIsSecurePlaceholder = (auth) => typeof auth === 'string' && BEARER_PLACEHOLDER_RE.test(auth)
