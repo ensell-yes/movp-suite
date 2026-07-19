@@ -10,6 +10,9 @@ automation. Both authenticate as an ordinary MOVP user and therefore share the s
 - CLI authentication: pipe a PAT to `movp login`; never pass it in argv. The CLI stores it in the macOS
   Keychain by default and exchanges it for a bounded user session.
 - A PAT is user-scoped. Pass `workspaceId` to every workspace-scoped MCP call; use `--workspace` in the CLI.
+- Every operation is attributed to the PAT's owning user. For production writes, use an individual per-operator
+  PAT so the audit trail identifies the human operator. A shared PAT is a discovery convenience only — it is **not**
+  a read-only control: any holder can perform every operation that user's row-level security permits.
 - Call MCP `tools/list` at startup. Static tools use `<domain>.<verb>` names; schema-generated tools use
   `<collection>.<verb>`.
 

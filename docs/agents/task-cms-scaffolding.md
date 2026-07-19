@@ -8,7 +8,9 @@ before generating application models, forms, or workflows.
 
 Configure MCP with the client-specific sample under `docs/agents/mcp`, then call `tools/list`. Obtain the target
 workspace UUID from the operator; the PAT's default workspace is only a CLI preference and is not authorization.
-Do not place the PAT in source, prompts committed to the repository, command arguments, or logs.
+Do not place the PAT in source, prompts committed to the repository, command arguments, or logs. For production
+writes use an individual per-operator PAT so the audit trail identifies the human; a shared PAT is a read-only
+convention only and is not technically enforced — its holder can perform any operation that user's RLS permits.
 
 ## 2. Load Task configuration
 

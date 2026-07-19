@@ -7,6 +7,7 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { dirname, extname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { docHasLiteralPatExport, codexTomlHasRetiredRmcp, codexTomlHasBearerEnvVar, authIsSecurePlaceholder } from './lib/agent-config-checks.mjs'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const MCP_ENDPOINT_PATH = '/functions/v1/mcp'
@@ -37,9 +38,6 @@ const samples = [
   { file: 'codex.toml',       kind: 'codex' },
 ]
 
-// literal PAT prefix, or an env-expansion placeholder (${VAR} / ${input:x} / ${env:x} / $VAR)
-const BEARER_RE = /^Bearer\s+(movp_pat_|\$\{|\$[A-Za-z])/
-
 function checkUrl(file, url) {
   if (typeof url !== 'string' || url.length === 0) return fail(`${file}: missing MCP endpoint url`)
   let path
@@ -56,17 +54,17 @@ for (const s of samples) {
     try { cfg = JSON.parse(raw) } catch (e) { fail(`${s.file}: invalid JSON: ${e.message}`); continue }
     checkUrl(s.file, s.url(cfg))
     const auth = s.auth(cfg)
-    if (typeof auth !== 'string' || !BEARER_RE.test(auth)) {
-      fail(`${s.file}: headers.Authorization must be "Bearer movp_pat_…" or an env placeholder, got ${JSON.stringify(auth)}`)
+    if (!authIsSecurePlaceholder(auth)) {
+      fail(`${s.file}: headers.Authorization must be an env placeholder like "Bearer \${MOVP_PAT}" (or client form ${'$'}{env:…}/${'$'}{input:…}), never a literal movp_pat_ token, got ${JSON.stringify(auth)}`)
     }
   } else {
-    // Codex TOML: no built-in parser + no new dependency -> regex-extract the two fixed keys.
+    // Codex TOML: no built-in parser + no new dependency -> regex-extract the fixed keys.
     checkUrl(s.file, raw.match(/^\s*url\s*=\s*"([^"]+)"/m)?.[1])
-    if (!/^\s*bearer_token_env_var\s*=\s*"[^"]+"/m.test(raw)) {
-      fail(`${s.file}: Codex HTTP MCP auth requires bearer_token_env_var = "<ENV VAR NAME>" (rmcp sends its value as the Bearer token)`)
+    if (!codexTomlHasBearerEnvVar(raw)) {
+      fail(`${s.file}: Codex HTTP MCP auth requires bearer_token_env_var = "<ENV VAR NAME>"`)
     }
-    if (!/^\s*experimental_use_rmcp_client\s*=\s*true/m.test(raw)) {
-      fail(`${s.file}: Codex streamable-HTTP MCP requires experimental_use_rmcp_client = true`)
+    if (codexTomlHasRetiredRmcp(raw)) {
+      fail(`${s.file}: remove retired experimental_use_rmcp_client; current Codex has native streamable HTTP`)
     }
   }
 }
@@ -89,6 +87,9 @@ if (existsSync(rootLlms)) docFiles.push(rootLlms)
 const FENCE = /```json\s*([\s\S]*?)```/g
 for (const file of docFiles) {
   const src = readFileSync(file, 'utf8')
+  if (docHasLiteralPatExport(src)) {
+    fail(`${file}: do not place a literal MOVP PAT in an export command; load it from a credential store`)
+  }
   for (const m of src.matchAll(FENCE)) {
     let frame
     try { frame = JSON.parse(m[1]) } catch { continue } // non-JSON-RPC blocks (e.g. configs) are skipped
