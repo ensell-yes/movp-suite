@@ -6,7 +6,7 @@
 
 ## MCP client configs
 - [Claude Code](docs/agents/mcp/claude-code.md): streamable-HTTP `.mcp.json` sample.
-- [Codex](docs/agents/mcp/codex.md): `~/.codex/config.toml` (rmcp, `bearer_token_env_var`).
+- [Codex](docs/agents/mcp/codex.md): native streamable HTTP via `config.toml` and `bearer_token_env_var`.
 - [Cursor](docs/agents/mcp/cursor.md): `.cursor/mcp.json` sample.
 - [Gemini CLI](docs/agents/mcp/gemini-cli.md): `~/.gemini/settings.json` (`httpUrl`).
 - [Copilot](docs/agents/mcp/copilot.md): `.vscode/mcp.json` (`servers`, prompted input).

@@ -4,7 +4,7 @@
       "type": "http",
       "url": "https://your-project-ref.supabase.co/functions/v1/mcp",
       "headers": {
-        "Authorization": "Bearer movp_pat_REPLACE_WITH_YOUR_TOKEN"
+        "Authorization": "Bearer ${MOVP_PAT}"
       }
     }
   }

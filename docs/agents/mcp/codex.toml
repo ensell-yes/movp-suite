@@ -1,7 +1,6 @@
-# ~/.codex/config.toml — MOVP MCP over streamable HTTP (rmcp client).
-# Codex's HTTP MCP client sends the value of `bearer_token_env_var` as the Bearer
-# token, so export MOVP_PAT=movp_pat_... before launching codex.
-experimental_use_rmcp_client = true
+# ~/.codex/config.toml — MOVP MCP over native streamable HTTP.
+# Codex sends the value of `bearer_token_env_var` as the Bearer token. Load
+# MOVP_PAT from a credential store without putting its value in shell history.
 
 [mcp_servers.movp]
 url = "https://your-project-ref.supabase.co/functions/v1/mcp"

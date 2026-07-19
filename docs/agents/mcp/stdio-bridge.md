@@ -12,9 +12,11 @@ not support that bridge version.
 
 ## Run from a MOVP Suite checkout
 
+Load `MOVP_PAT` from a credential store without typing its value into a command or shell history.
+
 ```sh
 export MOVP_MCP_URL=https://your-project-ref.supabase.co/functions/v1/mcp
-export MOVP_PAT=movp_pat_REPLACE_WITH_YOUR_TOKEN
+: "${MOVP_PAT:?MOVP_PAT is not set; load it from your credential store}"
 pnpm --dir /path/to/movp-suite exec tsx packages/mcp-bridge/src/index.ts
 ```
 
