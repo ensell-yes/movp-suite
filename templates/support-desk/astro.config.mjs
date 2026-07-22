@@ -4,6 +4,7 @@ import cloudflare from '@astrojs/cloudflare'
 import react from '@astrojs/react'
 
 export default defineConfig({
+  compressHTML: true,
   output: 'server',
   integrations: [react()],
   adapter: cloudflare({
