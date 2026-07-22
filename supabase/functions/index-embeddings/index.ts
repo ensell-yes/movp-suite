@@ -19,6 +19,10 @@ Deno.serve(async (): Promise<Response> => {
   const db = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, {
     auth: { persistSession: false },
   })
-  const result = await runEmbedWorker(db, embedder, 10)
+  const configuredBatchSize = Number(Deno.env.get('MOVP_EMBED_BATCH_SIZE') ?? '10')
+  const batchSize = Number.isInteger(configuredBatchSize) && configuredBatchSize >= 1 && configuredBatchSize <= 10
+    ? configuredBatchSize
+    : 10
+  const result = await runEmbedWorker(db, embedder, batchSize)
   return Response.json(result)
 })

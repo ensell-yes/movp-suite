@@ -115,6 +115,7 @@ const customMcpTools = [
   'workflow.webhook.rotate',
 ] as const
 const customGraphqlQueries = [
+  'agentAccessPreferences',
   'automationRules',
   'campaignDetail',
   'collectionsMeta',
@@ -198,6 +199,7 @@ const customGraphqlMutations = [
   'unassignTask',
   'unpublishContent',
   'updateContent',
+  'updateAgentAccessPreferences',
   'updateTaskDescription',
   'upsertAutomationRule',
 ] as const

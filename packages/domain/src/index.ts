@@ -1,5 +1,6 @@
 export { makeCollectionService } from './collection.ts'
 export { AdminDomainError, makeAdminService } from './admin.ts'
+export { makeAgentAccessService } from './agent-access.ts'
 export { makeCampaignService } from './campaign.ts'
 export { makeCollabService, resolveShareLink } from './collab.ts'
 export { makeContentService } from './content.ts'
@@ -12,6 +13,8 @@ export { makeTaskService } from './task.ts'
 export { makeWorkflowService } from './workflows.ts'
 export type {
   CampaignService,
+  AgentAccessPreferences,
+  AgentAccessService,
   AdminInviteResult,
   AdminService,
   CollabService,

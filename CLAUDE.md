@@ -75,8 +75,18 @@
 - `mcp-remote@0.1.38` is not supported: repeated local gates intermittently dropped static bearer
   auth, attempted OAuth registration, and could log custom header values. Do not restore it without
   a pinned, repeatable smoke that keeps credentials out of argv and logs.
-- Agent-facing auth codes are `missing_token`, `invalid_token`, `expired_token`, and
-  `invalid_claims`. A revoked PAT maps to `invalid_token` at every public boundary.
+- Agent-facing authentication codes are `missing_token`, `invalid_token`, `expired_token`, and
+  `invalid_claims`; access codes are `mcp_access_disabled`, `cli_access_disabled`,
+  `agent_access_check_failed`, and `agent_session_ttl_out_of_bounds`. A revoked PAT maps to
+  `invalid_token` at every public boundary.
+- Agent-access preferences are self-only through caller-bound RPCs; the RLS-enabled internal table has no
+  application-role policies. MCP evaluates the setting without a preference cache on every PAT or session
+  request. PAT-backed auth exchange, GraphQL, and ingest piggyback on `resolve_pat`; ingest API keys and raw
+  `MOVP_ACCESS_TOKEN`/service-role CLI modes are outside the PAT preference.
+- PAT-minted sessions must not exceed 3,600 seconds and never enter the cache when over-TTL. Disabling the
+  PAT setting blocks new exchanges immediately, while already-issued sessions may remain valid for up to
+  60 minutes. Preference transport failures retry exactly once only for a thrown error or 502/503/504,
+  then fail closed with a single content-disciplined event.
 - `pnpm docs:agent-contract -- --out-dir <existing-directory>` atomically exports the authoritative
   `schema.json`, `mcp-tools.json`, and generated `schema-reference.md` from the real schema and MCP
   registry. The deterministic exporter test pins 46 collections, 35 events, and the capability-safe
@@ -92,6 +102,24 @@
   it; do not manually create or commit an account-specific namespace id.
 - Frontend bindings are the four public vars plus `SESSION`/adapter-generated `ASSETS`. Do not add an
   R2 binding until code has a real runtime consumer. Regenerate binding types after config changes.
+- The frontend shell lives in `templates/frontend-astro/src/layouts/Base.astro` with the sticky,
+  icon-bearing `TopNav.astro`. Breakpoints are mobile `<768px`, tablet `768px`–`1023px`, and desktop
+  `>=1024px`; preserve keyboard/Escape behavior, active-page semantics, 44px targets, reduced motion,
+  and the navigation Playwright/axe gates when adding a global destination.
+- The nav may decode bounded JWT claims and use the bounded `movp-display-name` HttpOnly cookie for
+  cosmetic display only. It must never use those values for authorization and must render them through
+  Astro escaping or DOM `textContent`, never HTML insertion. Authoritative profile/security reads call
+  GoTrue from the request-bound Astro page through `readServerEnv()`.
+- Password changes use the recovery-email flow. `supabase/templates/recovery.html` must keep the
+  `{{ .RedirectTo }}?token_hash={{ .TokenHash }}&type=recovery` form, and recovery GETs must continue to
+  render confirmation without consuming the one-time token; only the same-origin POST verifies it.
+  Hosted deployments must set the frontend Site URL, allow the exact `/auth/callback` redirect, and copy
+  the checked-in recovery template semantics into hosted Auth configuration.
+- `/settings/security` links to the existing `/settings/tokens` and `/admin/members` managers; do not
+  duplicate those interfaces. Its MCP and PAT-backed CLI/API switches submit both booleans, refetch before
+  reporting success, and render only after an authenticated preference read. Enforcement is defined in
+  `docs/superpowers/specs/2026-07-21-movp-agent-access-design.md`; controls must never render without the
+  matching endpoint gates.
 
 ## Schema Productization
 

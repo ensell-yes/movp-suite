@@ -874,8 +874,8 @@ export function buildProgram(schema: MovpSchema, opts: BuildProgramOpts = {}): C
       const apiUrl = process.env.SUPABASE_URL ?? cfg?.apiUrl
       const anonKey = process.env.SUPABASE_ANON_KEY ?? cfg?.anonKey
       if (!apiUrl || !anonKey) throw new Error('run `movp init` first (apiUrl/anonKey missing)')
-      // exchangePat throws the stable code ('invalid_token'|'expired_token') on reject, so a
-      // bad PAT is never stored. NEVER print `pat` — only the non-secret metadata below.
+      // exchangePat throws a stable authentication/access code on reject, so an invalid or
+      // disabled PAT is never stored. NEVER print `pat` — only the non-secret metadata below.
       const ex = await exchangePat(pat, apiUrl, anonKey)
       selectSecureStore(apiUrl).save({ pat, session: { access_token: ex.access_token, expires_at: ex.expires_at } })
       out(JSON.stringify({ ok: true, user_id: ex.user_id, default_workspace_id: ex.default_workspace_id }))

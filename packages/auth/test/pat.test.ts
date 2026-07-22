@@ -30,6 +30,8 @@ function exchangeAdmin(statuses: string[] = ['ok']): SupabaseClient {
         status: statuses[Math.min(call++, statuses.length - 1)],
         user_id: 'user-1',
         default_workspace_id: 'workspace-1',
+        mcp_enabled: false,
+        cli_enabled: true,
       },
       error: null,
     })),
@@ -73,6 +75,70 @@ describe('pat exchange (pure + reject paths — no GoTrue)', () => {
 })
 
 describe('PAT session mint cache', () => {
+  it('returns the effective preference snapshot from resolve_pat', async () => {
+    const admin = exchangeAdmin()
+    verifyOtp.mockResolvedValue({
+      data: { session: { access_token: 'session-preferences', expires_at: Math.floor(Date.now() / 1000) + 3600 } },
+      error: null,
+    })
+
+    await expect(resolvePatToken('movp_pat_preferences', env, admin)).resolves.toMatchObject({
+      ok: true,
+      agentAccess: { mcpEnabled: false, cliEnabled: true },
+    })
+  })
+
+  it('fails closed when resolve_pat omits the preference snapshot', async () => {
+    const admin = exchangeAdmin()
+    vi.mocked(admin.rpc).mockResolvedValueOnce({
+      data: { status: 'ok', user_id: 'user-1', default_workspace_id: 'workspace-1' },
+      error: null,
+    } as never)
+
+    await expect(resolvePatToken('movp_pat_missing_preferences', env, admin)).resolves.toEqual({
+      ok: false,
+      code: 'invalid_token',
+    })
+    expect(verifyOtp).not.toHaveBeenCalled()
+  })
+
+  it('accepts a PAT-minted session at the 3600-second residual bound', async () => {
+    const admin = exchangeAdmin()
+    verifyOtp.mockResolvedValue({
+      data: { session: { access_token: 'session-bounded', expires_at: Math.floor(Date.now() / 1000) + 3600 } },
+      error: null,
+    })
+
+    await expect(resolvePatToken('movp_pat_ttl_bounded', env, admin)).resolves.toMatchObject({
+      ok: true,
+      accessToken: 'session-bounded',
+    })
+  })
+
+  it('rejects an over-TTL mint without caching it, then succeeds after repair', async () => {
+    const admin = exchangeAdmin()
+    verifyOtp
+      .mockResolvedValueOnce({
+        data: { session: { access_token: 'session-over-ttl', expires_at: Math.floor(Date.now() / 1000) + 3601 } },
+        error: null,
+      })
+      .mockResolvedValueOnce({
+        data: { session: { access_token: 'session-repaired', expires_at: Math.floor(Date.now() / 1000) + 3600 } },
+        error: null,
+      })
+
+    await expect(resolvePatToken('movp_pat_ttl_repair', env, admin)).resolves.toEqual({
+      ok: false,
+      code: 'agent_session_ttl_out_of_bounds',
+    })
+    await expect(resolvePatToken('movp_pat_ttl_repair', env, admin)).resolves.toMatchObject({
+      ok: true,
+      accessToken: 'session-repaired',
+    })
+    expect(admin.auth.admin.generateLink).toHaveBeenCalledTimes(2)
+    expect(verifyOtp).toHaveBeenCalledTimes(2)
+  })
+
   it('revalidates resolve_pat on every request but reuses the minted session', async () => {
     const admin = exchangeAdmin()
     verifyOtp.mockResolvedValue({

@@ -77,14 +77,18 @@ describe('CLI PAT lifecycle', () => {
 
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () =>
-        new Response(
-          JSON.stringify({
-            data: { search: [{ collection: 'note', id: 'n1', title: 'Hi', snippet: 'Hi', score: 1 }] },
-          }),
+      vi.fn(async (input: string | URL | Request) => {
+        if (String(input).endsWith('/functions/v1/auth-exchange')) {
+          return new Response(
+            JSON.stringify({ access_token: minted, expires_at: nowSec() + 3600, default_workspace_id: 'w1', user_id: 'user-1' }),
+            { status: 200 },
+          )
+        }
+        return new Response(
+          JSON.stringify({ data: { search: [{ collection: 'note', id: 'n1', title: 'Hi', snippet: 'Hi', score: 1 }] } }),
           { status: 200 },
-        ),
-      ),
+        )
+      }),
     )
     await run(['search', 'Hi', '--workspace', 'w1', '--mode', 'hybrid'])
     expect(out.at(-1)).toContain('n1')

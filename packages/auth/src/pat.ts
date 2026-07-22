@@ -1,16 +1,36 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
+import type { AgentAccessPreferences } from './agent-access.ts'
 
 export const PAT_PREFIX = 'movp_pat_'
+export const MAX_AGENT_SESSION_TTL_SECONDS = 3600
 
 export type PatExchange =
-  | { ok: true; userId: string; defaultWorkspaceId: string; accessToken: string; expiresAt: number }
-  | { ok: false; code: 'invalid_token' | 'expired_token' }
+  | {
+      ok: true
+      userId: string
+      defaultWorkspaceId: string
+      accessToken: string
+      expiresAt: number
+      agentAccess: AgentAccessPreferences
+    }
+  | { ok: false; code: 'invalid_token' | 'expired_token' | 'agent_session_ttl_out_of_bounds' }
 
 type MintedSession = { accessToken: string; expiresAt: number }
 
 const SESSION_EXPIRY_SKEW_SECONDS = 60
 const MAX_SESSION_CACHE_ENTRIES = 256
 const sessionCache = new Map<string, Promise<MintedSession | null>>()
+
+class AgentSessionTtlOutOfBoundsError extends Error {
+  constructor() {
+    super('agent_session_ttl_out_of_bounds')
+    this.name = 'AgentSessionTtlOutOfBoundsError'
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
 
 export async function sha256hex(input: string): Promise<string> {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(input))
@@ -54,7 +74,11 @@ async function mintSession(
   const { data: otp, error: otpErr } = await anon.auth.verifyOtp({ type: 'email', token_hash: hashedToken })
   const session = otp?.session
   if (otpErr || !session?.access_token) return null
-  return { accessToken: session.access_token, expiresAt: session.expires_at ?? 0 }
+  const minted = { accessToken: session.access_token, expiresAt: session.expires_at ?? 0 }
+  if (minted.expiresAt - Math.floor(Date.now() / 1000) > MAX_AGENT_SESSION_TTL_SECONDS) {
+    throw new AgentSessionTtlOutOfBoundsError()
+  }
+  return minted
 }
 
 async function cachedOrMintedSession(
@@ -99,24 +123,43 @@ export async function resolvePatToken(
   const tokenHash = await sha256hex(token)
   const { data, error } = await admin.rpc('resolve_pat', { p_token_hash: tokenHash })
   if (error) return { ok: false, code: 'invalid_token' }
-  const row = (data ?? {}) as { status?: string; user_id?: string; default_workspace_id?: string }
-  if (row.status === 'expired') return { ok: false, code: 'expired_token' }
+  if (!isRecord(data)) return { ok: false, code: 'invalid_token' }
+  if (data.status === 'expired') return { ok: false, code: 'expired_token' }
   // revoked | not_found | anything non-ok collapse to invalid_token (agents re-auth, not retry).
-  if (row.status !== 'ok' || !row.user_id || !row.default_workspace_id) return { ok: false, code: 'invalid_token' }
+  if (
+    data.status !== 'ok'
+    || typeof data.user_id !== 'string'
+    || typeof data.default_workspace_id !== 'string'
+    || typeof data.mcp_enabled !== 'boolean'
+    || typeof data.cli_enabled !== 'boolean'
+  ) return { ok: false, code: 'invalid_token' }
+
+  const userId = data.user_id
+  const defaultWorkspaceId = data.default_workspace_id
+  const agentAccess = { mcpEnabled: data.mcp_enabled, cliEnabled: data.cli_enabled }
 
   // Revocation stays immediate: resolve_pat runs above on every request. Only the expensive
   // GoTrue mint is reused after that gate has returned ok.
-  const session = await cachedOrMintedSession(
-    cacheKey(env.SUPABASE_URL, tokenHash),
-    () => mintSession(row.user_id!, env, admin),
-  )
+  let session: MintedSession | null
+  try {
+    session = await cachedOrMintedSession(
+      cacheKey(env.SUPABASE_URL, tokenHash),
+      () => mintSession(userId, env, admin),
+    )
+  } catch (caught) {
+    if (caught instanceof AgentSessionTtlOutOfBoundsError) {
+      return { ok: false, code: 'agent_session_ttl_out_of_bounds' }
+    }
+    throw caught
+  }
   if (!session) return { ok: false, code: 'invalid_token' }
 
   return {
     ok: true,
-    userId: row.user_id,
-    defaultWorkspaceId: row.default_workspace_id,
+    userId,
+    defaultWorkspaceId,
     accessToken: session.accessToken,
     expiresAt: session.expiresAt,
+    agentAccess,
   }
 }

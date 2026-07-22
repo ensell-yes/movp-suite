@@ -4,6 +4,7 @@ import { readServerEnv } from '../lib/env.ts'
 
 let state: 'form' | 'sent' | 'error' = Astro.url.searchParams.get('error') ? 'error' : 'form'
 let email = ''
+const passwordUpdated = Astro.url.searchParams.get('password') === 'updated'
 
 if (Astro.request.method === 'POST') {
   const form = await Astro.request.formData()
@@ -35,6 +36,7 @@ if (Astro.request.method === 'POST') {
       <p>Check your email for a magic link.</p>
     </section>
   )}
+  {passwordUpdated && <p data-testid="password-updated" role="status">Password updated. Sign in with your new password.</p>}
   <form data-testid="login-form" method="post" aria-labelledby="login-heading">
     <label>
       Email

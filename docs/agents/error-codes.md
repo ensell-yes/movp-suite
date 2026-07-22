@@ -1,8 +1,8 @@
 # MOVP agent connectivity — error codes & conventions
 
 ## Stable, agent-facing error codes
-MCP/HTTP returns HTTP **401** with `{ "error": "<code>" }`; the CLI maps each to a non-zero exit +
-friendly message. These four codes are **stable** — agents branch on them and must not expect others:
+MCP/HTTP returns `{ "error": "<code>" }`; the CLI maps each code it can encounter to a non-zero exit.
+These codes are stable:
 
 | Code | Meaning | Agent remedy |
 |---|---|---|
@@ -10,12 +10,20 @@ friendly message. These four codes are **stable** — agents branch on them and 
 | `invalid_token` | Bad / not-found / **revoked** PAT, or an unverifiable JWT. | Re-authenticate; mint a new PAT. Do **not** blind-retry. |
 | `expired_token` | The PAT (or minted session) is past `expires_at`. | Mint a fresh PAT / re-exchange. |
 | `invalid_claims` | The verified session lacks required claims. | Re-authenticate. |
+| `mcp_access_disabled` | The authenticated user's MCP preference is disabled. | Do not retry; the user must enable MCP access in Security settings. |
+| `cli_access_disabled` | The authenticated user's PAT-backed CLI/API preference is disabled. | Do not retry; the user must enable CLI & API access (PAT). |
+| `agent_access_check_failed` | The server could not evaluate preferences after its one bounded retry. | Retry later; if it persists, contact the operator. |
+| `agent_session_ttl_out_of_bounds` | The server is configured to mint a PAT session longer than 3,600 seconds. | Do not retry until the operator corrects the session lifetime. |
 
 (A revoked PAT collapses to `invalid_token` at the principal boundary — agents should re-auth, not
 retry the same token.)
 
-Revocation blocks new PAT exchanges immediately; already-minted sessions can remain valid for up to
-1 hour, until their JWT expires. Rotate credentials and terminate active agent processes after a leak.
+Authentication failures return HTTP **401**, disabled preferences return **403**, and preference-check or
+session-lifetime failures return **503**. Revocation and the PAT preference block new exchanges immediately;
+already-minted sessions can remain valid for up to 1 hour, until their JWT expires. The MCP preference is
+checked without a preference cache on every request, including requests authenticated by a session JWT.
+A directly supplied `MOVP_ACCESS_TOKEN` is outside the PAT CLI/API preference. Rotate credentials and
+terminate active agent processes after a leak.
 
 ## Tool naming
 Tools are `<collection>.<verb>` for schema collections (e.g. `task.list`, `task.create`,

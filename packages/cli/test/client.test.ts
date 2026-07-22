@@ -52,13 +52,30 @@ describe('resolveCliCtx precedence', () => {
     expect(String(fetchSpy.mock.calls[0]![0])).toContain('/functions/v1/auth-exchange')
   })
 
-  it('reuses a cached non-expired session without re-exchanging', async () => {
+  it('re-exchanges a PAT even when the cached session is not expired', async () => {
     fileStore('http://api', base).save({ pat: 'movp_pat_abc', session: { access_token: makeJwt('cached'), expires_at: nowSec() + 3600 } })
-    const fetchSpy = vi.fn()
+    const fresh = makeJwt('fresh')
+    const fetchSpy = vi.fn(async () =>
+      new Response(JSON.stringify({ access_token: fresh, expires_at: nowSec() + 3600, default_workspace_id: 'w1', user_id: 'fresh' }), { status: 200 }),
+    )
     vi.stubGlobal('fetch', fetchSpy)
     const ctx = await resolveCliCtx({ ...base, MOVP_PAT: 'movp_pat_abc' })
-    expect(ctx.userId).toBe('cached')
-    expect(fetchSpy).not.toHaveBeenCalled()
+    expect(ctx.userId).toBe('fresh')
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
+  })
+
+  it('re-exchanges a stored PAT even when its cached session is not expired', async () => {
+    fileStore('http://api', base).save({ pat: 'movp_pat_stored', session: { access_token: makeJwt('cached'), expires_at: nowSec() + 3600 } })
+    const fresh = makeJwt('stored-fresh')
+    const fetchSpy = vi.fn(async () =>
+      new Response(JSON.stringify({ access_token: fresh, expires_at: nowSec() + 3600, default_workspace_id: 'w1', user_id: 'stored-fresh' }), { status: 200 }),
+    )
+    vi.stubGlobal('fetch', fetchSpy)
+
+    const ctx = await resolveCliCtx(base)
+
+    expect(ctx.userId).toBe('stored-fresh')
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
   })
 
   it('re-exchanges when the cached session is expired', async () => {
@@ -76,6 +93,15 @@ describe('resolveCliCtx precedence', () => {
   it('a revoked PAT (exchange 401) throws the auth code', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: 'invalid_token' }), { status: 401 })))
     await expect(resolveCliCtx({ ...base, MOVP_PAT: 'movp_pat_revoked' })).rejects.toThrow(/invalid_token/)
+  })
+
+  it('does not replace the cached session when PAT access is disabled', async () => {
+    const cached = { access_token: makeJwt('cached'), expires_at: nowSec() + 3600 }
+    fileStore('http://api', base).save({ pat: 'movp_pat_disabled', session: cached })
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: 'cli_access_disabled' }), { status: 403 })))
+
+    await expect(resolveCliCtx(base)).rejects.toThrow(/cli_access_disabled/)
+    expect(fileStore('http://api', base).load()).toEqual({ pat: 'movp_pat_disabled', session: cached })
   })
 
   it('service-role mode is unchanged', async () => {

@@ -1,6 +1,7 @@
 import type { MovpSchema } from '@movp/core-schema'
 import type { CampaignCreate, CampaignRow, CampaignUpdate } from './generated/types.ts'
 import { makeAdminService } from './admin.ts'
+import { makeAgentAccessService } from './agent-access.ts'
 import { makeCampaignService } from './campaign.ts'
 import { makeCollabService } from './collab.ts'
 import { makeCollectionService } from './collection.ts'
@@ -50,6 +51,7 @@ export function createDomain(ctx: DomainCtx, opts: { schema: MovpSchema; embedde
     workflows: makeWorkflowService(ctx),
     admin: makeAdminService(ctx),
     pat: makePatService(ctx),
+    agentAccess: makeAgentAccessService(ctx),
     reporting: makeReportingService(ctx),
   }
 }

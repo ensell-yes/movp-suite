@@ -282,6 +282,10 @@ otp_expiry = 3600
 subject = "Sign in to MOVP Suite"
 content_path = "./supabase/templates/magic_link.html"
 
+[auth.email.template.recovery]
+subject = "Reset your MOVP Suite password"
+content_path = "./supabase/templates/recovery.html"
+
 # Uncomment to customize notification email template
 # [auth.email.notification.password_changed]
 # enabled = true

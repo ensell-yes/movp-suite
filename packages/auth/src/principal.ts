@@ -1,5 +1,6 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import { createRemoteJWKSet, errors as jose, jwtVerify } from 'jose'
+import type { AgentAccessPreferences } from './agent-access.ts'
 import { PAT_PREFIX, resolvePatToken } from './pat.ts'
 
 export type Env = {
@@ -12,8 +13,24 @@ export type Env = {
 export type PrincipalDeps = { resolvePat?: typeof resolvePatToken }
 
 export type Principal =
-  | { ok: true; userId: string; db: SupabaseClient; accessToken: string }
-  | { ok: false; code: 'missing_token' | 'invalid_token' | 'expired_token' | 'invalid_claims' }
+  | {
+      ok: true
+      credentialKind: 'pat'
+      userId: string
+      db: SupabaseClient
+      accessToken: string
+      agentAccess: AgentAccessPreferences
+    }
+  | { ok: true; credentialKind: 'session'; userId: string; db: SupabaseClient; accessToken: string }
+  | {
+      ok: false
+      code:
+        | 'missing_token'
+        | 'invalid_token'
+        | 'expired_token'
+        | 'invalid_claims'
+        | 'agent_session_ttl_out_of_bounds'
+    }
 
 const jwksCache = new Map<string, ReturnType<typeof createRemoteJWKSet>>()
 
@@ -55,7 +72,14 @@ export async function resolvePrincipal(req: Request, env: Env, deps?: PrincipalD
       global: { headers: { Authorization: `Bearer ${ex.accessToken}` } },
       auth: { persistSession: false },
     })
-    return { ok: true, userId: ex.userId, db, accessToken: ex.accessToken }
+    return {
+      ok: true,
+      credentialKind: 'pat',
+      userId: ex.userId,
+      db,
+      accessToken: ex.accessToken,
+      agentAccess: ex.agentAccess,
+    }
   }
 
   let payload: Awaited<ReturnType<typeof jwtVerify>>['payload']
@@ -82,5 +106,5 @@ export async function resolvePrincipal(req: Request, env: Env, deps?: PrincipalD
     auth: { persistSession: false },
   })
 
-  return { ok: true, userId: payload.sub, db, accessToken: token }
+  return { ok: true, credentialKind: 'session', userId: payload.sub, db, accessToken: token }
 }
