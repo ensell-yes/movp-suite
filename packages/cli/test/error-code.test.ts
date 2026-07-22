@@ -16,4 +16,16 @@ describe('cliErrorCode', () => {
     expect(cliErrorCode(new Error('aws_secret_access_key: SUPERSECRET'))).toBe('cli_error')
     expect(cliErrorCode({ message: 'schema_runtime_mismatch: forged' })).toBe('cli_error')
   })
+
+  it('preserves cli_access_disabled', () => {
+    expect(cliErrorCode(new Error('cli_access_disabled'))).toBe('cli_access_disabled')
+  })
+
+  it('preserves agent_access_check_failed', () => {
+    expect(cliErrorCode(new Error('agent_access_check_failed'))).toBe('agent_access_check_failed')
+  })
+
+  it('preserves agent_session_ttl_out_of_bounds', () => {
+    expect(cliErrorCode(new Error('agent_session_ttl_out_of_bounds'))).toBe('agent_session_ttl_out_of_bounds')
+  })
 })

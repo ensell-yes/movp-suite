@@ -145,10 +145,12 @@ printf 'R2_ACCOUNT_ID=%s\n' "slice-e2e" >>"$FN_ENV_FILE"
 printf 'R2_BUCKET=%s\n' "slice-assets" >>"$FN_ENV_FILE"
 printf 'R2_ACCESS_KEY_ID=%s\n' "slice-access-key" >>"$FN_ENV_FILE"
 printf 'R2_SECRET_ACCESS_KEY=%s\n' "slice-secret-key" >>"$FN_ENV_FILE"
+printf 'MOVP_EMBED_BATCH_SIZE=%s\n' "1" >>"$FN_ENV_FILE"
 # This CLI serves every function and accepts no positional function list.
 supabase_local functions serve --env-file "$FN_ENV_FILE" >/tmp/movp-functions.log 2>&1 &
 FN_PID=$!
-trap 'kill $FN_PID 2>/dev/null || true; rm -f "$FN_ENV_FILE"; if [ -n "${AGENTS_XDG:-}" ]; then rm -rf "$AGENTS_XDG"; fi' EXIT
+REST_CONTAINER=""
+trap 'kill $FN_PID 2>/dev/null || true; if [ -n "${REST_CONTAINER:-}" ]; then docker start "$REST_CONTAINER" >/dev/null 2>&1 || true; fi; rm -f "$FN_ENV_FILE"; if [ -n "${AGENTS_XDG:-}" ]; then rm -rf "$AGENTS_XDG"; fi' EXIT
 GRAPHQL_READY=0
 BOOT_ERROR_COUNT=0
 LAST_BOOT_ERROR=""
@@ -186,17 +188,20 @@ echo "$DEMO_WORKFLOWS" | grep -q 'skipped' || { echo "quickstart workflows missi
 echo "== [3] GraphQL: create + query back =="
 CREATE="$(post_graphql "{\"query\":\"mutation(\$i:NoteCreateInput!){createNote(input:\$i){id title}}\",\"variables\":{\"i\":{\"workspace_id\":\"$WS\",\"title\":\"E2E note\",\"body\":\"semantic lighthouse phrase for e2e verification\"}}}")"
 echo "$CREATE" | grep -q 'E2E note' || { echo "create failed: $CREATE"; exit 1; }
+E2E_NOTE_ID="$(printf '%s' "$CREATE" | json_get data.createNote.id)"
 LIST="$(post_graphql "{\"query\":\"query{notes(workspaceId:\\\"$WS\\\", first:20){items{id title}}}\"}")"
 echo "$LIST" | grep -q 'E2E note' || { echo "list failed: $LIST"; exit 1; }
 
 echo "== [7] GraphQL: semantic search is reachable through the edge surface =="
 echo "warming gte-small if this is a fresh CI container"
+E2E_NOTE_INDEXED="f"
 for i in $(seq 1 6); do
   curl -sS --max-time 120 -X POST "$API_URL/functions/v1/index-embeddings" -H "content-type: application/json" >/tmp/index-embeddings.json || true
-  node -e 'const fs=require("fs"); let j={}; try{j=JSON.parse(fs.readFileSync("/tmp/index-embeddings.json","utf8"))}catch{}; process.exit((j.processed||0) >= 1 ? 0 : 1)' && break
+  E2E_NOTE_INDEXED="$(printf '%s\n' "select exists(select 1 from public.search_chunk where source_table='note' and source_id=:'note_id'::uuid and field='body');" | psql "$DB_URL" -v note_id="$E2E_NOTE_ID" -tA | tr -d '[:space:]')"
+  [ "$E2E_NOTE_INDEXED" = "t" ] && break
   sleep $((i * 2))
 done
-node -e 'const fs=require("fs"); const j=JSON.parse(fs.readFileSync("/tmp/index-embeddings.json","utf8")); if ((j.processed||0) < 1) { console.error("index-embeddings did not process a job:", j); process.exit(1) }'
+[ "$E2E_NOTE_INDEXED" = "t" ] || { echo "index-embeddings did not index the E2E note: $(cat /tmp/index-embeddings.json)"; exit 1; }
 SEM="$(post_graphql "{\"query\":\"query{search(workspaceId:\\\"$WS\\\", query:\\\"semantic lighthouse\\\", mode:\\\"semantic\\\"){collection id title snippet score}}\"}")"
 echo "$SEM" | grep -q 'E2E note' || { echo "semantic search failed: $SEM"; echo "index worker: $(cat /tmp/index-embeddings.json)"; exit 1; }
 
@@ -918,6 +923,72 @@ AGENTS_TASKS="$(MOVP_PAT="$AGENTS_PAT" pnpm exec tsx packages/cli/src/bin.ts tas
 echo "$AGENTS_TASKS" | grep -q 'E2E task' || { echo "movp task list (PAT auth) returned no real data: $AGENTS_TASKS"; exit 1; }
 AGENTS_HYBRID="$(MOVP_PAT="$AGENTS_PAT" pnpm exec tsx packages/cli/src/bin.ts search 'semantic lighthouse' --workspace "$WS" --mode hybrid)"
 echo "$AGENTS_HYBRID" | grep -q 'E2E note' || { echo "movp search --mode hybrid (PAT auth) returned no hit: $AGENTS_HYBRID"; exit 1; }
+
+echo "== [agents] MCP preference denies both session JWT and PAT credentials =="
+MCP_OFF="$(post_graphql '{"query":"mutation{updateAgentAccessPreferences(mcpEnabled:false,cliEnabled:true){mcpEnabled cliEnabled}}"}')"
+echo "$MCP_OFF" | grep -q '"mcpEnabled":false' || { echo "failed to disable MCP access: $MCP_OFF"; exit 1; }
+MCP_SESSION_403="$(curl -sS -o /tmp/agents-mcp-session-disabled.json -w '%{http_code}' "$API_URL/functions/v1/mcp" \
+  -H "Authorization: Bearer $TOKEN" -H "apikey: $ANON_KEY" \
+  -H "content-type: application/json" -H "accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","id":20,"method":"tools/list"}')"
+[ "$MCP_SESSION_403" = "403" ] || { echo "disabled session MCP was not rejected ($MCP_SESSION_403)"; exit 1; }
+grep -q 'mcp_access_disabled' /tmp/agents-mcp-session-disabled.json || { echo "session MCP denial missing stable code"; exit 1; }
+MCP_PAT_403="$(curl -sS -o /tmp/agents-mcp-pat-disabled.json -w '%{http_code}' "$API_URL/functions/v1/mcp" \
+  -H "Authorization: Bearer $AGENTS_PAT" -H "apikey: $ANON_KEY" \
+  -H "content-type: application/json" -H "accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","id":21,"method":"tools/list"}')"
+[ "$MCP_PAT_403" = "403" ] || { echo "disabled PAT MCP was not rejected ($MCP_PAT_403)"; exit 1; }
+grep -q 'mcp_access_disabled' /tmp/agents-mcp-pat-disabled.json || { echo "PAT MCP denial missing stable code"; exit 1; }
+
+echo "== [agents] PAT CLI/API preference denies exchange, GraphQL, and ingest only =="
+CLI_OFF="$(post_graphql '{"query":"mutation{updateAgentAccessPreferences(mcpEnabled:true,cliEnabled:false){mcpEnabled cliEnabled}}"}')"
+echo "$CLI_OFF" | grep -q '"cliEnabled":false' || { echo "failed to disable PAT CLI/API access: $CLI_OFF"; exit 1; }
+EXCHANGE_403="$(curl -sS -o /tmp/agents-exchange-disabled.json -w '%{http_code}' "$API_URL/functions/v1/auth-exchange" \
+  -H "Authorization: Bearer $AGENTS_PAT" -H "apikey: $ANON_KEY" \
+  -H "content-type: application/json" -d '{}')"
+[ "$EXCHANGE_403" = "403" ] || { echo "disabled PAT exchange was not rejected ($EXCHANGE_403)"; exit 1; }
+grep -q 'cli_access_disabled' /tmp/agents-exchange-disabled.json || { echo "exchange denial missing stable code"; exit 1; }
+GRAPHQL_PAT_403="$(curl -sS -o /tmp/agents-graphql-disabled.json -w '%{http_code}' "$API_URL/functions/v1/graphql" \
+  -H "Authorization: Bearer $AGENTS_PAT" -H "apikey: $ANON_KEY" \
+  -H "content-type: application/json" -d '{"query":"query{__typename}"}')"
+[ "$GRAPHQL_PAT_403" = "403" ] || { echo "disabled PAT GraphQL was not rejected ($GRAPHQL_PAT_403)"; exit 1; }
+grep -q 'cli_access_disabled' /tmp/agents-graphql-disabled.json || { echo "GraphQL denial missing stable code"; exit 1; }
+INGEST_PAT_403="$(curl -sS -o /tmp/agents-ingest-disabled.json -w '%{http_code}' "$API_URL/functions/v1/ingest" \
+  -H "Authorization: Bearer $AGENTS_PAT" -H "apikey: $ANON_KEY" -H "content-type: application/json" \
+  -d "{\"events\":[{\"workspace_id\":\"$WS\",\"event_type\":\"agent.preference.denied\",\"subject_ref\":\"slice\"}]}")"
+[ "$INGEST_PAT_403" = "403" ] || { echo "disabled PAT ingest was not rejected ($INGEST_PAT_403)"; exit 1; }
+grep -q 'cli_access_disabled' /tmp/agents-ingest-disabled.json || { echo "ingest denial missing stable code"; exit 1; }
+INGEST_KEY_UNCHANGED="$(curl -sS "$API_URL/functions/v1/ingest" \
+  -H "apikey: $ANON_KEY" -H "x-ingest-key: $RAWKEY" -H "content-type: application/json" \
+  -d '{"events":[{"event_type":"slice.login","subject_ref":"ing-preference-api-key","occurred_at":"2026-07-01T00:03:00Z"}]}')"
+[ "$(echo "$INGEST_KEY_UNCHANGED" | json_get inserted)" = "1" ] \
+  || { echo "PAT preference changed API-key ingest behavior: $INGEST_KEY_UNCHANGED"; exit 1; }
+
+ACCESS_ON="$(post_graphql '{"query":"mutation{updateAgentAccessPreferences(mcpEnabled:true,cliEnabled:true){mcpEnabled cliEnabled}}"}')"
+echo "$ACCESS_ON" | grep -q '"mcpEnabled":true' || { echo "failed to restore agent access: $ACCESS_ON"; exit 1; }
+echo "$ACCESS_ON" | grep -q '"cliEnabled":true' || { echo "failed to restore PAT access: $ACCESS_ON"; exit 1; }
+
+echo "== [agents] MCP preference gateway failure retries exactly once then returns 503 =="
+PROJECT_ID="$(awk -F'"' '/^project_id =/ {print $2; exit}' supabase/config.toml)"
+PROJECT_ID="${PROJECT_ID:-$(basename "$ROOT")}"
+REST_CONTAINER="supabase_rest_${PROJECT_ID}"
+docker stop "$REST_CONTAINER" >/dev/null
+MCP_CHECK_503="$(curl -sS -o /tmp/agents-mcp-check-failed.json -w '%{http_code}' "$API_URL/functions/v1/mcp" \
+  -H "Authorization: Bearer $TOKEN" -H "apikey: $ANON_KEY" \
+  -H "content-type: application/json" -H "accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","id":22,"method":"tools/list"}')"
+docker start "$REST_CONTAINER" >/dev/null
+REST_CONTAINER=""
+[ "$MCP_CHECK_503" = "503" ] || { echo "exhausted MCP preference check did not return 503 ($MCP_CHECK_503)"; exit 1; }
+grep -q 'agent_access_check_failed' /tmp/agents-mcp-check-failed.json || { echo "preference failure missing stable code"; exit 1; }
+for _ in $(seq 1 30); do
+  REST_READY="$(post_graphql '{"query":"query{agentAccessPreferences{mcpEnabled cliEnabled}}"}' || true)"
+  printf '%s' "$REST_READY" | grep -q '"mcpEnabled"' && break
+  sleep 1
+done
+printf '%s' "$REST_READY" | grep -q '"mcpEnabled"' || { echo "PostgREST did not recover after retry gate"; exit 1; }
+grep -q '"error_code":"agent_access_check_failed".*"attempt":2' /tmp/movp-functions.log \
+  || { echo "retry exhaustion event missing attempt:2"; exit 1; }
 
 echo "== [agents] revoke the PAT -> every surface fails closed with the auth code =="
 post_graphql "{\"query\":\"mutation{revokePersonalAccessToken(tokenId:\\\"$AGENTS_PAT_ID\\\")}\"}" | grep -q 'true' \

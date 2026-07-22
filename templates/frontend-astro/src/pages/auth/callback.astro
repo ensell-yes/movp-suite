@@ -1,14 +1,14 @@
 ---
 import Base from '../../layouts/Base.astro'
-import { SESSION_COOKIE, verifyMagicLink } from '../../lib/auth.ts'
+import { PASSWORD_RECOVERY_COOKIE, SESSION_COOKIE, verifyMagicLink, type MagicLinkType } from '../../lib/auth.ts'
 import { readServerEnv } from '../../lib/env.ts'
 
 const url = new URL(Astro.request.url)
 Astro.response.headers.set('Cache-Control', 'no-store')
 Astro.response.headers.set('Referrer-Policy', 'same-origin')
 
-function linkType(value: FormDataEntryValue | string | null): 'email' | 'magiclink' | null {
-  if (value === 'email' || value === 'magiclink') return value
+function linkType(value: FormDataEntryValue | string | null): MagicLinkType | null {
+  if (value === 'email' || value === 'magiclink' || value === 'recovery') return value
   return null
 }
 
@@ -39,6 +39,16 @@ if (Astro.request.method === 'POST') {
     secure: url.protocol === 'https:',
     sameSite: 'lax',
   })
+  if (type === 'recovery') {
+    Astro.cookies.set(PASSWORD_RECOVERY_COOKIE, 'verified', {
+      path: '/settings/security/password',
+      httpOnly: true,
+      secure: url.protocol === 'https:',
+      sameSite: 'lax',
+      maxAge: 10 * 60,
+    })
+    return Astro.redirect('/settings/security/password')
+  }
   return Astro.redirect('/')
 }
 
@@ -49,11 +59,11 @@ if (!tokenHash || !type) {
 <Base title="Confirm sign in">
   <section data-testid="auth-confirm" aria-labelledby="auth-confirm-heading">
     <h1 id="auth-confirm-heading" tabindex="-1">Confirm sign in</h1>
-    <p>Continue to finish signing in. This link can only be used once.</p>
+    <p>Continue to finish {type === 'recovery' ? 'resetting your password' : 'signing in'}. This link can only be used once.</p>
     <form method="post">
       <input type="hidden" name="token_hash" value={tokenHash} />
       <input type="hidden" name="type" value={type} />
-      <button type="submit">Continue sign in</button>
+      <button type="submit">{type === 'recovery' ? 'Continue password reset' : 'Continue sign in'}</button>
     </form>
   </section>
 </Base>

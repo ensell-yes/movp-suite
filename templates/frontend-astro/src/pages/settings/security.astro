@@ -1,0 +1,143 @@
+---
+import Base from '../../layouts/Base.astro'
+import Icon from '../../components/Icon.astro'
+import AuthFailure from '../../components/states/AuthFailure.astro'
+import ErrorRetry from '../../components/states/ErrorRetry.astro'
+import { readServerEnv } from '../../lib/env.ts'
+import { gqlRequest } from '../../lib/graphql.ts'
+import { getSessionToken } from '../../lib/session.ts'
+import { getCurrentUser, requestPasswordRecovery, UserAccountError } from '../../lib/user-account.ts'
+import {
+  AGENT_ACCESS_PREFERENCES_QUERY,
+  UPDATE_AGENT_ACCESS_PREFERENCES_MUTATION,
+  type AgentAccessPreferences,
+} from '../../lib/agent-access-queries.ts'
+
+Astro.response.headers.set('Cache-Control', 'no-store')
+
+const token = getSessionToken(Astro.cookies)
+let state: 'auth' | 'error' | 'ok' = token ? 'ok' : 'auth'
+let notice = ''
+let agentAccessNotice = ''
+let agentAccessError = ''
+let agentAccessLoadError = false
+let agentAccessUpdated = false
+let preferences: AgentAccessPreferences | null = null
+
+function formBoolean(form: FormData, name: string): boolean | null {
+  const values = form.getAll(name)
+  if (values.length < 1 || values.length > 2 || values.some((value) => value !== 'true' && value !== 'false')) return null
+  return values.at(-1) === 'true'
+}
+
+if (token) {
+  const env = readServerEnv()
+  const authEnv = { supabaseUrl: env.supabaseUrl, anonKey: env.supabaseAnonKey }
+  try {
+    const account = await getCurrentUser(authEnv, token)
+    if (Astro.request.method === 'POST') {
+      const form = await Astro.request.formData()
+      const action = String(form.get('action') ?? '')
+      if (action === 'agent-access') {
+        const mcpEnabled = formBoolean(form, 'mcpEnabled')
+        const cliEnabled = formBoolean(form, 'cliEnabled')
+        if (mcpEnabled === null || cliEnabled === null) {
+          agentAccessError = 'Could not save agent access settings.'
+        } else {
+          const result = await gqlRequest<{ updateAgentAccessPreferences: AgentAccessPreferences }>(
+            { endpoint: env.graphqlEndpoint, token },
+            UPDATE_AGENT_ACCESS_PREFERENCES_MUTATION,
+            { mcpEnabled, cliEnabled },
+          )
+          if (!result.ok && result.code === 'auth_error') state = 'auth'
+          else if (!result.ok) agentAccessError = 'Could not save agent access settings.'
+          else agentAccessUpdated = true
+        }
+      } else {
+        await requestPasswordRecovery(authEnv, account.email, new URL('/auth/callback', Astro.url).toString())
+        notice = 'Check your email for a password-reset link. The link opens a confirmation page before it is used.'
+      }
+    }
+
+    if (state === 'ok') {
+      const result = await gqlRequest<{ agentAccessPreferences: AgentAccessPreferences }>(
+        { endpoint: env.graphqlEndpoint, token },
+        AGENT_ACCESS_PREFERENCES_QUERY,
+        {},
+      )
+      if (!result.ok && result.code === 'auth_error') state = 'auth'
+      else if (!result.ok) agentAccessLoadError = true
+      else {
+        preferences = result.data.agentAccessPreferences
+        if (agentAccessUpdated) agentAccessNotice = 'Agent access settings saved.'
+      }
+    }
+  } catch (error) {
+    if (error instanceof UserAccountError && error.code === 'auth_error') state = 'auth'
+    else state = 'error'
+  }
+}
+---
+<Base title="Security">
+  <div class="account-page">
+    <header class="page-heading">
+      <p class="eyebrow">Account</p>
+      <h1 tabindex="-1" id="security-heading">Security</h1>
+      <p>Manage sign-in and access to your MOVP Suite account.</p>
+    </header>
+    {state === 'auth' && <AuthFailure resource="security settings" />}
+    {state === 'error' && <ErrorRetry message="Could not load security settings." retryHref={Astro.url.pathname} />}
+    {notice && <p class="notice" role="status" data-testid="recovery-notice">{notice}</p>}
+    {state === 'ok' && (
+      <div class="settings-grid">
+        <section class="account-card" aria-labelledby="password-heading">
+          <Icon name="security" size={24} />
+          <h2 id="password-heading">Password</h2>
+          <p>Password changes require a fresh email verification, even when you are already signed in.</p>
+          <form method="post">
+            <input type="hidden" name="action" value="recovery" />
+            <button class="primary-button" type="submit">Email password-reset link</button>
+          </form>
+        </section>
+        <section class="account-card" aria-labelledby="agent-access-heading">
+          <Icon name="security" size={24} />
+          <h2 id="agent-access-heading">Agent access</h2>
+          {agentAccessLoadError && <ErrorRetry message="Could not load agent access settings." retryHref={Astro.url.pathname} />}
+          {agentAccessError && <p class="form-error" role="alert" data-testid="agent-access-error">{agentAccessError}</p>}
+          {agentAccessNotice && <p class="notice" role="status" data-testid="agent-access-notice">{agentAccessNotice}</p>}
+          {preferences && (
+            <form method="post" class="agent-access-form">
+              <input type="hidden" name="action" value="agent-access" />
+              <label class="agent-access-option">
+                <span><strong>MCP access</strong><small>Allow your account to connect through the MOVP MCP endpoint.</small></span>
+                <input type="hidden" name="mcpEnabled" value="false" />
+                <input type="checkbox" role="switch" aria-label="MCP access" name="mcpEnabled" value="true" checked={preferences.mcpEnabled} />
+              </label>
+              <label class="agent-access-option">
+                <span>
+                  <strong>CLI &amp; API access (PAT)</strong>
+                  <small>Allow personal access tokens to use the MOVP CLI and PAT-backed API endpoints. Already-issued exchanged sessions may remain valid for up to 60 minutes. A directly supplied MOVP_ACCESS_TOKEN is not controlled by this setting.</small>
+                </span>
+                <input type="hidden" name="cliEnabled" value="false" />
+                <input type="checkbox" role="switch" aria-label="CLI & API access (PAT)" name="cliEnabled" value="true" checked={preferences.cliEnabled} />
+              </label>
+              <button class="primary-button" type="submit">Save agent access</button>
+            </form>
+          )}
+        </section>
+        <section class="account-card" aria-labelledby="tokens-heading">
+          <Icon name="tokens" size={24} />
+          <h2 id="tokens-heading">Access tokens</h2>
+          <p>Provision and revoke personal access tokens from the existing token manager.</p>
+          <a class="secondary-button" href="/settings/tokens">Manage access tokens</a>
+        </section>
+        <section class="account-card" aria-labelledby="members-heading">
+          <Icon name="admin" size={24} />
+          <h2 id="members-heading">Members &amp; roles</h2>
+          <p>Workspace owners and admins can invite members, remove access, and change roles.</p>
+          <a class="secondary-button" href="/admin/members">Manage members &amp; roles</a>
+        </section>
+      </div>
+    )}
+  </div>
+</Base>

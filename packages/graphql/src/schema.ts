@@ -9,6 +9,7 @@ import {
   resolveShareLink,
   type CollectionService,
   type CreatedPat,
+  type AgentAccessPreferences,
   type Domain,
   type DeadJobRow,
   type InboxItem,
@@ -268,6 +269,14 @@ export function buildSchema(schema: MovpSchema): GraphQLSchema {
       token: t.exposeString('token', { nullable: false }),
     }),
   })
+  const agentAccessPreferencesRef = builder
+    .objectRef<AgentAccessPreferences>('AgentAccessPreferences')
+    .implement({
+      fields: (t) => ({
+        mcpEnabled: t.exposeBoolean('mcpEnabled', { nullable: false }),
+        cliEnabled: t.exposeBoolean('cliEnabled', { nullable: false }),
+      }),
+    })
   const collectionFieldMetaRef = builder
     .objectRef<{ name: string; type: string; label: string; required: boolean }>('CollectionFieldMeta')
     .implement({
@@ -843,6 +852,30 @@ export function buildSchema(schema: MovpSchema): GraphQLSchema {
         await adminCall(() => domainFrom(ctx).pat.revokeToken({ tokenId: String(args.tokenId) }))
         return true
       },
+    }),
+  )
+
+  builder.queryField('agentAccessPreferences', (t) =>
+    t.field({
+      type: agentAccessPreferencesRef,
+      nullable: false,
+      complexity: 5,
+      resolve: (_r: unknown, _args, ctx: GraphQLContext) =>
+        adminCall(() => domainFrom(ctx).agentAccess.get()),
+    }),
+  )
+
+  builder.mutationField('updateAgentAccessPreferences', (t) =>
+    t.field({
+      type: agentAccessPreferencesRef,
+      nullable: false,
+      complexity: 5,
+      args: {
+        mcpEnabled: t.arg.boolean({ required: true }),
+        cliEnabled: t.arg.boolean({ required: true }),
+      },
+      resolve: (_r: unknown, args, ctx: GraphQLContext) =>
+        adminCall(() => domainFrom(ctx).agentAccess.update(args.mcpEnabled, args.cliEnabled)),
     }),
   )
 

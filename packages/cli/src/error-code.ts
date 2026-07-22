@@ -1,4 +1,7 @@
 const STABLE_CLI_ERROR_CODES = new Set([
+  'agent_access_check_failed',
+  'agent_session_ttl_out_of_bounds',
+  'cli_access_disabled',
   'delta_file_exists',
   'delta_registry_update_failed',
   'expired_token',

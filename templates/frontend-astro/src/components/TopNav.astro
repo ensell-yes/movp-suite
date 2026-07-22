@@ -1,0 +1,129 @@
+---
+import Icon from './Icon.astro'
+import { getSessionDisplay, getSessionToken } from '../lib/session.ts'
+
+const pathname = Astro.url.pathname
+const sessionToken = getSessionToken(Astro.cookies)
+const sessionDisplay = getSessionDisplay(Astro.cookies)
+const signedIn = sessionToken !== null
+const fullName = [sessionDisplay?.firstName, sessionDisplay?.lastName].filter(Boolean).join(' ')
+const accountLabel = sessionDisplay?.displayName ?? (fullName || sessionDisplay?.email || 'Account')
+
+const primaryItems = [
+  { href: '/', label: 'Notes', icon: 'notes' },
+  { href: '/tasks', label: 'Tasks', icon: 'tasks' },
+  { href: '/content', label: 'Content', icon: 'content' },
+  { href: '/campaigns', label: 'Campaigns', icon: 'campaigns' },
+  { href: '/segments', label: 'Segments', icon: 'segments' },
+  { href: '/workflows/rules', label: 'Workflows', icon: 'workflows' },
+] as const
+
+function isCurrent(href: string): boolean {
+  if (href === '/') return pathname === '/' || pathname.startsWith('/notes/')
+  const root = href.split('/').filter(Boolean)[0]
+  return root ? pathname === href || pathname.startsWith(`/${root}/`) : false
+}
+---
+<header class="top-nav" data-testid="top-nav">
+  <div class="top-nav__inner">
+    <a class="brand" href="/" aria-label="MOVP Suite home">
+      <span class="brand__mark" aria-hidden="true">M</span>
+      <span class="brand__name">MOVP Suite</span>
+    </a>
+
+    <button
+      class="nav-toggle"
+      type="button"
+      aria-expanded="false"
+      aria-controls="primary-navigation"
+      aria-label="Open navigation menu"
+      data-nav-toggle
+    >
+      <Icon name="menu" size={24} />
+    </button>
+
+    <div class="nav-panel" id="primary-navigation" data-nav-panel>
+      <nav class="primary-nav" aria-label="Primary">
+        <ul>
+          {primaryItems.map((item) => (
+            <li>
+              <a href={item.href} aria-current={isCurrent(item.href) ? 'page' : undefined}>
+                <Icon name={item.icon} />
+                <span>{item.label}</span>
+              </a>
+            </li>
+          ))}
+        </ul>
+      </nav>
+
+      <nav class="utility-nav" aria-label="Utilities">
+        <a href="/inbox" aria-current={isCurrent('/inbox') ? 'page' : undefined}>
+          <Icon name="inbox" />
+          <span>Inbox</span>
+        </a>
+        <a href="/search" aria-current={isCurrent('/search') ? 'page' : undefined}>
+          <Icon name="search" />
+          <span>Search</span>
+        </a>
+      </nav>
+
+      {signedIn ? (
+        <details class="user-menu" data-user-menu>
+          <summary>
+            <span class="user-menu__avatar" aria-hidden="true"><Icon name="profile" /></span>
+            <span class="user-menu__label">{accountLabel}</span>
+            <Icon name="chevron" size={16} />
+          </summary>
+          <div class="user-menu__popover">
+            {sessionDisplay?.email && <p class="user-menu__email">{sessionDisplay.email}</p>}
+            <a href="/settings/profile"><Icon name="profile" /><span>Profile</span></a>
+            <a href="/settings/security"><Icon name="security" /><span>Security</span></a>
+            <a href="/settings/tokens"><Icon name="tokens" /><span>Access tokens</span></a>
+            <a href="/admin/members"><Icon name="admin" /><span>Members &amp; roles</span></a>
+            <form method="post" action="/logout">
+              <button type="submit"><Icon name="logout" /><span>Log out</span></button>
+            </form>
+          </div>
+        </details>
+      ) : (
+        <a class="login-link" href="/login"><Icon name="profile" /><span>Log in</span></a>
+      )}
+    </div>
+  </div>
+</header>
+
+<script>
+  const toggle = document.querySelector<HTMLElement>('[data-nav-toggle]')
+  const panel = document.querySelector<HTMLElement>('[data-nav-panel]')
+  const userMenu = document.querySelector<HTMLDetailsElement>('[data-user-menu]')
+
+  const setNavigationOpen = (open: boolean) => {
+    if (!toggle || !panel) return
+    toggle.setAttribute('aria-expanded', String(open))
+    toggle.setAttribute('aria-label', open ? 'Close navigation menu' : 'Open navigation menu')
+    panel.toggleAttribute('data-open', open)
+  }
+
+  toggle?.addEventListener('click', () => {
+    setNavigationOpen(toggle.getAttribute('aria-expanded') !== 'true')
+  })
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape') return
+    if (userMenu?.open) userMenu.open = false
+    if (toggle?.getAttribute('aria-expanded') === 'true') {
+      setNavigationOpen(false)
+      toggle.focus()
+    }
+  })
+
+  document.addEventListener('click', (event) => {
+    if (userMenu?.open && event.target instanceof Node && !userMenu.contains(event.target)) {
+      userMenu.open = false
+    }
+  })
+
+  window.matchMedia('(min-width: 64rem)').addEventListener('change', (event) => {
+    if (event.matches) setNavigationOpen(false)
+  })
+</script>

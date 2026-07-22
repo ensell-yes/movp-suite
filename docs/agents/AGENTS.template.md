@@ -20,8 +20,12 @@ This project exposes a MOVP instance over MCP (streamable HTTP) and the `movp` C
   table writes.
 - On `invalid_token` / `expired_token` (HTTP 401), re-authenticate — do not blind-retry. Full code
   list: `docs/agents/error-codes.md`.
-- Revocation blocks new PAT exchanges immediately; already-minted sessions can remain valid for up to
-  1 hour. Terminate active agent processes when rotating a leaked credential.
+- On `mcp_access_disabled` / `cli_access_disabled` (HTTP 403), do not retry; the user must enable the
+  corresponding Security setting. Treat `agent_access_check_failed` and
+  `agent_session_ttl_out_of_bounds` (HTTP 503) as operational failures, not verdicts.
+- Revocation and the PAT preference block new exchanges immediately; already-minted sessions can remain
+  valid for up to 1 hour. A directly supplied `MOVP_ACCESS_TOKEN` is outside the PAT preference. Terminate
+  active agent processes when rotating a leaked credential.
 
 ## Example
 ```json

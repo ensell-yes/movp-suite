@@ -1,0 +1,23 @@
+---
+import { PASSWORD_RECOVERY_COOKIE, SESSION_COOKIE } from '../lib/auth.ts'
+import { readServerEnv } from '../lib/env.ts'
+import { DISPLAY_NAME_COOKIE, getSessionToken } from '../lib/session.ts'
+import { signOut } from '../lib/user-account.ts'
+
+if (Astro.request.method !== 'POST') return Astro.redirect('/')
+
+const token = getSessionToken(Astro.cookies)
+if (token) {
+  const env = readServerEnv()
+  try {
+    await signOut({ supabaseUrl: env.supabaseUrl, anonKey: env.supabaseAnonKey }, token)
+  } catch {
+    // Local session deletion is the user-visible logout boundary; remote expiry remains bounded.
+  }
+}
+
+Astro.cookies.delete(SESSION_COOKIE, { path: '/' })
+Astro.cookies.delete(DISPLAY_NAME_COOKIE, { path: '/' })
+Astro.cookies.delete(PASSWORD_RECOVERY_COOKIE, { path: '/settings/security/password' })
+return Astro.redirect('/login')
+---

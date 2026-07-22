@@ -277,6 +277,16 @@ export interface PatService {
   revokeToken(i: { tokenId: string }): Promise<void>
 }
 
+export interface AgentAccessPreferences {
+  mcpEnabled: boolean
+  cliEnabled: boolean
+}
+
+export interface AgentAccessService {
+  get(): Promise<AgentAccessPreferences>
+  update(mcpEnabled: boolean, cliEnabled: boolean): Promise<AgentAccessPreferences>
+}
+
 export interface DeadJobRow {
   id: string
   kind: string
@@ -380,5 +390,6 @@ export interface Domain {
   workflows: WorkflowService
   admin: AdminService
   pat: PatService
+  agentAccess: AgentAccessService
   reporting: ReportingService
 }

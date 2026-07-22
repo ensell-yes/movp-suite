@@ -1,6 +1,7 @@
 ---
 interface Props { title: string }
 const { title } = Astro.props
+import TopNav from '../components/TopNav.astro'
 import '../styles/global.css'
 ---
 <!doctype html>
@@ -12,9 +13,9 @@ import '../styles/global.css'
   </head>
   <body>
     <a class="skip-link" href="#main">Skip to content</a>
-    <header><nav aria-label="Primary"><a href="/">Notes</a> <a href="/tasks">Tasks</a> <a href="/content">Content</a> <a href="/workflows/rules">Workflows</a> <a href="/inbox">Inbox</a> <a href="/search">Search</a></nav></header>
-    <main id="main" tabindex="-1">
-      <slot />
+    <TopNav />
+    <main id="main" tabindex="-1" class="page-shell">
+      <div class="page-shell__content"><slot /></div>
     </main>
     <script>
       document.querySelector('.skip-link')?.addEventListener('click', () => {

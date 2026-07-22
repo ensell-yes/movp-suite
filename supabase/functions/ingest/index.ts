@@ -1,5 +1,5 @@
 import { createClient } from '@supabase/supabase-js'; // mapped in ./deno.json (mirror graphql, NOT flows)
-import { resolvePrincipal } from '@movp/auth'; // resolved via supabase/functions/ingest/deno.json
+import { decideAgentAccess, resolvePrincipal } from '@movp/auth'; // resolved via supabase/functions/ingest/deno.json
 import { emit, REDACTION_VERSION } from '@movp/obs';
 import {
   INGEST_MAX_BATCH, validateIngestEvent, type NormalizedEvent,
@@ -52,8 +52,8 @@ Deno.serve(async (req) => {
   // Every failure emits a structured @movp/obs event carrying field NAMES + a bounded
   // error_code ONLY — never the request body, event properties, x-ingest-key, or raw key.
   // (redact() also drops any @-string.) No raw console logging here; emit is the only sink.
-  const fail = (status: number, operation: string, error_code: string) => {
-    emit({ trace_id, request_id, surface: 'ingest', operation, error_code, redaction_version: REDACTION_VERSION });
+  const fail = (status: number, operation: string, error_code: string, actor_id?: string) => {
+    emit({ trace_id, request_id, actor_id, surface: 'ingest', operation, error_code, redaction_version: REDACTION_VERSION });
     return json(status, { error: error_code });
   };
 
@@ -91,7 +91,13 @@ Deno.serve(async (req) => {
     }
   } else {
     const principal = await resolvePrincipal(req, env);
-    if (!principal.ok) return fail(401, 'authenticate', principal.code);
+    if (!principal.ok) {
+      return fail(principal.code === 'agent_session_ttl_out_of_bounds' ? 503 : 401, 'authenticate', principal.code);
+    }
+    if (principal.credentialKind === 'pat') {
+      const decision = decideAgentAccess(principal.agentAccess, 'cli');
+      if (!decision.ok) return fail(403, 'authorize', decision.code, principal.userId);
+    }
     jwtPrincipal = principal;
   }
 

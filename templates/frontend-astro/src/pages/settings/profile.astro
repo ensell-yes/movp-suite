@@ -1,0 +1,103 @@
+---
+import Base from '../../layouts/Base.astro'
+import AuthFailure from '../../components/states/AuthFailure.astro'
+import ErrorRetry from '../../components/states/ErrorRetry.astro'
+import { readServerEnv } from '../../lib/env.ts'
+import {
+  DISPLAY_NAME_COOKIE,
+  encodeDisplayNameCookie,
+  getSessionToken,
+  sanitizeDisplayName,
+} from '../../lib/session.ts'
+import { getCurrentUser, updateCurrentUser, UserAccountError, type UserAccount } from '../../lib/user-account.ts'
+
+Astro.response.headers.set('Cache-Control', 'no-store')
+
+const token = getSessionToken(Astro.cookies)
+let state: 'auth' | 'error' | 'ok' = token ? 'ok' : 'auth'
+let account: UserAccount | null = null
+let notice = ''
+let formError = ''
+
+function profileText(value: FormDataEntryValue | null): string | null {
+  const text = String(value ?? '').trim()
+  if (text === '') return ''
+  return sanitizeDisplayName(text)
+}
+
+if (token) {
+  const env = readServerEnv()
+  const authEnv = { supabaseUrl: env.supabaseUrl, anonKey: env.supabaseAnonKey }
+  try {
+    account = await getCurrentUser(authEnv, token)
+    if (Astro.request.method === 'POST') {
+      const form = await Astro.request.formData()
+      const email = String(form.get('email') ?? '').trim()
+      const firstName = profileText(form.get('firstName'))
+      const lastName = profileText(form.get('lastName'))
+      const displayName = profileText(form.get('displayName'))
+      if (email.length === 0 || email.length > 254 || !email.includes('@') || firstName === null || lastName === null || displayName === null) {
+        formError = 'Enter a valid email and keep each name to 80 characters without control characters.'
+      } else {
+        account = await updateCurrentUser(authEnv, token, { email, firstName, lastName, displayName })
+        if (account.displayName) {
+          Astro.cookies.set(DISPLAY_NAME_COOKIE, encodeDisplayNameCookie(account.displayName), {
+            path: '/',
+            httpOnly: true,
+            secure: Astro.url.protocol === 'https:',
+            sameSite: 'lax',
+          })
+        } else {
+          Astro.cookies.delete(DISPLAY_NAME_COOKIE, { path: '/' })
+        }
+        notice = account.pendingEmail
+          ? `Profile saved. Confirm the change sent to ${account.pendingEmail}.`
+          : 'Profile saved.'
+      }
+    }
+  } catch (error) {
+    if (error instanceof UserAccountError && error.code === 'auth_error') state = 'auth'
+    else state = 'error'
+  }
+}
+---
+<Base title="Profile">
+  <div class="account-page">
+    <header class="page-heading">
+      <p class="eyebrow">Account</p>
+      <h1 tabindex="-1" id="profile-heading">Profile</h1>
+      <p>Manage the identity shown across MOVP Suite.</p>
+    </header>
+    {state === 'auth' && <AuthFailure resource="your profile" />}
+    {state === 'error' && <ErrorRetry message="Could not load your profile." retryHref={Astro.url.pathname} />}
+    {notice && <p class="notice" role="status" data-testid="profile-notice">{notice}</p>}
+    {formError && <p class="form-error" role="alert" data-testid="profile-error">{formError}</p>}
+    {state === 'ok' && account && (
+      <section class="account-card" aria-labelledby="profile-details-heading">
+        <h2 id="profile-details-heading">Profile details</h2>
+        <form method="post" data-testid="profile-form">
+          <div class="form-grid">
+            <label class="form-field form-field--wide">
+              <span>Email</span>
+              <input name="email" type="email" value={account.pendingEmail ?? account.email} autocomplete="email" maxlength="254" required />
+            </label>
+            <label class="form-field">
+              <span>First name</span>
+              <input name="firstName" value={account.firstName} autocomplete="given-name" maxlength="80" />
+            </label>
+            <label class="form-field">
+              <span>Last name</span>
+              <input name="lastName" value={account.lastName} autocomplete="family-name" maxlength="80" />
+            </label>
+            <label class="form-field form-field--wide">
+              <span>Display name</span>
+              <input name="displayName" value={account.displayName} autocomplete="nickname" maxlength="80" />
+              <small>This name appears in the global navigation.</small>
+            </label>
+          </div>
+          <button class="primary-button" type="submit">Save profile</button>
+        </form>
+      </section>
+    )}
+  </div>
+</Base>

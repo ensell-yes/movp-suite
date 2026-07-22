@@ -93,6 +93,13 @@ describe('resolvePrincipal', () => {
     expect(r.ok).toBe(true)
   })
 
+  it('classifies an ordinary JWT without attaching PAT preferences', async () => {
+    const token = await sign(rsPriv, 'RS256', { iss: ISS, aud: 'authenticated', sub: SUB })
+    const r = await resolvePrincipal(req(token), env)
+    expect(r).toMatchObject({ ok: true, credentialKind: 'session' })
+    if (r.ok) expect('agentAccess' in r).toBe(false)
+  })
+
   it('rejects a missing token', async () => {
     const r = await resolvePrincipal(req(), env)
     expect(r).toEqual({ ok: false, code: 'missing_token' })
@@ -144,6 +151,7 @@ describe('resolvePrincipal PAT branch (production-shaped: real branch, injected 
   it('routes a movp_pat_ token through the exchange and returns an RLS principal', async () => {
     const resolvePat = vi.fn(async () => ({
       ok: true as const, userId: SUB, defaultWorkspaceId: 'w1', accessToken: 'minted.jwt.token', expiresAt: 9999999999,
+      agentAccess: { mcpEnabled: false, cliEnabled: true },
     }))
     const r = await resolvePrincipal(req('movp_pat_deadbeef'), env, { resolvePat })
     expect(resolvePat).toHaveBeenCalledOnce()
@@ -151,9 +159,28 @@ describe('resolvePrincipal PAT branch (production-shaped: real branch, injected 
     if (r.ok) {
       expect(r.userId).toBe(SUB)
       expect(r.accessToken).toBe('minted.jwt.token')
+      expect(r.credentialKind).toBe('pat')
       const dbState = r.db as unknown as { headers?: Record<string, string> }
       expect(dbState.headers?.Authorization).toBe('Bearer minted.jwt.token')
     }
+  })
+
+  it('carries the resolved PAT preference snapshot on the PAT principal', async () => {
+    const resolvePat = vi.fn(async () => ({
+      ok: true as const,
+      userId: SUB,
+      defaultWorkspaceId: 'w1',
+      accessToken: 'minted.jwt.token',
+      expiresAt: 9999999999,
+      agentAccess: { mcpEnabled: true, cliEnabled: false },
+    }))
+
+    const r = await resolvePrincipal(req('movp_pat_preferences'), env, { resolvePat })
+    expect(r).toMatchObject({
+      ok: true,
+      credentialKind: 'pat',
+      agentAccess: { mcpEnabled: true, cliEnabled: false },
+    })
   })
 
   it('maps an exchange invalid_token to the principal code', async () => {

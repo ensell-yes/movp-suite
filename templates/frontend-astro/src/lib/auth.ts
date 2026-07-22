@@ -1,4 +1,9 @@
+import { readBoundedJson } from './user-account.ts'
+
 export const SESSION_COOKIE = 'sb-access-token'
+export const PASSWORD_RECOVERY_COOKIE = 'movp-password-recovery'
+
+export type MagicLinkType = 'email' | 'magiclink' | 'recovery'
 
 export type AuthEnv = {
   supabaseUrl: string
@@ -8,7 +13,11 @@ export type AuthEnv = {
 
 export type VerifiedSession = { accessToken: string }
 
-export async function verifyMagicLink(env: AuthEnv, tokenHash: string, type = 'email'): Promise<VerifiedSession | null> {
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+export async function verifyMagicLink(env: AuthEnv, tokenHash: string, type: MagicLinkType = 'email'): Promise<VerifiedSession | null> {
   if (!tokenHash) return null
   const doFetch = env.fetchImpl ?? fetch
   const res = await doFetch(`${env.supabaseUrl}/auth/v1/verify`, {
@@ -20,7 +29,18 @@ export async function verifyMagicLink(env: AuthEnv, tokenHash: string, type = 'e
     body: JSON.stringify({ type, token_hash: tokenHash }),
   })
   if (!res.ok) return null
-  const json = (await res.json()) as { access_token?: string; session?: { access_token?: string } }
-  const accessToken = json.session?.access_token ?? json.access_token
+  let json: unknown
+  try {
+    json = await readBoundedJson(res)
+  } catch {
+    return null
+  }
+  if (!isRecord(json)) return null
+  const session = isRecord(json.session) ? json.session : null
+  const accessToken = typeof session?.access_token === 'string'
+    ? session.access_token
+    : typeof json.access_token === 'string'
+      ? json.access_token
+      : null
   return accessToken ? { accessToken } : null
 }

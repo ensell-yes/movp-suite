@@ -24,9 +24,9 @@ export function decodeSub(jwt: string): string {
   return payload.sub
 }
 
-// POST the PAT to the C3a auth-exchange endpoint. Consumes C3a's frozen I/O:
+// POST the PAT to the auth-exchange endpoint:
 //   200 → { access_token, expires_at, default_workspace_id, user_id }
-//   4xx → { error: 'invalid_token' | 'expired_token' }
+//   401/403/503 → a stable authentication or access error code
 // NEVER log the pat or the returned tokens — the thrown Error carries only the stable code.
 // GOTCHA: send `apikey: <anonKey>` too — the Supabase Functions gateway requires it even
 // though the fn is verify_jwt=false (the Bearer is a movp_pat_, not a JWT).
@@ -53,12 +53,8 @@ export async function exchangePat(
   return (await res.json()) as ExchangeResult
 }
 
-function expiresAtMs(expiresAt: number): number {
-  // GoTrue session.expires_at is unix SECONDS; tolerate a millisecond value defensively.
-  return expiresAt > 1e12 ? expiresAt : expiresAt * 1000
-}
-
-// PAT → session access_token, cached in the SAME secure store; re-exchange only when expired.
+// PAT → session access_token. Revalidate once per CLI process even when a cached
+// session remains usable; the server exchange is the PAT preference boundary.
 async function resolvePatSession(
   pat: string,
   apiUrl: string,
@@ -67,10 +63,8 @@ async function resolvePatSession(
 ): Promise<string> {
   const store = selectSecureStore(apiUrl, env)
   const creds = store.load()
-  const cached = creds.session
-  if (cached && expiresAtMs(cached.expires_at) > Date.now() + 60_000) return cached.access_token
   const ex = await exchangePat(pat, apiUrl, anonKey)
-  // Preserve an already-stored PAT; update only the cached session.
+  // Preserve an already-stored PAT and keep this session for the whole command.
   store.save({ ...creds, session: { access_token: ex.access_token, expires_at: ex.expires_at } })
   return ex.access_token
 }
@@ -82,7 +76,7 @@ export async function resolveCliCtx(env: Record<string, string | undefined> = pr
   const anonKey = env.SUPABASE_ANON_KEY ?? cfg?.anonKey
   const assetsFnUrl = `${url}/functions/v1/content-assets`
 
-  // 1. MOVP_ACCESS_TOKEN (raw JWT) — UNCHANGED, byte-identical client construction.
+  // 1. MOVP_ACCESS_TOKEN (raw JWT) — outside the PAT preference.
   const accessToken = env.MOVP_ACCESS_TOKEN
   if (accessToken) {
     if (!anonKey) throw new Error('SUPABASE_ANON_KEY is required alongside MOVP_ACCESS_TOKEN')
@@ -105,7 +99,7 @@ export async function resolveCliCtx(env: Record<string, string | undefined> = pr
     return { db, userId: decodeSub(sessionToken), accessToken: sessionToken, assetsFnUrl }
   }
 
-  // 3. MOVP_SERVICE_ROLE_KEY + MOVP_USER_ID — UNCHANGED.
+  // 3. MOVP_SERVICE_ROLE_KEY + MOVP_USER_ID — outside the PAT preference.
   const serviceRole = env.MOVP_SERVICE_ROLE_KEY
   if (serviceRole) {
     const userId = env.MOVP_USER_ID

@@ -4,6 +4,9 @@ const port = Number(process.argv[2] ?? 4322)
 let fallbackScenario = 'ok'
 const scenarios = new Map()
 const counts = new Map()
+const userProfiles = new Map()
+const agentAccessPreferences = new Map()
+const authCounts = { verify: 0, recover: 0, updateUser: 0, logout: 0 }
 
 function json(res, status, body) {
   res.writeHead(status, { 'content-type': 'application/json' })
@@ -25,6 +28,12 @@ function bump(token, key) {
   const current = counts.get(token) ?? {}
   current[key] = (current[key] ?? 0) + 1
   counts.set(token, current)
+}
+
+function agentAccessFor(token) {
+  const current = agentAccessPreferences.get(token) ?? { mcpEnabled: true, cliEnabled: true }
+  agentAccessPreferences.set(token, current)
+  return current
 }
 
 const notes = [
@@ -373,22 +382,61 @@ const collectionsMeta = [
 createServer(async (req, res) => {
   const url = new URL(req.url ?? '/', `http://127.0.0.1:${port}`)
   if (url.pathname === '/health') return json(res, 200, { ok: true })
+  if (url.pathname === '/auth-counts') return json(res, 200, authCounts)
   if (url.pathname === '/auth/v1/verify') {
+    authCounts.verify += 1
     let body = ''
     for await (const chunk of req) body += String(chunk)
     const parsed = JSON.parse(body || '{}')
     if (parsed.token_hash === 'valid-token-hash' && (parsed.type ?? 'email') === 'email') {
       return json(res, 200, { session: { access_token: 'verified-login-token-1234567890' } })
     }
+    if (typeof parsed.token_hash === 'string' && parsed.token_hash.startsWith('valid-recovery-token-hash-') && parsed.type === 'recovery') {
+      return json(res, 200, { session: { access_token: 'verified-recovery-token-1234567890' } })
+    }
     return json(res, 400, { error: 'invalid_token_hash' })
   }
   if (url.pathname === '/auth/v1/user') {
     const auth = String(req.headers.authorization ?? '')
     const token = auth.match(/^Bearer\s+(.+)$/i)?.[1] ?? ''
-    if (token.startsWith('test-token-') || token === 'verified-login-token-1234567890') {
-      return json(res, 200, { id: 'user-login-1', email: 'demo-owner@example.test' })
+    if (token.startsWith('test-token-') || token === 'verified-login-token-1234567890' || token === 'verified-recovery-token-1234567890') {
+      const current = userProfiles.get(token) ?? {
+        id: 'user-login-1',
+        email: 'demo-owner@example.test',
+        user_metadata: { first_name: 'Demo', last_name: 'Owner', display_name: 'Demo Owner' },
+      }
+      if (req.method === 'PUT') {
+        authCounts.updateUser += 1
+        let body = ''
+        for await (const chunk of req) body += String(chunk)
+        const parsed = JSON.parse(body || '{}')
+        if (typeof parsed.password === 'string' && parsed.password.length >= 8) return json(res, 200, { user: current })
+        const next = {
+          ...current,
+          email: current.email,
+          new_email: typeof parsed.email === 'string' && parsed.email !== current.email ? parsed.email : undefined,
+          user_metadata: typeof parsed.data === 'object' && parsed.data !== null ? parsed.data : current.user_metadata,
+        }
+        userProfiles.set(token, next)
+        return json(res, 200, next)
+      }
+      return json(res, 200, current)
     }
     return json(res, 401, { error: 'invalid_token' })
+  }
+  if (url.pathname === '/auth/v1/recover') {
+    authCounts.recover += 1
+    let body = ''
+    for await (const chunk of req) body += String(chunk)
+    const parsed = JSON.parse(body || '{}')
+    const redirectTo = url.searchParams.get('redirect_to') ?? ''
+    const redirectPath = redirectTo ? new URL(redirectTo).pathname : ''
+    if (parsed.email === 'demo-owner@example.test' && redirectPath === '/auth/callback') return json(res, 200, {})
+    return json(res, 400, { error: 'invalid_recovery_request' })
+  }
+  if (url.pathname === '/auth/v1/logout') {
+    authCounts.logout += 1
+    return json(res, 200, {})
   }
   if (url.pathname === '/auth/v1/otp') {
     let body = ''
@@ -414,6 +462,12 @@ createServer(async (req, res) => {
     else fallbackScenario = next
     counts.set(stateKey, {})
     rtStates.set(stateKey, freshRtState())
+    userProfiles.delete(stateKey)
+    agentAccessPreferences.delete(stateKey)
+    authCounts.verify = 0
+    authCounts.recover = 0
+    authCounts.updateUser = 0
+    authCounts.logout = 0
     return json(res, 200, { scenario: next })
   }
   if (url.pathname === '/counts') {
@@ -430,6 +484,19 @@ createServer(async (req, res) => {
   for await (const chunk of req) body += String(chunk)
   const parsed = JSON.parse(body || '{}')
   const query = String(parsed.query ?? '')
+
+  if (query.includes('query AgentAccessPreferences')) {
+    return json(res, 200, { data: { agentAccessPreferences: agentAccessFor(token) } })
+  }
+  if (query.includes('mutation UpdateAgentAccessPreferences')) {
+    if (scenario === 'agent-update-error') return json(res, 200, { errors: [{ message: 'seeded' }] })
+    const next = {
+      mcpEnabled: parsed.variables?.mcpEnabled === true,
+      cliEnabled: parsed.variables?.cliEnabled === true,
+    }
+    agentAccessPreferences.set(token, next)
+    return json(res, 200, { data: { updateAgentAccessPreferences: next } })
+  }
 
   if (query.includes('query Notes')) {
     return json(res, 200, { data: { notes: { items: scenario === 'empty' ? [] : notes, nextCursor: null } } })
