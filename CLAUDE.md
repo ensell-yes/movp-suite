@@ -94,7 +94,8 @@
 
 ## Astro Cloudflare Templates
 
-- Astro 6 source configs use `@astrojs/cloudflare/entrypoints/server`. Never point source
+- Astro 7 with `@astrojs/cloudflare` v14 uses `@astrojs/cloudflare/entrypoints/server` in source
+  configs. Keep `compressHTML: true` to preserve the Astro 6 whitespace-rendering contract. Never point source
   `wrangler.jsonc` at generated `dist/server/entry.mjs` or the removed `dist/_worker.js` layout.
 - `astro build` owns `dist/server/wrangler.json` and Wrangler's redirected deploy config; the deploy
   gate is build first, then `wrangler deploy --dry-run`.
