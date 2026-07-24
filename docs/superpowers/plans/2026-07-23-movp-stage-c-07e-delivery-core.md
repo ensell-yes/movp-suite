@@ -318,7 +318,10 @@ Expected: lockfile updates only for the new workspace importer; no new registry 
   - unknown nodes/marks/attributes and invalid nesting fail with a stable renderer code;
   - `<script>`, `<img onerror>`, quotes, ampersands, and stored HTML remain inert;
   - `codeBlock` escapes its text and `horizontalRule` emits one fixed `<hr>`;
-  - heading level and ordered-list start are the only node attributes;
+  - heading level, ordered-list start, and StarterKit's `codeBlock.language`
+    (`null` or a bounded safe token) are the only node attributes;
+  - `codeBlock.language` is accepted for editor-shape compatibility but emits
+    no class, style, or arbitrary attribute;
   - depth 65 fails while 64 passes, node 20,001 fails while 20,000 passes, and UTF-8 text above 1 MiB fails before further output accumulation;
   - binding attributes appear only when `bind.itemId` and `bind.fieldKey` pass strict validators;
   - no rendered node permits arbitrary attributes/classes/styles;

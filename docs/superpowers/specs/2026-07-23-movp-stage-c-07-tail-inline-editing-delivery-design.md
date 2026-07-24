@@ -271,14 +271,17 @@ renders only the nodes already produced by the StarterKit editor:
   `orderedList`, `listItem`, `blockquote`, `codeBlock`, `hardBreak`,
   `horizontalRule`, and `text`;
 - marks: `bold`, `italic`, `strike`, and `code`; and
-- attributes: only validated heading level and ordered-list start.
+- attributes: only validated heading level, ordered-list start, and
+  StarterKit's `codeBlock.language` (`null` or a bounded safe token).
 
 Text and every attribute are HTML-escaped. Unknown nodes, marks, attributes,
 invalid nesting, excess depth, excess node count, and malformed shapes fail
 with a stable renderer code; they are not emitted, interpreted as HTML, or
 silently dropped. Initial bounds are 64 document levels, 20,000 nodes, and
 1 MiB of UTF-8 text. Bounds are checked while walking, before accumulating
-more output.
+more output. `codeBlock.language` is accepted because StarterKit serializes the
+attribute even when its value is `null`; V1 emits no language-derived class,
+style, or arbitrary HTML attribute.
 
 When `bind` is present, the function wraps the rendered field in one element
 with escaped `data-movp-item` and `data-movp-field` values. `itemId` must be a
