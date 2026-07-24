@@ -201,16 +201,18 @@ cursor pairs covering at most 4,000 rows each. Each child passes its exclusive
 start and inclusive end to `list_published_delivery`, so it cannot read into
 the next shard. A private internal helper owns the bounded scan; the public
 wrapper sets `statement_timeout = '2s'`, calls the helper, and maps only
-SQLSTATE `57014` / `query_canceled` to stable message code
-`delivery_shards_timeout`. It never falls back to an unbounded application
-scan. Child routes pass those bounds to the paginated read and make at most
-four 1,000-row RPC calls.
+SQLSTATE `57014` / `query_canceled` to catchable stable SQLSTATE `P5701` and
+message code `delivery_shards_timeout`. It never falls back to an unbounded
+application scan. Child routes pass those bounds to the paginated read and
+make at most four 1,000-row RPC calls.
 
 The timeout gate is deterministic rather than timing-dependent. pgTAP asserts
 the public wrapper's `pg_proc.proconfig` contains `statement_timeout=2s`, then
 transaction-locally replaces the internal scan helper with the same signature
 and a body that raises SQLSTATE `57014`. The unchanged wrapper must re-raise
-`57014` with `delivery_shards_timeout`; rollback restores the real helper.
+`P5701` with `delivery_shards_timeout`; rollback restores the real helper.
+The outer code must differ because pgTAP cannot catch `query_canceled` through
+`throws_ok`.
 
 ### 4.2 Definer audit and negative tests
 
@@ -716,7 +718,7 @@ revealing whether a draft exists.
 | reserved top-level namespaces cannot shadow typed delivery | pgTAP existing-row preflight + direct insert/update; `content_type_key_reserved` pinned |
 | anon sees only the exact published revision | pgTAP public-delivery positive/negative suite |
 | definer/grants/search-path audit | pgTAP catalog assertions |
-| shard timeout is bounded and maps cancellation deterministically | `pg_proc.proconfig` assertion + transaction-local SQLSTATE `57014` scan-helper replacement |
+| shard timeout is bounded and maps cancellation deterministically | `pg_proc.proconfig` assertion + transaction-local inner SQLSTATE `57014` scan-helper replacement; outer `P5701`/`delivery_shards_timeout` assertion |
 | renderer allowlist, escaping, depth/node/text bounds | `pnpm --filter @movp/delivery test` |
 | JSON-LD cannot close its script; canonical origin is configured | delivery unit/golden |
 | sitemap index/children stay ≤4,000 URLs and <52,428,800 bytes | >50k synthetic golden set plus byte-edge cases |

@@ -92,7 +92,7 @@ Expected: this repo's intentional ports begin at `64320`/`64321`; if another pro
 ```sh
 supabase test db --help
 pnpm --filter @movp/frontend-astro run
-pnpm exec vitest --help
+pnpm --filter @movp/frontend-astro exec vitest --help
 ```
 
 Expected: `supabase test db` is available; frontend lists `e2e`; Vitest accepts `run`.
@@ -122,7 +122,7 @@ merely to match stale prose.
   4. a newly saved draft after publish does not change public output;
   5. a foreign workspace cannot be reached by changing slug/type;
   6. `list_published_delivery` returns published route metadata only, never revision `data`, is deterministically ordered, clamps `limit`, and produces a resumable opaque cursor;
-  7. `list_published_delivery_shards` returns non-overlapping ≤4,000-row boundaries in one call; `pg_proc.proconfig` pins its bounded `statement_timeout`; and a transaction-local replacement of the internal shard-scan helper raises SQLSTATE `57014`, proving the public wrapper deterministically remaps cancellation to message code `delivery_shards_timeout`;
+  7. `list_published_delivery_shards` returns non-overlapping ≤4,000-row boundaries in one call; `pg_proc.proconfig` pins its bounded `statement_timeout`; and a transaction-local replacement of the internal shard-scan helper raises SQLSTATE `57014`, proving the public wrapper deterministically remaps cancellation to catchable stable SQLSTATE `P5701` and message code `delivery_shards_timeout`;
   8. invalid UUID, type key, slug, cursor, reversed bound, and limit fail with stable sanitized codes;
   9. all three functions are `SECURITY DEFINER`, have empty configured search paths, revoke `PUBLIC`, and grant only `anon`, `authenticated`, and `service_role`;
   10. application roles cannot execute the duplicate/reserved-key preflight helpers or the internal shard-scan helper;
@@ -246,7 +246,7 @@ only `query_canceled` / SQLSTATE `57014` to:
 
 ```sql
 raise exception using
-  errcode = '57014',
+  errcode = 'P5701',
   message = 'delivery_shards_timeout';
 ```
 
@@ -254,10 +254,12 @@ Other failures retain their safe, explicit error path. Revoke the internal
 helper from `PUBLIC`, `anon`, and `authenticated`. The pgTAP suite asserts
 `pg_proc.proconfig` contains `statement_timeout=2s`, then temporarily replaces
 the internal helper with the same signature and a body that raises SQLSTATE
-`57014`. Calling the unmodified public wrapper must raise `57014` with
-`delivery_shards_timeout`; rollback restores the real scanner. Do not induce a
-wall-clock timeout in tests. The wrapper never falls back to application-side
-catalog pagination.
+`57014`. Calling the unmodified public wrapper must raise catchable SQLSTATE
+`P5701` with `delivery_shards_timeout`; rollback restores the real scanner.
+Do not assert `57014` through pgTAP: PL/pgSQL deliberately excludes
+`query_canceled` from `WHEN OTHERS`, so `throws_ok` cannot catch it. Do not
+induce a wall-clock timeout in tests. The wrapper never falls back to
+application-side catalog pagination.
 
 All three functions:
 
