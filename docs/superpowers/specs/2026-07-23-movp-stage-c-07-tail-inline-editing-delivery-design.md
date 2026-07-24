@@ -360,7 +360,7 @@ The migration inventories and rewrites every CMS authoring seam, not only
 | `asset` and `content-assets` issue/finalize | workspace member | `edit`, checked before any service-role write |
 | `content_collection` and entries | workspace member | `edit` |
 | `content_seo` | workspace member | `edit` |
-| `edges` touching `content_item` for authoring links | existing read rules | conditional `edit`; unrelated graph writes keep their existing policy |
+| `edges` with `src_type = 'content_item'` (currently `references` and `editorial_task`) | existing read rules | `edit` for insert/update/delete; inbound edges with only `dst_type = 'content_item'`, including campaign `produces`, keep their existing policy |
 | comments/collaboration on a content item | existing collaboration rules | unchanged; commenting is not authoring |
 
 CMS INVOKER RPCs continue to rely on caller-bound RLS and therefore inherit the
@@ -369,6 +369,16 @@ caller-bound capability check before their privileged write. In particular,
 `content-assets` authenticates the user and checks
 `has_content_capability(workspaceId, 'edit')` with the user's client before its
 admin insert/update.
+
+The `edges` predicate is directional and fail-closed: every current or future
+content-originated edge (`src_type = 'content_item'`) requires `edit`,
+regardless of relation or destination. The current authoring relations are
+`references` (asset/content targets) and `editorial_task`. Merely targeting a
+content item does not make an edge a CMS authoring write, so a member may keep
+creating the established campaign edge
+`campaign_deliverable --produces--> content_item`. The migration splits or
+replaces the blanket `edges_rw` policy so its INSERT/UPDATE `with check` and
+UPDATE/DELETE `using` clauses preserve that exact direction.
 
 Direct changes to publication pointers/status remain behind the existing
 publish workflow. The policy/trigger audit must ensure a caller with `edit`
@@ -395,8 +405,11 @@ test convenience.
 
 pgTAP and HTTP integration tests pin owner/admin allow and member/non-member
 deny through GraphQL, the authoring RPC, direct PostgREST, the content-assets
-service-role seam, and a content-related edge insert. The full slice and
-template gates are listed in §14.
+service-role seam, and content-originated edge inserts. A direct PostgREST
+interaction test additionally pins the directional exception: a member's
+`campaign_deliverable --produces--> content_item` insert succeeds; that member's
+`content_item --references--> asset` insert fails; the latter succeeds for an
+owner/admin. The full slice and template gates are listed in §14.
 
 ## 8. `updateRichTextField`: one canonical write path
 
@@ -481,7 +494,7 @@ export interface OverlayOptions {
   ): Promise<
     | { status: 'saved'; revisionId: string }
     | { status: 'conflict' }
-    | { status: 'error' }
+    | { status: 'error'; code: string }
   >
 }
 
@@ -499,13 +512,34 @@ does not fork editor state, canonicalization, or conflict classification.
 `destroy()` removes listeners, mounted roots, timers, and chrome, and is safe
 to call twice.
 
+The overlay carries the primitive's safe error code unchanged. Its UI maps a
+small allowlist of stable codes to actionable messages (for example,
+`auth_error` asks the user to sign in again and `save_failed` asks them to
+retry). An unknown code uses the generic safe fallback and is never rendered
+verbatim. The error path keeps the draft and remains available to assistive
+technology through `role="alert"`.
+
 ### 9.2 Cached-page/session split
 
-The typed page always emits the same public bound HTML. The public client bundle
-may attempt the overlay, but the same-origin capability endpoint returns
-`false/no-store` without a valid HttpOnly session. For an authorized session it
-returns only the boolean/region data needed to mount. The browser never receives
-the raw GoTrue JWT.
+The typed page always emits the same public bound HTML and a tiny bootstrap
+entry that has **no static import path** to `@movp/editor-sdk`,
+`@movp/editor-sdk/overlay`, TipTap, React editor code, or their transitive
+chunks. The bootstrap reads the one validated bound item id and makes a
+same-origin, credentialed, `no-store` capability probe. A missing/invalid
+session returns `{canEdit:false}`. Only `{canEdit:true}` triggers:
+
+```ts
+const { mountOverlay } = await import('@movp/editor-sdk/overlay')
+```
+
+The dynamic import is the code-split boundary: anonymous visitors download the
+small bootstrap and probe response, but no overlay/editor/TipTap chunk. Probe
+failure is fail-closed (no import/chrome) and emits the server-side safe
+operational signal. There is no browser-readable authentication hint cookie;
+the HttpOnly session remains the only credential. For an authorized session,
+the probe returns only the advisory boolean needed to load the chunk, after
+which `resolveEditable` obtains the region data. The browser never receives the
+raw GoTrue JWT.
 
 The Astro callbacks use request-bound `Astro.locals`, `readServerEnv`, and the
 session cookie at call time. They never capture a Supabase client, token, env,
@@ -642,10 +676,13 @@ revealing whether a draft exists.
 | public 200 is `s-maxage=60`; 404/API are `no-store` | frontend route/cache unit |
 | owner/admin allow; member/non-member deny every matrix seam | pgTAP + GraphQL/RPC/PostgREST/Edge integration |
 | existing slices/gallery authors use privileged fixture identity | local slice plus authoritative CI jobs |
+| inbound campaign `produces` remains member-writable; every content-originated edge requires `edit` | direct PostgREST member/owner interaction test |
 | rich-text primitive delegates to hash-first update | domain unit/integration; idempotent/conflict parity |
 | direct GraphQL save has one safe resolver log | GraphQL resolver test without proxy |
 | one new revision = one domain event; no-op/conflict = none | database/domain integration |
 | overlay package export and strict client boundary | editor-sdk public-surface + recursive guarded boundary test |
+| anon public entry has no static editor dependency and fetches no overlay/TipTap chunk; authorized probe loads it | built-manifest reachability gate + Playwright network assertion |
+| safe overlay error code maps to an actionable message; unknown code is generic | editor-sdk overlay mounted test |
 | keyboard/Escape/focus/live region/reduced motion/axe | frontend Playwright |
 | private revision Broadcast and Presence | two-session Realtime browser fixture |
 | malformed/non-member/client-Broadcast paths deny | Realtime pgTAP/integration |
@@ -670,7 +707,8 @@ Implement in this dependency order:
 3. **Canonical field mutation:** domain `updateRichTextField`, GraphQL mutation,
    resolver observability, and thin Astro proxy adaptation.
 4. **Overlay:** built `@movp/editor-sdk/overlay` subpath, public bindings,
-   request-time host callbacks, accessibility, and Playwright.
+   probe-first dynamic-import bootstrap, request-time host callbacks,
+   accessibility, anonymous bundle/network gate, and Playwright.
 5. **Headless Realtime:** `@movp/realtime`,
    `20260723000003_content_realtime.sql`, private-channel RLS, and the dedicated
    browser-session fixture. Do not claim reference-template Realtime.
@@ -707,6 +745,11 @@ pnpm build
 
 Expected: every command exits 0; the slice prints all existing slice PASS
 markers plus `[editor-delivery] PASS`.
+
+The frontend command is intentionally
+`pnpm --filter @movp/frontend-astro e2e`:
+`templates/frontend-astro/package.json` defines
+`"e2e": "playwright test"`. There is no `test:e2e` script.
 
 ### 14.2 Authoritative Verdaccio/template gate
 
@@ -750,18 +793,21 @@ transactional; resolver observability covers direct headless callers;
 Verdaccio authority is correctly split between local evidence and CI; sitemap
 consistency and byte/row bounds are stated; the rich-text primitive name and
 canonical RPC reuse are exact; purge machinery is removed; Realtime scope is
-honest; and the full capability blast radius is gated.
+honest; the edge policy is directional and fail-closed without breaking inbound
+campaign links; anonymous delivery cannot reach an editor/TipTap chunk; safe
+overlay error codes remain actionable; and the full capability blast radius is
+gated.
 
 | Dimension | Score | Reconciliation |
 |---|---:|---|
 | Correctness | 9.3 | Deterministic typed routes, published-pointer reads, one hash-first write path, explicit sitemap consistency, and positive/negative contracts |
-| Safety | 9.3 | Published-only definer, complete `edit` matrix, service-role prechecks, private Realtime RLS, strict renderer, and no browser credential exposure |
+| Safety | 9.3 | Published-only definer, directional content-originated edge gate, complete `edit` matrix, service-role prechecks, private Realtime RLS, strict renderer, and no browser credential exposure |
 | Reliability | 9.2 | Transactional duplicate stop, fail-loud bounds, 60-second withdrawal ceiling, bounded reconnect, graceful Broadcast failure, and authoritative CI gates |
 | Observability | 9.3 | Direct resolver, proxy, database, public delivery, artifact, and Realtime signals have distinct owners and content-disciplined correlation |
 | Efficiency | 9.2 | No purge subsystem or new external dependency; keyset pagination, ≤4 child RPCs, one canonical writer, and bounded artifact work |
-| Performance | 9.2 | Public cache bound, indexed cursor reads, capped renderer/catalog memory, no polling, and no unbounded sitemap/llms response |
+| Performance | 9.2 | Anonymous pages cannot reach editor/TipTap chunks; public cache bound, indexed cursor reads, capped renderer/catalog memory, no polling, and no unbounded artifact response |
 | Simplicity | 9.2 | Three focused client-safe units with first consumers; existing editor/hash/SEO paths are reused; deferred scope stays unimplemented |
-| Usability | 9.3 | Deterministic URLs, honest Realtime scope, draft-preserving keyboard/a11y overlay, actionable SEO, and explicit operator gates |
+| Usability | 9.3 | Deterministic URLs, honest Realtime scope, draft-preserving keyboard/a11y overlay, safe-code-specific errors, actionable SEO, and explicit operator gates |
 
 **Mean:** `(9.3 + 9.3 + 9.2 + 9.3 + 9.2 + 9.2 + 9.2 + 9.3) / 8 =
 74.0 / 8 = 9.25`.
