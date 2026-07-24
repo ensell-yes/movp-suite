@@ -1,0 +1,112 @@
+---
+import {
+  canonicalUrl,
+  generateJsonLd,
+  renderDocToHtml,
+  type DeliveryRoute,
+} from '@movp/delivery'
+import { getPublishedBySlug, parsePublishedRichText } from '../../lib/delivery.ts'
+import { readServerEnv } from '../../lib/env.ts'
+
+const CACHE_SUCCESS = 'public, s-maxage=60'
+const CACHE_FAILURE = 'no-store'
+const contentType = Astro.params.contentType ?? ''
+const slug = Astro.params.slug ?? ''
+let title = 'Not found'
+let description: string | null = null
+let canonical: string | null = null
+let safeGeneratedHtml = ''
+let plainFields: Array<readonly [string, string | number | boolean]> = []
+let state: 'found' | 'not_found' | 'error' = 'error'
+
+try {
+  const { publicSiteUrl, workspaceId, supabaseUrl, supabaseAnonKey } = readServerEnv()
+  const result = await getPublishedBySlug(
+    { workspaceId, supabaseUrl, supabaseAnonKey },
+    contentType,
+    slug,
+  )
+  if (result.status === 'found') {
+    const item = result.value
+    const route: DeliveryRoute = {
+      contentType: item.contentType,
+      slug: item.slug,
+      publishedAt: item.publishedAt,
+    }
+    canonical = canonicalUrl(publicSiteUrl, route)
+    const meta = typeof item.meta === 'object' && item.meta !== null && !Array.isArray(item.meta)
+      ? item.meta as Record<string, unknown>
+      : {}
+    const storedTitle = item.data.title
+    title = typeof meta.title === 'string' && meta.title.length <= 512
+      ? meta.title
+      : typeof storedTitle === 'string' && storedTitle.length <= 512
+        ? storedTitle
+        : item.slug
+    description = typeof meta.description === 'string' && meta.description.length <= 2_048
+      ? meta.description
+      : null
+
+    const renderedFields: string[] = []
+    const visiblePlainFields: Array<readonly [string, string | number | boolean]> = []
+    for (const [fieldKey, value] of Object.entries(item.data)) {
+      const doc = parsePublishedRichText(value)
+      if (doc !== null) {
+        renderedFields.push(renderDocToHtml(doc, {
+          bind: { itemId: item.itemId, fieldKey },
+        }))
+      } else if (
+        typeof value === 'string'
+        || typeof value === 'number'
+        || typeof value === 'boolean'
+      ) {
+        visiblePlainFields.push([fieldKey, value])
+      }
+    }
+    if (item.jsonld !== null) {
+      renderedFields.push(`<script type="application/ld+json">${generateJsonLd(item.jsonld)}</script>`)
+    }
+    safeGeneratedHtml = renderedFields.join('')
+    plainFields = visiblePlainFields
+    state = 'found'
+  } else {
+    state = result.status === 'not_found' ? 'not_found' : 'error'
+  }
+} catch {
+  state = 'error'
+}
+
+Astro.response.headers.set('Cache-Control', state === 'found' ? CACHE_SUCCESS : CACHE_FAILURE)
+Astro.response.headers.set('Content-Security-Policy', "default-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'; img-src https: data:; script-src 'self'; style-src 'self'")
+Astro.response.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin')
+Astro.response.headers.set('X-Content-Type-Options', 'nosniff')
+if (state !== 'found') Astro.response.status = state === 'not_found' ? 404 : 502
+---
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title}</title>
+    {description && <meta name="description" content={description} />}
+    {canonical && <link rel="canonical" href={canonical} />}
+  </head>
+  <body>
+    <main>
+      {state === 'found' ? (
+        <>
+          <h1>{title}</h1>
+          {plainFields.map(([key, value]) => (
+            key === 'title' ? null : <p data-field={key}>{String(value)}</p>
+          ))}
+          <div set:html={safeGeneratedHtml} />
+        </>
+      ) : (
+        <>
+          <h1>{state === 'not_found' ? 'Not found' : 'Temporarily unavailable'}</h1>
+          <p>{state === 'not_found' ? 'This published page does not exist.' : 'Please try again later.'}</p>
+        </>
+      )}
+    </main>
+  </body>
+</html>

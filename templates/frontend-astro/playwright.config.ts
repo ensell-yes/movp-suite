@@ -19,7 +19,9 @@ export default defineConfig({
     {
       command:
         `pnpm build && pnpm exec wrangler dev --port ${APP_PORT} ` +
-        `--var GRAPHQL_ENDPOINT:http://127.0.0.1:${MOCK_PORT}/graphql --var WORKSPACE_ID:w ` +
+        `--var GRAPHQL_ENDPOINT:http://127.0.0.1:${MOCK_PORT}/graphql ` +
+        `--var PUBLIC_SITE_URL:http://127.0.0.1:${APP_PORT} ` +
+        `--var WORKSPACE_ID:33333333-3333-4333-8333-333333333333 ` +
         `--var SUPABASE_URL:http://127.0.0.1:${MOCK_PORT} --var SUPABASE_ANON_KEY:test-anon-key`,
       url: `http://127.0.0.1:${APP_PORT}`,
       reuseExistingServer: !process.env.CI,

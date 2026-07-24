@@ -379,6 +379,36 @@ const collectionsMeta = [
   },
 ]
 
+const deliveryItemId = '11111111-1111-4111-8111-111111111111'
+const deliveryRevisionId = '22222222-2222-4222-8222-222222222222'
+const deliveryBoundary = 'djE6MTExMTExMTEtMTExMS00MTExLTgxMTEtMTExMTExMTExMTEx'
+const deliveryRoute = {
+  item_id: deliveryItemId,
+  content_type_key: 'article',
+  slug: 'published-page',
+  published_revision_id: deliveryRevisionId,
+  published_at: '2026-07-23T12:00:00Z',
+}
+const publishedDelivery = {
+  ...deliveryRoute,
+  data: {
+    title: 'Published page',
+    body: JSON.stringify({
+      type: 'doc',
+      content: [{
+        type: 'paragraph',
+        content: [{ type: 'text', text: '<img src=x onerror=alert(1)>' }],
+      }],
+    }),
+  },
+  meta: { title: 'Published page', description: 'Public description' },
+  jsonld: {
+    '@context': 'https://schema.org',
+    '@type': 'Article',
+    name: 'Published page',
+  },
+}
+
 createServer(async (req, res) => {
   const url = new URL(req.url ?? '/', `http://127.0.0.1:${port}`)
   if (url.pathname === '/health') return json(res, 200, { ok: true })
@@ -473,6 +503,39 @@ createServer(async (req, res) => {
   if (url.pathname === '/counts') {
     const token = url.searchParams.get('token') ?? 'fallback'
     return json(res, 200, counts.get(token) ?? {})
+  }
+  if (url.pathname.startsWith('/rest/v1/rpc/')) {
+    if (
+      req.headers.apikey !== 'test-anon-key'
+      || req.headers.authorization !== 'Bearer test-anon-key'
+    ) {
+      return json(res, 401, { message: 'invalid_token' })
+    }
+    let body = ''
+    for await (const chunk of req) body += String(chunk)
+    const parsed = JSON.parse(body || '{}')
+    if (parsed.ws !== '33333333-3333-4333-8333-333333333333') {
+      return json(res, 400, { message: 'delivery_workspace_invalid' })
+    }
+    if (url.pathname === '/rest/v1/rpc/get_published_by_slug') {
+      return json(
+        res,
+        200,
+        parsed.p_content_type_key === 'article' && parsed.p_slug === 'published-page'
+          ? publishedDelivery
+          : null,
+      )
+    }
+    if (url.pathname === '/rest/v1/rpc/list_published_delivery_shards') {
+      return json(res, 200, [{ after: null, until: deliveryBoundary, count: 1 }])
+    }
+    if (url.pathname === '/rest/v1/rpc/list_published_delivery') {
+      if (parsed.p_after === deliveryBoundary) {
+        return json(res, 200, { items: [], next_cursor: null })
+      }
+      return json(res, 200, { items: [deliveryRoute], next_cursor: null })
+    }
+    return json(res, 404, { message: 'not_found' })
   }
   if (url.pathname !== '/graphql') return json(res, 404, { error: 'not_found' })
   const scenario = scenarioFor(req)

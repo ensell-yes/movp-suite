@@ -531,7 +531,7 @@ deployment check in design §6.
 pnpm --filter @movp/frontend-astro test
 pnpm --filter @movp/frontend-astro typecheck
 pnpm --filter @movp/frontend-astro build
-pnpm --filter @movp/frontend-astro e2e -- --grep "published delivery"
+pnpm --filter @movp/frontend-astro exec playwright test --grep "published delivery"
 ```
 
 Expected: unit/type/build green; focused Playwright proves the published/unpublished and artifact paths. If Playwright needs fixtures not available until `07i`, keep the test checked in and mark only those exact integration cases pending—never report them passing.

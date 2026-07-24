@@ -20,7 +20,8 @@ export default defineConfig({
   webServer: {
     command:
       `pnpm build && pnpm exec wrangler dev --port ${APP_PORT} ` +
-      `--var GRAPHQL_ENDPOINT:${GRAPHQL_ENDPOINT} --var WORKSPACE_ID:${WORKSPACE_ID} ` +
+      `--var GRAPHQL_ENDPOINT:${GRAPHQL_ENDPOINT} --var PUBLIC_SITE_URL:http://127.0.0.1:${APP_PORT} ` +
+      `--var WORKSPACE_ID:${WORKSPACE_ID} ` +
       `--var SUPABASE_URL:${SUPABASE_URL} --var SUPABASE_ANON_KEY:${SUPABASE_ANON_KEY}`,
     url: `http://127.0.0.1:${APP_PORT}`,
     reuseExistingServer: !process.env.CI,
