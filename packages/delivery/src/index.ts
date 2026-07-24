@@ -7,8 +7,27 @@ export {
   renderDocToHtml,
 } from './render.ts'
 export {
+  MAX_LLMS_BYTES,
+  MAX_LLMS_ENTRIES,
+  MAX_SITEMAP_BYTES,
+  MAX_SITEMAP_INDEX_ENTRIES,
+  MAX_SITEMAP_URLS,
+  generateLlmsTxt,
+  generateRobots,
+  generateSitemap,
+  generateSitemapIndex,
+} from './artifacts.ts'
+export {
+  MAX_JSON_LD_BYTES,
+  canonicalUrl,
+  generateJsonLd,
+} from './meta.ts'
+export {
+  DeliveryArtifactError,
   DeliveryRenderError,
+  type DeliveryArtifactErrorCode,
   type DeliveryBinding,
   type DeliveryRenderErrorCode,
+  type DeliveryRoute,
   type RenderOptions,
 } from './types.ts'
