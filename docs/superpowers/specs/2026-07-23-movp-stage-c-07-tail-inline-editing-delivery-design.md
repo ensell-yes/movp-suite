@@ -112,10 +112,9 @@ cannot.
 Route segments are decoded once and rejected before the RPC if they contain a
 slash, backslash, NUL/control character, invalid UTF-8, or exceed 128 UTF-8
 bytes for the type key or 256 UTF-8 bytes for the slug. The route does not
-accept a public `workspaceId` query/body parameter; it reads `WORKSPACE_ID` and
-the canonical site origin through `readServerEnv(Astro.locals)` at request
-time. It never uses `process.env` or captures request-bound values in module
-scope.
+accept a public `workspaceId` query/body parameter; it resolves `WORKSPACE_ID`
+and the canonical site origin via request-time `readServerEnv()`. It never uses
+`process.env` or captures request-bound values in module scope.
 
 ## 4. Published-only read contract
 
