@@ -36,6 +36,22 @@ jobs:
       - run: pnpm --filter @movp/editor-sdk test
       - run: pnpm --filter @movp/richtext test
 
+  c7-delivery:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v6
+        with: { version: 9.12.0 }
+      - uses: actions/setup-node@v6
+        with: { node-version: 22, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @movp/delivery test
+      - run: pnpm --filter @movp/delivery typecheck
+      - run: pnpm --filter @movp/delivery build
+      - run: pnpm --filter @movp/frontend-astro test
+      - run: pnpm --filter @movp/frontend-astro typecheck
+      - run: pnpm --filter @movp/frontend-astro build
+
   schema-codegen-unit:
     runs-on: ubuntu-latest
     steps:

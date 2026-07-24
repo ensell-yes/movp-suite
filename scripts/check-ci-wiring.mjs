@@ -85,6 +85,16 @@ export const REQUIRED_JOBS = {
   'c7-editor-sdk': {
     runs: ['pnpm --filter @movp/editor-sdk test', 'pnpm --filter @movp/richtext test'],
   },
+  'c7-delivery': {
+    runs: [
+      'pnpm --filter @movp/delivery test',
+      'pnpm --filter @movp/delivery typecheck',
+      'pnpm --filter @movp/delivery build',
+      'pnpm --filter @movp/frontend-astro test',
+      'pnpm --filter @movp/frontend-astro typecheck',
+      'pnpm --filter @movp/frontend-astro build',
+    ],
+  },
   'pack-artifacts': {
     runs: ['bash fixtures/verdaccio-gallery/pack.sh ./artifacts'],
   },

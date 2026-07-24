@@ -9,6 +9,7 @@ const publishable = [
   'codegen',
   'core-schema',
   'create-movp',
+  'delivery',
   'domain',
   'editor-sdk',
   'flows',
@@ -152,6 +153,11 @@ for (const dirName of publishable) {
       }
       if (!listing.includes('package/dist/gte-small.js') || !listing.includes('package/dist/gte-small.d.ts')) {
         throw new Error('package artifact check failed: @movp/search gte-small artifact is absent')
+      }
+    }
+    if (dirName === 'delivery') {
+      if (!listing.includes('package/dist/index.js') || !listing.includes('package/dist/index.d.ts')) {
+        throw new Error('package artifact check failed: @movp/delivery entry artifacts are absent')
       }
     }
   } finally {

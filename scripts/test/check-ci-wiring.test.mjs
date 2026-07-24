@@ -157,6 +157,39 @@ jobs:
   })
 })
 
+describe('checkCiWiring — the C7 delivery gate stays armed', () => {
+  const workflow = `name: ci
+on: [push]
+jobs:
+  c7-delivery:
+    runs-on: ubuntu-latest
+    steps:
+      - run: pnpm --filter @movp/delivery test
+      - run: pnpm --filter @movp/delivery typecheck
+      - run: pnpm --filter @movp/delivery build
+      - run: pnpm --filter @movp/frontend-astro test
+      - run: pnpm --filter @movp/frontend-astro typecheck
+      - run: pnpm --filter @movp/frontend-astro build
+`
+
+  it('requires every package and frontend delivery command in one job', () => {
+    const requirement = REQUIRED_JOBS['c7-delivery']
+    assert.ok(requirement)
+    assert.deepEqual(checkCiWiring(fixture('c7-delivery', workflow), {
+      'c7-delivery': requirement,
+    }), [])
+
+    for (const command of requirement.runs) {
+      const withoutCommand = workflow.replace(`      - run: ${command}\n`, '')
+      const problems = checkCiWiring(fixture('c7-delivery-missing-command', withoutCommand), {
+        'c7-delivery': requirement,
+      })
+      assert.equal(problems.length, 1)
+      assert.match(problems[0], /ci_wiring_run_missing/)
+    }
+  })
+})
+
 describe('checkCiWiring — hostile workflows that MUST fail (each false-greened the substring scan)', () => {
   // THE reproduced defect: `y.includes('publishable-versions:')` is true for a COMMENTED-OUT job.
   it('FAILS: the job and its commands appear ONLY inside # comments', () => {
@@ -442,6 +475,16 @@ ${ARMED_JOB}
     steps:
       - run: pnpm --filter @movp/editor-sdk test
       - run: pnpm --filter @movp/richtext test
+
+  c7-delivery:
+    runs-on: ubuntu-latest
+    steps:
+      - run: pnpm --filter @movp/delivery test
+      - run: pnpm --filter @movp/delivery typecheck
+      - run: pnpm --filter @movp/delivery build
+      - run: pnpm --filter @movp/frontend-astro test
+      - run: pnpm --filter @movp/frontend-astro typecheck
+      - run: pnpm --filter @movp/frontend-astro build
 
   template-gallery:
     runs-on: ubuntu-latest

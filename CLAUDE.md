@@ -101,7 +101,8 @@
   gate is build first, then `wrangler deploy --dry-run`.
 - The adapter requires `SESSION` KV. Keep the ID-less binding in source so Wrangler auto-provisions
   it; do not manually create or commit an account-specific namespace id.
-- Frontend bindings are the four public vars plus `SESSION`/adapter-generated `ASSETS`. Do not add an
+- Frontend bindings are the five public vars (`GRAPHQL_ENDPOINT`, `PUBLIC_SITE_URL`, `WORKSPACE_ID`,
+  `SUPABASE_URL`, and `SUPABASE_ANON_KEY`) plus `SESSION`/adapter-generated `ASSETS`. Do not add an
   R2 binding until code has a real runtime consumer. Regenerate binding types after config changes.
 - The frontend shell lives in `templates/frontend-astro/src/layouts/Base.astro` with the sticky,
   icon-bearing `TopNav.astro`. Breakpoints are mobile `<768px`, tablet `768px`–`1023px`, and desktop
@@ -166,6 +167,18 @@
   required `c7-editor-sdk` CI job runs the complete package suite.
 - `@movp/richtext` is the client/server-safe canonical doc-JSON leaf. Domain `prepare()` normalizes rich-text
   before hashing and derives human-only `search_body`; legacy HTML remains literal text pending explicit cleanup.
+- `@movp/delivery` is the client/server-safe published-delivery leaf. Anonymous pages read only through the
+  three published-only definer RPCs with the anon key; they never query content tables or expose draft/current
+  revision state. `PUBLIC_SITE_URL` is the canonical origin—never derive it from `Host`.
+- The delivery renderer owns the public page's only `set:html` sink. Its StarterKit allowlist, structural
+  validation, XSS escaping, and exact depth/node/text bounds must stay pinned. Anonymous delivery routes must
+  not statically or dynamically import editor/TipTap code.
+- Successful page and artifact responses emit an origin `public, s-maxage=60` ceiling; 404s and all upstream
+  or validation failures are `no-store`. The end-to-end 60-second withdrawal guarantee additionally depends
+  on the exact-route Cloudflare Cache Rule deployment check; there is no purge webhook, cache-tag, or API token.
+- Sitemap indexes come only from the bounded shard RPC. Each child carries one exclusive/inclusive shard pair,
+  performs at most four 1,000-row reads, and remains below 4,000 URLs and the uncompressed protocol byte cap.
+  `packages/delivery/test` plus the required `c7-delivery` CI job pin these boundaries.
 - The Astro CMS mounts one client-safe `RichTextFieldsIsland` over all rich-text fields and one shared revision.
   It reaches the server only through the bounded `/api/content/[id]/richtext` route, which resolves request-bound
   env/token state at call time, validates the field schema, merges one field, and emits one content-disciplined
