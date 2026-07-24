@@ -17,7 +17,7 @@
 - Create only `supabase/migrations/20260723000003_content_realtime.sql`.
 - Channels are `content:<validated-uuid>` and always private.
 - Broadcast event is `revision_written`.
-- Payload keys are exactly `item_id`, `revision_id`, `actor_id`, `created_at`.
+- Application payload keys are exactly `item_id`, `revision_id`, `actor_id`, `created_at`. Supabase `realtime.send` adds one transport `id`; the package validates and discards that optional UUID before invoking the domain callback.
 - Payloads never contain body/data, hash, slug, field values, token, cookie, email, or URL.
 - The trigger is owner/`SECURITY DEFINER` and server-originated. Client Broadcast insert remains denied.
 - A Broadcast failure does not roll back the inserted revision. It emits one bounded database warning with ids and SQLSTATE, then returns `NEW`; no retry loop.
@@ -89,7 +89,11 @@ psql "$(supabase status -o env | sed -n 's/^DB_URL=//p')" -c "\\df realtime.send
 psql "$(supabase status -o env | sed -n 's/^DB_URL=//p')" -c "\\d+ realtime.messages"
 ```
 
-Expected: the actual `realtime.send` signature and `realtime.messages` topic/extension columns are visible. If `supabase status -o env` is unavailable on this CLI, use the displayed local DB URL manually; do not encode an unverified flag.
+Expected: the installed signature is exactly
+`realtime.send(payload jsonb, event text, topic text, private boolean) returns
+void`, and `realtime.messages` exposes `topic`, `extension`, `payload`, `event`,
+and `private`. If either differs, stop and update the DDL sample plus its tests
+before implementing; do not improvise around a version mismatch.
 
 Record the exact signatures in the PR and adapt the migration to those installed objects.
 
@@ -122,15 +126,46 @@ export type RealtimeOperationalEvent = Readonly<{
 }>
 ```
 
-Define a minimal host transport interface that supports:
+Use this compile-ready injection seam:
 
-- set/refresh auth;
-- subscribe to a named private channel;
-- receive Broadcast and Presence sync/join/leave;
-- track/untrack Presence;
-- unsubscribe.
+```ts
+export interface RealtimeTransportChannel {
+  onBroadcast(
+    event: 'revision_written',
+    listener: (payload: unknown) => void,
+  ): void
+  onPresence(listener: (payload: unknown) => void): void
+  subscribe(listener: (status: unknown) => void): Promise<void>
+  track(payload: Readonly<{ actor_id: string }>): Promise<void>
+  untrack(): Promise<void>
+  unsubscribe(): Promise<void>
+}
 
-All transport callbacks accept `unknown` and are structurally narrowed by the package.
+export interface RealtimeTransport {
+  setAuth(accessToken: string): Promise<void>
+  createPrivateChannel(topic: string): RealtimeTransportChannel
+}
+
+export type SubscribeContentOptions = Readonly<{
+  actorId: string
+  getAccessToken(): Promise<string>
+  onRevision(notice: RevisionNotice): void
+  onPresence(notice: PresenceNotice): void
+  onError(error: Readonly<{ code: string; attempt: 1 | 2 | 3 }>): void
+  report(event: RealtimeOperationalEvent): void
+}>
+
+export interface ContentChannelSubscription {
+  readonly ready: Promise<void>
+  refreshAuth(): Promise<void>
+  destroy(): Promise<void>
+}
+```
+
+All transport callbacks accept `unknown` and are structurally narrowed by the
+package. `refreshAuth()` awaits `getAccessToken()`, then awaits
+`transport.setAuth()` before resubscribing; the token is never stored in an
+event or error.
 
 - [ ] Add `public-surface.test.ts` first, then run:
 
@@ -168,8 +203,8 @@ Expected: package resolves and no new registry package/version is added.
 - [ ] Write `channel.test.ts` with fake timers and a fake transport. Cover:
   - valid private topic is exactly `content:<uuid>`;
   - invalid item id fails before transport creation;
-  - valid revision payload reaches `onRevision`;
-  - extra/missing/wrong-type payload keys are rejected and never reach the callback;
+  - a valid four-field revision payload, with or without Supabase's optional UUID `id`, reaches `onRevision` after the transport id is discarded;
+  - any other extra key, or a missing/wrong-type application field, is rejected and never reaches the callback;
   - payload values are validated UUID/ISO timestamp strings;
   - Presence join/leave is normalized and bounded;
   - auth is set before the first subscribe;
@@ -238,13 +273,13 @@ git commit -m "feat(realtime): add transport-injected content channel"
 - [ ] Create transactional `content_realtime_test.sql`. Pin catalog and behavior:
   1. trigger exists only on `content_revision` `AFTER INSERT`;
   2. trigger function is owned/`SECURITY DEFINER`, has explicit search path, and is not executable by application roles;
-  3. trigger payload expression contains exactly the four allowed keys;
+  3. trigger application payload expression contains exactly the four allowed keys, while the delivered wire payload permits only Supabase's additional UUID `id`;
   4. authenticated workspace member may SELECT Broadcast/Presence for `content:<owned-item-uuid>`;
   5. same member may INSERT Presence only;
   6. client Broadcast INSERT is denied;
   7. non-member and anon SELECT/INSERT are denied;
   8. malformed, empty, overlong, wrong-prefix, non-UUID topics return false/deny without an exception;
-  9. a revision insert still succeeds when the send path raises, and one warning path is present;
+  9. a revision insert still succeeds when the send path raises or returns without inserting a message, and one application warning path is present;
   10. there is no retry loop/queue table.
 
 For failure testing, replace or wrap the send dependency only inside the pgTAP transaction and restore through rollback. Do not edit Supabase-owned schema objects in a migration.
@@ -261,35 +296,158 @@ Expected: **FAIL** because trigger/policies do not exist.
 
 - [ ] Create `20260723000003_content_realtime.sql`.
 
-Add a helper predicate that:
+Use these templates as implementation, changing only an identifier if Task 0
+proves the checked-in schema uses a different real column name. Do not weaken
+the predicates.
 
-1. checks `topic` starts with exactly `content:`;
-2. extracts the suffix;
-3. validates the suffix with a UUID regex/guard before casting;
-4. resolves the item’s workspace;
-5. calls the existing caller-bound membership helper;
-6. returns false for every malformed/missing case.
+- [ ] Add the validate-before-cast member helper:
 
-Keep the helper least-privileged and revoke broad execute where appropriate.
+```sql
+create or replace function public.can_access_content_realtime_topic(p_topic text)
+returns boolean
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  v_item_id uuid;
+begin
+  if p_topic is null
+     or pg_catalog.octet_length(p_topic) > 44
+     or p_topic !~ '^content:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+  then
+    return false;
+  end if;
 
-- [ ] Create restrictive policies matching:
+  v_item_id := pg_catalog.substr(p_topic, 9)::uuid;
 
-```text
-SELECT: authenticated + valid member topic + extension in (broadcast, presence)
-INSERT: authenticated + valid member topic + extension = presence
+  return exists (
+    select 1
+    from public.content_item ci
+    join public.workspace_membership wm
+      on wm.workspace_id = ci.workspace_id
+    where ci.id = v_item_id
+      and wm.user_id = (select auth.uid())
+  );
+end;
+$$;
+
+revoke all on function public.can_access_content_realtime_topic(text)
+  from public, anon, authenticated;
+grant execute on function public.can_access_content_realtime_topic(text)
+  to authenticated, service_role;
 ```
 
-Do not add client UPDATE/DELETE or Broadcast INSERT.
+The regex and byte bound run before `::uuid`; malformed topics return false
+without throwing. The helper returns only membership, is `SECURITY DEFINER`
+with empty search path, and reads identity only from `auth.uid()`.
 
-- [ ] Implement the trigger using the installed `realtime.send` signature. Its exception block is:
+- [ ] Add the two private-channel policies:
 
-```text
-catch all -> raise one WARNING with item_id, revision_id, SQLSTATE -> return NEW
+```sql
+alter table realtime.messages enable row level security;
+
+drop policy if exists content_realtime_select on realtime.messages;
+create policy content_realtime_select
+on realtime.messages
+for select
+to authenticated
+using (
+  private = true
+  and topic = (select realtime.topic())
+  and extension in ('broadcast', 'presence')
+  and public.can_access_content_realtime_topic((select realtime.topic()))
+);
+
+drop policy if exists content_realtime_presence_insert on realtime.messages;
+create policy content_realtime_presence_insert
+on realtime.messages
+for insert
+to authenticated
+with check (
+  private = true
+  and topic = (select realtime.topic())
+  and extension = 'presence'
+  and public.can_access_content_realtime_topic((select realtime.topic()))
+);
 ```
 
-Do not include SQLERRM because it may contain untrusted/internal values. Do not retry.
+Do not add client UPDATE/DELETE or Broadcast INSERT. Pin both `using` and
+`with check` expressions through `pg_policies`.
 
-The database call runs as the trigger owner/definer and therefore does not rely on the client Presence-only INSERT policy.
+- [ ] Add the server-originated trigger:
+
+```sql
+create or replace function public.broadcast_content_revision()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_delivered boolean := false;
+  v_code text := 'realtime_send_no_row';
+begin
+  perform realtime.send(
+    pg_catalog.jsonb_build_object(
+      'item_id', new.content_item_id,
+      'revision_id', new.id,
+      'actor_id', new.author_id,
+      'created_at', new.created_at
+    ),
+    'revision_written',
+    'content:' || new.content_item_id::text,
+    true
+  );
+
+  select exists (
+    select 1
+    from realtime.messages m
+    where m.topic = 'content:' || new.content_item_id::text
+      and m.event = 'revision_written'
+      and m.extension = 'broadcast'
+      and m.payload ->> 'revision_id' = new.id::text
+  )
+  into v_delivered;
+
+  if not v_delivered then
+    raise warning
+      'content_realtime_broadcast_failed item_id=% revision_id=% code=%',
+      new.content_item_id, new.id, v_code;
+  end if;
+
+  return new;
+exception
+  when others then
+    get stacked diagnostics v_code = returned_sqlstate;
+    raise warning
+      'content_realtime_broadcast_failed item_id=% revision_id=% code=%',
+      new.content_item_id, new.id, v_code;
+    return new;
+end;
+$$;
+
+revoke all on function public.broadcast_content_revision()
+  from public, anon, authenticated;
+
+drop trigger if exists content_revision_broadcast_tg
+  on public.content_revision;
+create trigger content_revision_broadcast_tg
+after insert on public.content_revision
+for each row execute function public.broadcast_content_revision();
+```
+
+The verified installed `realtime.send` adds a transport `id` when the payload
+lacks one and internally catches some insertion failures. Therefore the
+post-call row check is required: it produces the app-owned, content-disciplined
+warning even when no exception propagates. The package accepts only that
+optional transport UUID in addition to the four application fields and removes
+it before `onRevision`.
+
+The trigger runs as its owner/definer and does not depend on the client
+Presence-only INSERT policy. It never retries or includes `SQLERRM`; the
+revision always returns `NEW`.
 
 **Green gate**
 

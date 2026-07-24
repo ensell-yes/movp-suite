@@ -154,6 +154,13 @@ data through that exact revision id. It returns only:
 - the published revision's `data`; and
 - the public SEO `meta`/`jsonld` values associated with the item.
 
+`content_seo` is item-scoped current state rather than revision-scoped. Its
+writes require the owner/admin `edit` capability. In V1, an authorized SEO
+metadata correction may therefore change public canonical/meta/JSON-LD after
+the at-most-60-second cache window without republishing; the content body
+remains pinned to `published_revision_id`. Revision-scoped SEO is explicitly
+deferred to a separate schema/workflow design.
+
 It never returns `current_revision_id`, `approved_revision_id`, another
 revision, author id, content hash, search body, workflow state, or a count that
 reveals drafts. Missing, unpublished, wrong-workspace, and broken published
@@ -588,18 +595,25 @@ Use
 `supabase/migrations/20260723000003_content_realtime.sql`.
 An `AFTER INSERT` trigger on `content_revision` calls
 `realtime.send(payload, 'revision_written', 'content:<item-id>', true)`.
-The payload is exactly:
+The application payload is exactly:
 
 ```text
 item_id, revision_id, actor_id, created_at
 ```
 
-It never includes revision data, content hash, slug, field values, token, or
-email. The trigger function is owner/SECURITY DEFINER and the database send is
-a server-originated Broadcast; it does not depend on the client INSERT policy.
-A send failure must not roll back a committed content revision: it emits one
-content-disciplined database warning with ids and SQLSTATE, then returns the
-new row. There is no trigger retry loop.
+The installed Supabase `realtime.send` adds one UUID `id` transport field when
+the application payload omits it. `@movp/realtime` permits only that optional
+transport field in addition to the four application fields, validates it, and
+discards it before invoking `onRevision`. No wire payload includes revision
+data, content hash, slug, field values, token, or email.
+
+The trigger function is owner/SECURITY DEFINER and the database send is a
+server-originated Broadcast; it does not depend on the client INSERT policy.
+Because the installed `realtime.send` internally catches some insert failures,
+the trigger verifies that the revision-specific message row was inserted. An
+exception or missing row emits one app-owned, content-disciplined warning with
+item/revision ids and a safe SQLSTATE/error code, then returns the new row. It
+never includes `SQLERRM` and has no retry loop.
 
 `realtime.messages` policies permit authenticated workspace members:
 
@@ -640,7 +654,9 @@ C7.6 makes that output a first-class, accessible editor panel:
 
 The audit remains advisory. It neither grants publication nor overrides
 approve/publish capability. Playwright pins the score, checklist, failure
-state, and keyboard access.
+state, and keyboard access. The item-scoped current-state behavior in §4.1 is
+intentional V1 scope: `edit` gates metadata changes, while a future
+revision-scoped SEO model remains deferred.
 
 ## 12. Error handling and observability
 
@@ -651,7 +667,7 @@ state, and keyboard access.
 | overlay capability denied | no chrome; save endpoint `403` | server operational event, validated ids only |
 | rich-text conflict | GraphQL `CONFLICT`; existing draft-preserving UI | resolver + proxy logs; no new revision event |
 | Realtime subscribe exhausted | editor continues; presence absent; host receives error | `content.realtime_subscribe`, attempt `3`, safe code/latency |
-| database Broadcast send failure | revision remains committed | one warning with item/revision ids and SQLSTATE |
+| database Broadcast send failure | revision remains committed | one app-owned warning with item/revision ids and safe SQLSTATE/error code |
 | artifact bound exceeded | fail hard; never emit invalid/truncated XML | `delivery.artifact`, kind + safe bound code + latency |
 
 Public logs use route kinds (`page`, `sitemap_index`, `sitemap_child`,
@@ -684,7 +700,9 @@ revealing whether a draft exists.
 | safe overlay error code maps to an actionable message; unknown code is generic | editor-sdk overlay mounted test |
 | keyboard/Escape/focus/live region/reduced motion/axe | frontend Playwright |
 | private revision Broadcast and Presence | two-session Realtime browser fixture |
+| four application Broadcast fields plus optional validated/discarded transport `id` | Realtime unit + trigger integration |
 | malformed/non-member/client-Broadcast paths deny | Realtime pgTAP/integration |
+| item-scoped current SEO requires `edit`; metadata can change without changing published body revision | capability pgTAP + public-delivery integration |
 | SEO score/checklist/error UI | frontend component + Playwright |
 | full lifecycle and conflict | `[editor-delivery]` slice after `[content]` |
 

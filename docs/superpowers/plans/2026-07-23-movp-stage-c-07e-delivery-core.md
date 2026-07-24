@@ -6,7 +6,7 @@
 
 **Approved design:** `docs/superpowers/specs/2026-07-23-movp-stage-c-07-tail-inline-editing-delivery-design.md`
 
-**Architecture:** Anonymous routes call two narrow `SECURITY DEFINER` RPCs over Supabase REST with the public anon key. Those RPCs expose only published revision data. `@movp/delivery` turns canonical rich-text JSON into escaped HTML and produces deterministic delivery artifacts. The Astro host resolves `readServerEnv()` inside each request, validates and bounds every remote response, and owns cache headers. No editor code is reachable from the anonymous bundle in this part.
+**Architecture:** Anonymous routes call three narrow `SECURITY DEFINER` RPCs over Supabase REST with the public anon key. The item RPC exposes only the published revision; the list and shard RPCs expose route metadata only. `@movp/delivery` turns canonical rich-text JSON into escaped HTML and produces deterministic delivery artifacts. The Astro host resolves `readServerEnv()` inside each request, validates and bounds every remote response, and owns cache headers. No editor code is reachable from the anonymous bundle in this part.
 
 **No new external dependency:** Reuse workspace TypeScript, Vitest, tsup, Astro, and `@movp/richtext`. Do not add a registry dependency.
 
@@ -17,10 +17,12 @@
 - Public reads return the `published_revision` only. Draft/current revision identifiers and bodies are never returned.
 - `(content_type.workspace_id, content_type.key)` is unique before typed routes land.
 - Duplicate preflight fails with stable SQLSTATE/message code `content_type_key_duplicates`; diagnostics contain counts, never values.
-- Both public RPCs are `SECURITY DEFINER`, set an explicit safe `search_path`, validate every identifier, and are executable by `anon` and `authenticated` only after explicit grants.
+- All three public RPCs are `SECURITY DEFINER`, set `search_path = ''`, validate every identifier, and are executable only by `anon`, `authenticated`, and `service_role` after explicit grants.
 - `list_published_delivery` uses opaque keyset cursors and clamps `limit` to `1..1000`.
-- Renderer output is built from an allowlisted AST. It escapes text and attribute values, rejects dangerous links, never passes stored HTML through, and emits binding attributes only from validated identifiers.
-- A single sitemap child contains at most 4,000 URLs and 52,428,800 escaped UTF-8 bytes. The lower row cap leaves framing headroom and keeps each child within five clamped 1,000-row RPC calls.
+- `list_published_delivery_shards` computes all child boundaries in one bounded database call and fails with `delivery_shards_timeout`; the index never scans the catalog page-by-page.
+- Renderer output is built from the exact StarterKit allowlist shared by implementation and tests. It escapes text and attributes, never passes stored HTML through, and emits binding attributes only from validated identifiers.
+- Renderer bounds are exactly 64 document levels, 20,000 nodes, and 1 MiB of UTF-8 text, checked while walking.
+- A single sitemap child contains at most 4,000 URLs and 52,428,800 escaped UTF-8 bytes. The lower row cap leaves framing headroom and keeps each child within four clamped 1,000-row RPC calls.
 - Public 200 responses use `public, s-maxage=60`; 404/error responses use `no-store`.
 - `readServerEnv()` is called at request time. Never use `process.env` or capture request-bound state in module scope.
 - New package file inventories use `lstat`, reject symlinks, and bound size before reading.
@@ -116,10 +118,12 @@ merely to match stale prose.
   3. an unpublished item and a draft-only item return zero rows;
   4. a newly saved draft after publish does not change public output;
   5. a foreign workspace cannot be reached by changing slug/type;
-  6. `list_published_delivery` returns published rows only, is deterministically ordered, clamps `limit`, and produces a resumable opaque cursor;
-  7. invalid UUID, type key, slug, cursor, and limit fail with stable sanitized codes;
-  8. application roles cannot execute the duplicate-preflight helper;
-  9. after temporarily dropping the new unique constraint inside the test transaction, duplicate type keys make the helper fail with `content_type_key_duplicates`.
+  6. `list_published_delivery` returns published route metadata only, never revision `data`, is deterministically ordered, clamps `limit`, and produces a resumable opaque cursor;
+  7. `list_published_delivery_shards` returns non-overlapping ≤4,000-row boundaries in one call, has a catalog-pinned statement timeout, and maps query cancellation to `delivery_shards_timeout`;
+  8. invalid UUID, type key, slug, cursor, reversed bound, and limit fail with stable sanitized codes;
+  9. all three functions are `SECURITY DEFINER`, have empty configured search paths, revoke `PUBLIC`, and grant only `anon`, `authenticated`, and `service_role`;
+  10. application roles cannot execute the duplicate-preflight helper;
+  11. after temporarily dropping the new unique constraint inside the test transaction, duplicate type keys make the helper fail with `content_type_key_duplicates`.
 
 Keep the test transactional (`begin`/`rollback`). The duplicate fixture must be rolled back; never mutate a merged migration.
 
@@ -165,35 +169,43 @@ Use the real table/column names confirmed from the schema. Do not log duplicate 
 
 ```sql
 public.get_published_by_slug(
-  p_workspace_id uuid,
+  ws uuid,
   p_content_type_key text,
   p_slug text
-)
+) returns jsonb
 ```
 
 This returns at most one row containing only delivery-safe identifiers, type key, slug, published revision id, published data, title/meta inputs, and published timestamp.
 
 ```sql
 public.list_published_delivery(
-  p_workspace_id uuid,
-  p_content_type_key text default null,
+  ws uuid,
   p_after text default null,
-  p_limit integer default 1000,
-  p_until text default null
-)
+  p_until text default null,
+  p_limit integer default 1000
+) returns jsonb
 ```
 
-This returns a stable keyset page plus `next_cursor`. Cursor contents are opaque to clients and structurally validated by SQL before use. `p_until` pins the snapshot upper boundary chosen by the sitemap index so child pages cannot drift beyond it.
+This returns a stable keyset page plus `next_cursor`. Rows contain only item id, content-type key, slug, published revision id, and published timestamp—never revision `data`. Cursor contents are opaque to clients and structurally validated by SQL before use. `p_until` is the inclusive end cursor supplied by the shard RPC.
 
-Both functions:
+```sql
+public.list_published_delivery_shards(
+  ws uuid,
+  p_urls_per_shard integer default 4000
+) returns jsonb
+```
+
+This returns non-overlapping opaque exclusive-start/inclusive-end pairs covering at most 4,000 rows each. It sets a bounded database statement timeout and maps query cancellation to `delivery_shards_timeout`; it never falls back to application-side catalog pagination.
+
+All three functions:
 
 - are `SECURITY DEFINER`;
-- set `search_path = pg_catalog, public`;
+- set `search_path = ''`;
 - fully qualify every relation/function;
 - select through `content_item.published_revision_id`;
 - never consult `current_revision_id` for returned data;
 - validate `workspace_id`, bounded key/slug/cursor text, and limit;
-- explicitly revoke `public` execute before granting `anon, authenticated`;
+- explicitly revoke `PUBLIC` execute before granting only `anon`, `authenticated`, and `service_role`;
 - never grant table access to `anon`.
 
 - [ ] Apply from a clean local database:
@@ -236,11 +248,14 @@ Expected: lockfile updates only for the new workspace importer; no new registry 
 **Red first**
 
 - [ ] Write `render.test.ts` before implementation. Pin:
-  - paragraphs, headings, ordered/unordered lists, list items, blockquotes, hard breaks, links, bold, italic, strike, and code;
-  - unknown nodes/marks are omitted or rendered as escaped text according to one documented fail-closed rule;
+  - the shared node allowlist is exactly `doc`, `paragraph`, `heading`, `bulletList`, `orderedList`, `listItem`, `blockquote`, `codeBlock`, `hardBreak`, `horizontalRule`, and `text`;
+  - the shared mark allowlist is exactly `bold`, `italic`, `strike`, and `code`;
+  - `link` and `href` are absent because the shipped editor uses StarterKit without a Link extension;
+  - unknown nodes/marks/attributes and invalid nesting fail with a stable renderer code;
   - `<script>`, `<img onerror>`, quotes, ampersands, and stored HTML remain inert;
-  - `javascript:`, `data:`, control-character, and malformed link URLs never become `href`;
-  - allowed `http`, `https`, `mailto`, relative, fragment links are normalized safely;
+  - `codeBlock` escapes its text and `horizontalRule` emits one fixed `<hr>`;
+  - heading level and ordered-list start are the only node attributes;
+  - depth 65 fails while 64 passes, node 20,001 fails while 20,000 passes, and UTF-8 text above 1 MiB fails before further output accumulation;
   - binding attributes appear only when `bind.itemId` and `bind.fieldKey` pass strict validators;
   - no rendered node permits arbitrary attributes/classes/styles;
   - input is never mutated.
@@ -271,6 +286,32 @@ export function renderDocToHtml(doc: unknown, options?: RenderOptions): string
 ```
 
 Parse `unknown` with explicit runtime guards. Never assert parsed input with `as SomeDoc`. Use a small recursive renderer with a maximum depth, node count, and UTF-8 output budget. Failure must be deterministic and carry an allowlisted code, never include payload content.
+
+Define one implementation/test contract:
+
+```ts
+export const DELIVERY_NODE_TYPES = [
+  'doc',
+  'paragraph',
+  'heading',
+  'bulletList',
+  'orderedList',
+  'listItem',
+  'blockquote',
+  'codeBlock',
+  'hardBreak',
+  'horizontalRule',
+  'text',
+] as const
+
+export const DELIVERY_MARK_TYPES = ['bold', 'italic', 'strike', 'code'] as const
+
+export const DELIVERY_MAX_DEPTH = 64
+export const DELIVERY_MAX_NODES = 20_000
+export const DELIVERY_MAX_TEXT_BYTES = 1024 * 1024
+```
+
+The renderer and its golden tests import these same constants. Do not maintain a second test-only allowlist.
 
 The only binding attributes are:
 
@@ -333,14 +374,14 @@ Expected: **FAIL** because generators are not exported.
 
 ```ts
 generateSitemapIndex(...)
-generateSitemapChild(...)
+generateSitemap(...)
 generateRobots(...)
 generateJsonLd(...)
 generateLlmsTxt(...)
 canonicalUrl(...)
 ```
 
-The index stores opaque child start/end cursors and one snapshot upper cursor. A child scans from its inclusive start to the exclusive next boundary and never reads past the snapshot upper cursor. Set `MAX_SITEMAP_URLS = 4_000` and `MAX_SITEMAP_BYTES = 52_428_800`; measure each escaped entry before append.
+The index accepts the opaque shard descriptors returned by `list_published_delivery_shards`; it does not derive them by scanning route pages. A child passes the shard's exclusive start and inclusive end to `list_published_delivery` and never reads beyond it. Set `MAX_SITEMAP_URLS = 4_000` and `MAX_SITEMAP_BYTES = 52_428_800`; measure each escaped entry before append.
 
 Generators accept already-bounded iterables/pages. They do not fetch, import Astro, or own caches.
 
@@ -389,7 +430,7 @@ Expected: **FAIL** because routes/client do not exist.
 
 - [ ] Implement `src/lib/delivery.ts` as a narrow fetch adapter:
   - accepts an explicit `ServerEnv` resolved by the caller during the request;
-  - calls `/rest/v1/rpc/get_published_by_slug` and `/rest/v1/rpc/list_published_delivery`;
+  - calls `/rest/v1/rpc/get_published_by_slug`, `/rest/v1/rpc/list_published_delivery`, and `/rest/v1/rpc/list_published_delivery_shards`;
   - sends `apikey` and `Authorization: Bearer <anon key>`;
   - uses an abort timeout;
   - caps response bytes while streaming, before JSON parse;
@@ -410,7 +451,7 @@ Do not instantiate/capture a client at module load.
 
 Static Astro routes retain precedence over the fallback typed route. Do not create a catch-all.
 
-- [ ] Implement artifact routes. The index calls enough bounded list pages to calculate cursor boundaries; each child performs at most five RPC calls and fails loudly with a stable error if that budget would be exceeded. Artifact failures use `no-store` and a non-2xx status.
+- [ ] Implement artifact routes. The index calls `list_published_delivery_shards` exactly once and never calls the row-list RPC. Each child passes one shard's bounds to `list_published_delivery`, performs at most four 1,000-row RPC calls, and fails loudly if the database returns a cursor beyond the inclusive end. Map `delivery_shards_timeout` to a safe non-2xx `no-store` artifact failure; never fall back to an application-side scan.
 
 There is intentionally no purge webhook, cache tag, Cloudflare API token, or new binding. Withdrawal is bounded by `s-maxage=60`.
 

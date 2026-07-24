@@ -39,6 +39,7 @@
 **Create**
 
 - `scripts/test/editor-delivery-slice-order.test.mjs`
+- `scripts/test/c7-tail-contract.test.mjs`
 - `docs/superpowers/reviews/2026-07-23-movp-stage-c-07-tail-review.md` (Task 6, only after review)
 
 **Modify**
@@ -70,13 +71,15 @@ Expected: intended branch; repo’s `6432x` local stack.
 pnpm exec wrangler dev --help
 pnpm --filter @movp/frontend-astro run
 supabase functions serve --help
+curl --help all
 ```
 
 Expected:
 
 - Wrangler `dev` supports the exact `--port` and repeated `--var` syntax already used by frontend Playwright;
 - frontend exposes `build` and `e2e`;
-- local CLI serves all functions and supports `--env-file`, with no positional function list.
+- local CLI serves all functions and supports `--env-file`, with no positional function list;
+- curl supports `--max-filesize`.
 
 - [ ] Baseline:
 
@@ -89,7 +92,23 @@ pnpm check:docs
 
 Expected: shell syntax and all existing slices pass; CI/docs gates pass. Record existing `[content]` and `[campaigns]` marker positions.
 
-## Task 1: Add a red structural gate for slice placement and mandatory checks
+## Task 1: Add cross-plan and red slice-structure gates
+
+- [ ] Create `c7-tail-contract.test.mjs`. Guard every read with `lstat`,
+symlink/non-regular rejection, and a pre-read size bound. Pin the sibling names
+that 07i consumes:
+  - migrations `20260723000001_content_delivery_reads.sql`,
+    `20260723000002_content_edit_capability.sql`, and
+    `20260723000003_content_realtime.sql`;
+  - packages `@movp/delivery` and `@movp/realtime`;
+  - root script `test:content-realtime-browser`;
+  - GraphQL fields `contentCanEdit`, `contentEditableRegion`, and
+    `updateRichTextField`;
+  - sibling CI jobs `c7-delivery`, `c7-inline-overlay`, and `c7-realtime`.
+
+At 07i execution time, 07e–07h are prerequisites: the cross-plan test must pass
+before editing the slice. A missing exact name is a prerequisite failure, not a
+reason to create an alias.
 
 - [ ] Create `editor-delivery-slice-order.test.mjs`. It must guarded-read `scripts/slice-e2e.sh`:
   - `lstat`;
@@ -110,10 +129,12 @@ Pin:
 - [ ] Run:
 
 ```sh
+node --test scripts/test/c7-tail-contract.test.mjs
 node --test scripts/test/editor-delivery-slice-order.test.mjs
 ```
 
-Expected: **FAIL** because `[editor-delivery]` is absent.
+Expected: cross-plan contract **PASS**; slice-order **FAIL** because
+`[editor-delivery]` is absent.
 
 **Commit only after Task 3 green**, so the red test never lands alone.
 
@@ -167,6 +188,21 @@ Insert immediately after the existing `[content]` observability block and before
 Expected: each returns `403`/GraphQL error with the stable denial contract and creates no row/revision/edge.
 
 - [ ] As member, create the established inbound campaign `produces` edge against an appropriate fixture. Expected: success. This pins the directional exception in the real HTTP slice.
+
+Because this section intentionally runs before `[campaigns]`, do not reference
+that later fixture. Before the member edge request, use the local admin database
+connection to insert dedicated, fixed-UUID `marketing_plan`, `campaign`, and
+`campaign_deliverable` rows plus a dedicated asset row in the current
+workspace. Use the existing `[content]` `ITEM_ID` as the content target/source:
+
+- member PostgREST insert
+  `campaign_deliverable --produces--> content_item` succeeds;
+- member PostgREST insert
+  `content_item --references--> asset` returns `403`;
+- owner performs the same content-originated insert successfully.
+
+Assert the exact edge rows after each call. These fixtures are isolated by the
+slice's database reset and do not depend on `[campaigns]`.
 
 - [ ] As non-member `TOKEN3`, public authoring/read attempts remain denied/empty.
 
@@ -229,7 +265,55 @@ Use a response file in a unique `0600` temp directory only after `lstat`/regular
 
 ### 3.5 Hard-failure behavior
 
-Every curl uses `--fail-with-body` only when the body is safe to retain; otherwise capture status separately and bound the body. Retry only gateway `502/503/504`, at most three attempts, following the existing integration helper. Auth/403/conflict/validation failures are terminal and never retried.
+Add this helper for unauthenticated public delivery/artifact GETs only:
+
+```sh
+fetch_public_with_gateway_retry() {
+  local url="$1"
+  local output_path="$2"
+  local max_bytes="$3"
+  local attempt status
+
+  for attempt in 1 2 3; do
+    if ! status="$(
+      curl -sS \
+        --max-filesize "$max_bytes" \
+        -o "$output_path" \
+        -w '%{http_code}' \
+        "$url"
+    )"; then
+      echo "public delivery transport_or_size_failure" >&2
+      return 1
+    fi
+
+    case "$status" in
+      502|503|504)
+        if [ "$attempt" -lt 3 ]; then
+          sleep "$attempt"
+          continue
+        fi
+        ;;
+      *)
+        printf '%s' "$status"
+        return 0
+        ;;
+    esac
+  done
+
+  printf '%s' "$status"
+}
+```
+
+The helper retries exactly attempts 2 and 3, and only after HTTP
+`502`/`503`/`504`. Transport errors, size breaches, auth, `403`, `404`,
+conflict, and validation responses are terminal. Call it with a 2 MiB cap for
+pages/llms/robots and the declared 52,428,800-byte cap for sitemap children.
+Before parsing any output, `lstat` the path, reject symlinks/non-regular files,
+and confirm the actual byte size.
+
+Authenticated GraphQL/PostgREST calls do not use this helper and are never
+retried. The helper accepts no token/header argument, so it cannot place a
+credential in curl argv or logs.
 
 End with:
 
@@ -243,6 +327,7 @@ only after every assertion has run.
 
 ```sh
 bash -n scripts/slice-e2e.sh
+node --test scripts/test/c7-tail-contract.test.mjs
 node --test scripts/test/editor-delivery-slice-order.test.mjs
 bash scripts/slice-e2e.sh
 ```
@@ -257,7 +342,7 @@ Expected:
 **Commit**
 
 ```sh
-git add scripts/slice-e2e.sh scripts/test/editor-delivery-slice-order.test.mjs
+git add scripts/slice-e2e.sh scripts/test/editor-delivery-slice-order.test.mjs scripts/test/c7-tail-contract.test.mjs
 git commit -m "test(c7): add editor delivery lifecycle slice"
 ```
 
@@ -265,7 +350,8 @@ git commit -m "test(c7): add editor delivery lifecycle slice"
 
 **Red first**
 
-- [ ] Extend `scripts/check-ci-wiring.mjs` and its tests to require:
+- [ ] Extend `c7-tail-contract.test.mjs`,
+`scripts/check-ci-wiring.mjs`, and its tests to require:
   - `c7-delivery`;
   - `c7-inline-overlay`;
   - `c7-realtime`;
@@ -276,10 +362,11 @@ git commit -m "test(c7): add editor delivery lifecycle slice"
 - [ ] Run:
 
 ```sh
+node --test scripts/test/c7-tail-contract.test.mjs
 pnpm check:ci-wiring
 ```
 
-Expected: **FAIL** naming missing final C7 job/commands.
+Expected: both **FAIL** naming the missing `c7-editor-delivery` job/commands.
 
 **Green implementation**
 
@@ -298,10 +385,11 @@ Keep `supabase/setup-cli` pinned to `2.109.1`. Public refs/anon keys remain lite
 
 ```sh
 pnpm check:supabase-cli-pins
+node --test scripts/test/c7-tail-contract.test.mjs
 pnpm check:ci-wiring
 ```
 
-Expected: both pass and prior required jobs remain present.
+Expected: all pass and prior required jobs remain present.
 
 **Commit**
 

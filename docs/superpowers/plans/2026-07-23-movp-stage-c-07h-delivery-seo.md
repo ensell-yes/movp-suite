@@ -8,7 +8,7 @@
 
 **Approved design:** `docs/superpowers/specs/2026-07-23-movp-stage-c-07-tail-inline-editing-delivery-design.md` §§5.3, 6, 11, and 12.
 
-**Architecture:** The current `auditSeo`/`runSeoAudit` remains the only scoring implementation and persists `content_seo`. A small client-safe panel calls a same-origin POST route so rerunning the audit does not reload or replace editor state. Public delivery consumes meta/JSON-LD from the published-only RPC and passes it through `@movp/delivery`. Astro request handlers own structured delivery signals and cache headers.
+**Architecture:** The current `auditSeo`/`runSeoAudit` remains the only scoring implementation and persists `content_seo`. A small client-safe panel calls a same-origin POST route so rerunning the audit does not reload or replace editor state. Public delivery consumes item-scoped current `meta`/`jsonld` from the published-only RPC while the page body remains pinned to `published_revision_id`, then passes both through `@movp/delivery`. Astro request handlers own structured delivery signals and cache headers.
 
 **No new dependency or migration.**
 
@@ -16,7 +16,9 @@
 
 - SEO is advisory. It never grants `edit`, `approve`, or `publish`, and a score cannot bypass workflow.
 - `auditSeo` remains the single rule/score implementation.
-- The persisted `content_seo` row is the shared source for editor output and public canonical/meta/JSON-LD.
+- `content_seo` writes require the owner/admin `edit` capability through the 07f RLS matrix; member and non-member direct writes are denied.
+- The persisted `content_seo` row is item-scoped current state and is the shared source for editor output and public canonical/meta/JSON-LD. In V1, an owner/admin metadata correction may change public SEO after the ≤60-second cache window without republishing; revision-scoped SEO is explicitly deferred.
+- SEO current-state updates never change which content revision supplies the public body.
 - Rerunning an audit never reloads the page or discards an unsaved rich-text draft.
 - Score has visible text; checklist results are not color-only.
 - Every failed rule maps through an allowlist to a corrective action. Unknown rules get a generic safe message; raw values are not rendered.
@@ -208,14 +210,18 @@ git commit -m "feat(frontend): rerun SEO audit without editor reload"
   1. an unpublished item with a `content_seo` row returns no public row or SEO values;
   2. after publish, the RPC returns the exact persisted `meta`/`jsonld` associated with that item;
   3. saving a new draft does not change the returned published revision body;
-  4. rerunning the audit changes only score/checklist and cannot replace `meta`/`jsonld`;
-  5. another workspace cannot retrieve the revision or SEO record.
+  4. an owner/admin post-publish `content_seo.meta`/`jsonld` correction changes public metadata after origin revalidation without changing the returned published revision body;
+  5. member and non-member direct `content_seo` writes fail through RLS;
+  6. rerunning the audit changes only score/checklist and cannot replace `meta`/`jsonld`;
+  7. another workspace cannot retrieve the revision or SEO record.
 
 `content_seo` is currently item-scoped rather than revision-scoped. Do not
 claim historical SEO snapshot semantics or introduce a versioning migration in
-this part. The contract here is narrower: public SEO exists only for an item
-that has a published revision, the public body is always that published
-revision, and audit execution does not mutate the persisted delivery metadata.
+this part. The intentional V1 contract is: public SEO exists only for an item
+that has a published revision; public metadata is the item's current
+owner/admin-controlled SEO state; the public body is always the published
+revision; and audit execution does not mutate the persisted delivery metadata.
+Revision-scoped SEO is deferred as a separate schema/workflow design.
 
 - [ ] Extend delivery metadata tests for:
   - configured `PUBLIC_SITE_URL` only;
@@ -250,7 +256,8 @@ pnpm --filter @movp/frontend-astro test
 pnpm --filter @movp/frontend-astro build
 ```
 
-Expected: parity/security tests green. Any required new migration is separately approved, forward-only, and guarded.
+Expected: parity/security tests green with the existing three C7-tail
+migrations only. Do not add a migration in this part.
 
 **Commit**
 
@@ -293,7 +300,7 @@ Expected: **FAIL** because the shared event owner/fake-clock behavior is absent.
 
 **Green implementation**
 
-- [ ] Implement one server-only reporting helper whose input type is a closed, content-disciplined union. Callers pass already validated route kind/ids/outcomes. Hash workspace id using the existing observability convention; do not invent a new unsalted hash.
+- [ ] Implement one server-only reporting helper whose input type is a closed, content-disciplined union. Callers pass already validated route kind/ids/outcomes. Define `hashWorkspaceId(workspaceId)` in `templates/frontend-astro/src/lib/delivery-observability.ts` using Web Crypto SHA-256, matching `sha256Hex` in `supabase/functions/graphql/index.ts`; pin a shared known-vector test. Do not invent another hash format or salt contract.
 
 - [ ] Each request handler resolves request id/clock/reporter per request. A reporting failure must not change a successful public response, but must surface hard through the platform’s own logging/error hook rather than silently swallowing.
 

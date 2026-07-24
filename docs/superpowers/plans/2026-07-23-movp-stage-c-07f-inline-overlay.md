@@ -57,6 +57,7 @@
 - `packages/domain/src/index.ts`
 - `packages/graphql/src/types.ts`
 - `packages/graphql/src/schema.ts`
+- `packages/graphql/test/schema.test.ts`
 - `supabase/functions/graphql/index.ts`
 - `supabase/functions/content-assets/index.ts`
 - `templates/frontend-astro/src/pages/api/content/[id]/richtext.ts`
@@ -132,6 +133,13 @@ The edge regression must use direct PostgREST-equivalent SQL under `set local ro
 
 - [ ] Pin that `edit` does not authorize direct publication pointer/status changes or forged publish events.
 
+- [ ] Pin `has_content_capability(uuid,text)` in the catalogs:
+  - `prosecdef = true` (`SECURITY DEFINER`);
+  - configured `search_path` is exactly empty;
+  - `PUBLIC` and `anon` have no execute grant;
+  - `authenticated` has execute;
+  - an unknown capability returns false.
+
 - [ ] Run:
 
 ```sh
@@ -144,7 +152,7 @@ Expected: **FAIL** because `edit` and replacement policies do not exist.
 
 - [ ] Create `20260723000002_content_edit_capability.sql`.
 
-Redefine `public.has_content_capability(uuid,text)` without changing its `SECURITY INVOKER`/search-path/grant posture:
+Redefine `public.has_content_capability(uuid,text)` without changing its existing `SECURITY DEFINER`, `set search_path = ''`, or least-privilege grant posture:
 
 ```text
 edit    -> owner, admin
@@ -152,6 +160,10 @@ approve -> owner, admin
 publish -> owner, admin
 unknown -> false
 ```
+
+Do not remove the definer posture. The helper is called from content RLS and
+must retain that audited boundary while deriving identity only from
+`auth.uid()`. The Task 1 catalog assertions are the regression gate.
 
 - [ ] Replace—not stack permissive alternatives on—the write sides for:
   - `content_type`;
@@ -322,6 +334,8 @@ git commit -m "feat(domain): add rich text field update"
   - safe operational codes are allowlisted;
   - no content body appears in an error extension.
 
+- [ ] Update `packages/graphql/test/schema.test.ts` as the named root-surface inventory. The checked-in pre-change schema has 86 query fields and 74 mutation fields; after these two queries and one mutation it must pin exactly 88 queries and 75 mutations, plus the three exact field names/signatures above. A count mismatch fails loudly instead of leaving an unnamed downstream gate.
+
 - [ ] Add `content-richtext-observability.test.ts`. A direct GraphQL request, with no Astro proxy, must emit exactly one resolver record for saved/conflict/error. It must assert the record’s exact allowlist and prove the submitted body/token are absent.
 
 - [ ] Run:
@@ -368,12 +382,15 @@ and a `reportContentSave(event)` callback. Do not log inside a reusable package 
 
 ```sh
 pnpm --filter @movp/graphql test
+pnpm test:graphql-shape
 pnpm --filter @movp/graphql typecheck
 pnpm --filter @movp/domain test
 deno check --no-lock --config supabase/functions/graphql/deno.json supabase/functions/graphql/index.ts
 ```
 
-Expected: all commands exit `0`; direct GraphQL observability test reports exactly one safe record per request.
+Expected: all commands exit `0`; the root-surface inventory reports 88 query
+and 75 mutation fields, and the direct GraphQL observability test reports
+exactly one safe record per request.
 
 **Commit**
 
