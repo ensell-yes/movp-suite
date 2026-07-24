@@ -1,7 +1,7 @@
 # C7.4–C7.7 — Inline Editing & Headless Delivery (design)
 
-**Status:** proposed (2026-07-23); ready for adversarial review before
-implementation-plan expansion.
+**Status:** approved (2026-07-23) after adversarial review and implementation-plan
+cross-check.
 **Depends on:** C7.1–C7.3 complete on `main`.
 **Completes:** the C7 tail only when C7.4, C7.5, C7.6, and C7.7 and all gates in
 this document pass.
@@ -31,7 +31,8 @@ editor's identity or controls to another visitor.
 The C7 tail is complete only when all of the following are true:
 
 1. a draft is invisible to `anon`, while its published revision resolves at
-   exactly one typed route;
+   exactly one typed route whose content-type key cannot collide with an
+   existing static application namespace;
 2. a member cannot create or mutate CMS authoring data through GraphQL, an
    INVOKER RPC, or direct PostgREST, while an owner/admin can;
 3. a bound rich-text region can be edited with keyboard-only interaction, a
@@ -40,9 +41,10 @@ The C7 tail is complete only when all of the following are true:
 4. two authenticated fixture sessions receive private revision Broadcast and
    Presence, while a non-member and a client-originated Broadcast insert are
    denied;
-5. sitemap children are protocol-bounded, public delivery has a tested
-   60-second shared-cache freshness ceiling, and 404/edit responses are never
-   stored; and
+5. sitemap children are protocol-bounded, public delivery emits a tested
+   60-second origin shared-cache freshness ceiling, the production Cache Rule
+   is checked when Cloudflare caching is enabled, and 404/edit responses are
+   never stored; and
 6. the local gate set and authoritative CI gates in §14 are green, followed by
    an eight-dimension implementation review with mean ≥9.2 and no dimension
    below 9.2.
@@ -108,6 +110,26 @@ The constraint is named and tested. A pgTAP fixture with two `blog` types in one
 workspace must prove the preflight failure; after the conflicting fixture is
 resolved, two different workspaces may each use `blog`, while one workspace
 cannot.
+
+Astro static routes take precedence over `/[contentType]/[slug]`. The same
+migration therefore rejects content-type keys equal to the current
+two-segment application namespaces:
+
+```text
+admin, api, auth, campaigns, content, notes, segments, settings, tasks, workflows
+```
+
+Private predicate `movp_internal.is_reserved_content_type_key(text)` is the
+single source for the set. Private preflight
+`movp_internal.assert_no_reserved_content_type_keys()` rejects an existing
+collision, and trigger
+`content_type_reserved_key_tg BEFORE INSERT OR UPDATE OF key` calls
+`movp_internal.reject_reserved_content_type_key()` to reject future
+collisions. Both paths raise SQLSTATE `23514` with stable message code
+`content_type_key_reserved`; neither emits the rejected key. A pgTAP fixture
+must prove `admin` fails through both paths. Adding a new static two-segment
+top-level namespace requires an additive migration that extends the predicate
+and updates the pgTAP route inventory before the frontend route lands.
 
 Route segments are decoded once and rejected before the RPC if they contain a
 slash, backslash, NUL/control character, invalid UTF-8, or exceed 128 UTF-8
@@ -177,10 +199,18 @@ inclusive end cursor for one shard. Malformed or reversed bounds fail with
 `list_published_delivery_shards` returns non-overlapping opaque start/end
 cursor pairs covering at most 4,000 rows each. Each child passes its exclusive
 start and inclusive end to `list_published_delivery`, so it cannot read into
-the next shard. The shard RPC sets a bounded database
-statement timeout and fails loudly with `delivery_shards_timeout`; it never
-falls back to an unbounded application scan. Child routes pass those bounds to
-the paginated read and make at most four 1,000-row RPC calls.
+the next shard. A private internal helper owns the bounded scan; the public
+wrapper sets `statement_timeout = '2s'`, calls the helper, and maps only
+SQLSTATE `57014` / `query_canceled` to stable message code
+`delivery_shards_timeout`. It never falls back to an unbounded application
+scan. Child routes pass those bounds to the paginated read and make at most
+four 1,000-row RPC calls.
+
+The timeout gate is deterministic rather than timing-dependent. pgTAP asserts
+the public wrapper's `pg_proc.proconfig` contains `statement_timeout=2s`, then
+transaction-locally replaces the internal scan helper with the same signature
+and a body that raises SQLSTATE `57014`. The unchanged wrapper must re-raise
+`57014` with `delivery_shards_timeout`; rollback restores the real helper.
 
 ### 4.2 Definer audit and negative tests
 
@@ -319,11 +349,13 @@ Cache-Control: no-store
 ```
 
 There is no cache purge webhook, cache-tag dependency, Cloudflare API token, or
-retry subsystem. Unpublish withdrawal is guaranteed within at most 60 seconds
-for a shared cache that respects the origin header; without a shared cache it
-is immediate. `s-maxage` supplies the shared freshness bound and implies proxy
-revalidation. Do not add `stale-while-revalidate` or `stale-if-error`, because
-either could weaken the withdrawal ceiling.
+retry subsystem. The origin emits a 60-second shared-freshness ceiling; without
+a shared cache, unpublish withdrawal is immediate. End-to-end withdrawal within
+60 seconds additionally depends on every enabled shared cache respecting that
+origin header and, for Cloudflare caching, the deployment check below.
+`s-maxage` supplies the origin freshness bound and implies proxy revalidation.
+Do not add `stale-while-revalidate` or `stale-if-error`, because either could
+weaken the withdrawal ceiling.
 
 Cloudflare does not need to cache these routes for correctness. If production
 enables an exact-route Cache Rule, the deployment check must prove that the
@@ -681,8 +713,10 @@ revealing whether a draft exists.
 | Invariant | Test/gate |
 |---|---|
 | type key uniqueness preflight is counts-only and transactional | new pgTAP migration test; `content_type_key_duplicates` pinned |
+| reserved top-level namespaces cannot shadow typed delivery | pgTAP existing-row preflight + direct insert/update; `content_type_key_reserved` pinned |
 | anon sees only the exact published revision | pgTAP public-delivery positive/negative suite |
 | definer/grants/search-path audit | pgTAP catalog assertions |
+| shard timeout is bounded and maps cancellation deterministically | `pg_proc.proconfig` assertion + transaction-local SQLSTATE `57014` scan-helper replacement |
 | renderer allowlist, escaping, depth/node/text bounds | `pnpm --filter @movp/delivery test` |
 | JSON-LD cannot close its script; canonical origin is configured | delivery unit/golden |
 | sitemap index/children stay ≤4,000 URLs and <52,428,800 bytes | >50k synthetic golden set plus byte-edge cases |
@@ -715,9 +749,14 @@ the inventory.
 
 Implement in this dependency order:
 
-1. **Delivery core:** `20260723000001_content_delivery_reads.sql` (duplicate
-   preflight, uniqueness, published reads, shard RPC/index), `@movp/delivery`,
-   typed public route, bounded artifacts, and cache headers.
+The first half of C7.6 intentionally lands before C7.4 and C7.5 because the
+overlay and Realtime work both need a rendered delivery page. The plan filename
+sequence `07e`–`07i`, rather than the product sub-labels, is authoritative.
+
+1. **Delivery core:** `20260723000001_content_delivery_reads.sql` (duplicate and
+   reserved-key preflights, uniqueness, reserved-key trigger, published reads,
+   shard RPC/index), `@movp/delivery`, typed public route, bounded artifacts,
+   and cache headers.
 2. **Authorization rewrite:**
    `20260723000002_content_edit_capability.sql`, full policy/privileged-path
    inventory, fixture-identity updates, and bypass tests.
@@ -819,7 +858,7 @@ gated.
 |---|---:|---|
 | Correctness | 9.3 | Deterministic typed routes, published-pointer reads, one hash-first write path, explicit sitemap consistency, and positive/negative contracts |
 | Safety | 9.3 | Published-only definer, directional content-originated edge gate, complete `edit` matrix, service-role prechecks, private Realtime RLS, strict renderer, and no browser credential exposure |
-| Reliability | 9.2 | Transactional duplicate stop, fail-loud bounds, 60-second withdrawal ceiling, bounded reconnect, graceful Broadcast failure, and authoritative CI gates |
+| Reliability | 9.2 | Transactional duplicate/reserved-key stop, deterministic timeout mapping, fail-loud bounds, 60-second origin cache ceiling with a conditional deployment-rule check, bounded reconnect, graceful Broadcast failure, and authoritative CI gates |
 | Observability | 9.3 | Direct resolver, proxy, database, public delivery, artifact, and Realtime signals have distinct owners and content-disciplined correlation |
 | Efficiency | 9.2 | No purge subsystem or new external dependency; keyset pagination, ≤4 child RPCs, one canonical writer, and bounded artifact work |
 | Performance | 9.2 | Anonymous pages cannot reach editor/TipTap chunks; public cache bound, indexed cursor reads, capped renderer/catalog memory, no polling, and no unbounded artifact response |

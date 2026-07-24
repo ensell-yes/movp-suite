@@ -2,7 +2,9 @@
 
 > **Executor contract:** Execute one task at a time, in order. Preserve every red/green gate and commit boundary. Do not mark C7 complete: this is the first of five C7-tail plans (`07e`–`07i`).
 
-**Goal:** Ship the anonymous, published-only delivery foundation: deterministic typed URLs, bounded delivery RPCs, an allowlisted document renderer, bounded sitemap artifacts, and cache behavior with a hard 60-second withdrawal ceiling.
+> **Execution-order note:** Although this foundation is the first half of C7.6, it lands before C7.4 and C7.5 because both the overlay and Realtime work require a rendered delivery page. The filenames `07e`–`07i`, not the product sub-labels, govern execution order.
+
+**Goal:** Ship the anonymous, published-only delivery foundation: deterministic typed URLs, bounded delivery RPCs, an allowlisted document renderer, bounded sitemap artifacts, and origin cache headers that cap shared freshness at 60 seconds. The end-to-end withdrawal guarantee additionally requires the deployment Cache Rule check in design §6 whenever Cloudflare caching is enabled.
 
 **Approved design:** `docs/superpowers/specs/2026-07-23-movp-stage-c-07-tail-inline-editing-delivery-design.md`
 
@@ -17,6 +19,7 @@
 - Public reads return the `published_revision` only. Draft/current revision identifiers and bodies are never returned.
 - `(content_type.workspace_id, content_type.key)` is unique before typed routes land.
 - Duplicate preflight fails with stable SQLSTATE/message code `content_type_key_duplicates`; diagnostics contain counts, never values.
+- Content-type keys cannot equal the existing two-segment application namespaces `admin`, `api`, `auth`, `campaigns`, `content`, `notes`, `segments`, `settings`, `tasks`, or `workflows`. Existing-row preflight and future insert/update rejection use stable SQLSTATE `23514` and message code `content_type_key_reserved`; diagnostics never include the rejected key.
 - All three public RPCs are `SECURITY DEFINER`, set `search_path = ''`, validate every identifier, and are executable only by `anon`, `authenticated`, and `service_role` after explicit grants.
 - `list_published_delivery` uses opaque keyset cursors and clamps `limit` to `1..1000`.
 - `list_published_delivery_shards` computes all child boundaries in one bounded database call and fails with `delivery_shards_timeout`; the index never scans the catalog page-by-page.
@@ -119,13 +122,20 @@ merely to match stale prose.
   4. a newly saved draft after publish does not change public output;
   5. a foreign workspace cannot be reached by changing slug/type;
   6. `list_published_delivery` returns published route metadata only, never revision `data`, is deterministically ordered, clamps `limit`, and produces a resumable opaque cursor;
-  7. `list_published_delivery_shards` returns non-overlapping ≤4,000-row boundaries in one call, has a catalog-pinned statement timeout, and maps query cancellation to `delivery_shards_timeout`;
+  7. `list_published_delivery_shards` returns non-overlapping ≤4,000-row boundaries in one call; `pg_proc.proconfig` pins its bounded `statement_timeout`; and a transaction-local replacement of the internal shard-scan helper raises SQLSTATE `57014`, proving the public wrapper deterministically remaps cancellation to message code `delivery_shards_timeout`;
   8. invalid UUID, type key, slug, cursor, reversed bound, and limit fail with stable sanitized codes;
   9. all three functions are `SECURITY DEFINER`, have empty configured search paths, revoke `PUBLIC`, and grant only `anon`, `authenticated`, and `service_role`;
-  10. application roles cannot execute the duplicate-preflight helper;
-  11. after temporarily dropping the new unique constraint inside the test transaction, duplicate type keys make the helper fail with `content_type_key_duplicates`.
+  10. application roles cannot execute the duplicate/reserved-key preflight helpers or the internal shard-scan helper;
+  11. after temporarily dropping the new unique constraint inside the test transaction, duplicate type keys make the helper fail with `content_type_key_duplicates`;
+  12. after temporarily disabling the new reserved-key trigger inside the test transaction, an existing reserved key makes the migration preflight fail; after re-enabling it, direct insert/update of key `admin` fails with SQLSTATE `23514` and message code `content_type_key_reserved`.
 
-Keep the test transactional (`begin`/`rollback`). The duplicate fixture must be rolled back; never mutate a merged migration.
+Keep the test transactional (`begin`/`rollback`). Temporarily replace only the
+new internal shard-scan helper inside that transaction, call the unchanged
+public wrapper, and rely on rollback to restore it. Disable the reserved-key
+trigger only long enough to seed the preflight fixture, re-enable it before the
+direct-write assertions, and assert it is enabled in `pg_trigger` afterward.
+The duplicate/reserved fixtures must be rolled back; never mutate a merged
+migration.
 
 - [ ] Run the focused red gate:
 
@@ -163,7 +173,40 @@ alter table public.content_type
   unique (workspace_id, key);
 ```
 
-Use the real table/column names confirmed from the schema. Do not log duplicate keys.
+Add private predicate
+`movp_internal.is_reserved_content_type_key(p_key text)`, private preflight
+`movp_internal.assert_no_reserved_content_type_keys()`, and trigger function
+`movp_internal.reject_reserved_content_type_key()`. Attach the trigger function
+as `content_type_reserved_key_tg BEFORE INSERT OR UPDATE OF key` on
+`public.content_type`. The predicate is the single source for this exact
+reserved first-segment set:
+
+```sql
+array[
+  'admin', 'api', 'auth', 'campaigns', 'content',
+  'notes', 'segments', 'settings', 'tasks', 'workflows'
+]::text[]
+```
+
+Both paths raise:
+
+```sql
+raise exception using
+  errcode = '23514',
+  message = 'content_type_key_reserved';
+```
+
+The preflight and trigger functions are `SECURITY DEFINER`, use
+`set search_path = ''`, schema-qualify their references, and—along with the
+predicate—have execute revoked from `PUBLIC`, `anon`, and `authenticated`.
+Execute the preflight before creating the trigger. Do not include the key in
+the message, detail, hint, or logs. When the frontend gains a new static
+two-segment top-level namespace, the same change must add a forward-only
+migration extending this predicate and update the pgTAP inventory before that
+route lands.
+
+Use the real table/column names confirmed from the schema. Do not log duplicate
+or reserved keys.
 
 - [ ] Add exact public contracts:
 
@@ -195,7 +238,26 @@ public.list_published_delivery_shards(
 ) returns jsonb
 ```
 
-This returns non-overlapping opaque exclusive-start/inclusive-end pairs covering at most 4,000 rows each. It sets a bounded database statement timeout and maps query cancellation to `delivery_shards_timeout`; it never falls back to application-side catalog pagination.
+This public wrapper returns non-overlapping opaque exclusive-start/inclusive-end
+pairs covering at most 4,000 rows each. Put the bounded catalog scan in private
+`movp_internal.list_published_delivery_shard_bounds(ws, p_urls_per_shard)`.
+The public wrapper sets `statement_timeout = '2s'`, calls that helper, and maps
+only `query_canceled` / SQLSTATE `57014` to:
+
+```sql
+raise exception using
+  errcode = '57014',
+  message = 'delivery_shards_timeout';
+```
+
+Other failures retain their safe, explicit error path. Revoke the internal
+helper from `PUBLIC`, `anon`, and `authenticated`. The pgTAP suite asserts
+`pg_proc.proconfig` contains `statement_timeout=2s`, then temporarily replaces
+the internal helper with the same signature and a body that raises SQLSTATE
+`57014`. Calling the unmodified public wrapper must raise `57014` with
+`delivery_shards_timeout`; rollback restores the real scanner. Do not induce a
+wall-clock timeout in tests. The wrapper never falls back to application-side
+catalog pagination.
 
 All three functions:
 
@@ -453,7 +515,10 @@ Static Astro routes retain precedence over the fallback typed route. Do not crea
 
 - [ ] Implement artifact routes. The index calls `list_published_delivery_shards` exactly once and never calls the row-list RPC. Each child passes one shard's bounds to `list_published_delivery`, performs at most four 1,000-row RPC calls, and fails loudly if the database returns a cursor beyond the inclusive end. Map `delivery_shards_timeout` to a safe non-2xx `no-store` artifact failure; never fall back to an application-side scan.
 
-There is intentionally no purge webhook, cache tag, Cloudflare API token, or new binding. Withdrawal is bounded by `s-maxage=60`.
+There is intentionally no purge webhook, cache tag, Cloudflare API token, or
+new binding. The origin emits `s-maxage=60`; when Cloudflare caching is enabled,
+the end-to-end withdrawal ceiling also depends on the exact-route Cache Rule
+deployment check in design §6.
 
 **Gate**
 
@@ -499,7 +564,7 @@ Update exact package counts and expected file names. Preserve guarded reads: `ls
 
 - [ ] Add required CI job `c7-delivery` that runs package test/typecheck/build plus frontend delivery unit/build gates. Pin its presence in `scripts/check-ci-wiring.mjs`.
 
-- [ ] Update `CLAUDE.md` with the durable delivery rules: published-only RPC boundary, renderer-owned HTML sink, anonymous no-editor bundle, 60-second withdrawal ceiling, bounded sitemap set.
+- [ ] Update `CLAUDE.md` with the durable delivery rules: published-only RPC boundary, reserved first-segment inventory, renderer-owned HTML sink, anonymous no-editor bundle, 60-second origin shared-freshness ceiling plus the conditional deployment Cache Rule check, and bounded sitemap set.
 
 **Gate**
 
