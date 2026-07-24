@@ -283,7 +283,7 @@ export async function getPublishedBySlug(
   if (result.value === null) return { status: 'not_found' }
   if (
     isRecord(result.value)
-    && result.value.richtext_field_keys_supported === false
+    && result.value.richtext_field_keys_supported !== true
   ) {
     return { status: 'error', code: 'delivery_richtext_field_key_unsupported' }
   }

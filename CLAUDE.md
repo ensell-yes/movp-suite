@@ -180,8 +180,11 @@
 - Published revision `data` is wholly public in V1; there is no field-level private visibility. The read RPC
   returns only a names-only `richtext_field_keys` schema projection plus `richtext_field_keys_supported`, and
   the page binds doc JSON only for declared keys matching `^[A-Za-z][A-Za-z0-9_-]{0,127}$`. A residual
-  unsupported rich-text name must fail the public read with `delivery_richtext_field_key_unsupported`; never
-  render its stored doc JSON as prose or return the complete field schema merely to detect editor regions.
+  unsupported rich-text name—or a missing/non-true support proof during a rolling deploy—must fail the public
+  read with `delivery_richtext_field_key_unsupported`; never render its stored doc JSON as prose or return the
+  complete field schema merely to detect editor regions. The guarded, size-bounded
+  `packages/delivery/test/field-key-contract.test.ts` pins both SQL predicate literals to the exported renderer
+  pattern and must fail if either copy drifts or another copy appears.
 - Public page and artifact handlers emit exactly one content-disciplined `delivery.public_read` or
   `delivery.artifact` record with the registered `delivery` surface, canonical `@movp/obs` redaction version,
   route kind, workspace hash, generated request id, outcome/runtime-allowlisted safe code, and latency.

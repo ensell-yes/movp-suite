@@ -218,7 +218,7 @@ public.get_published_by_slug(
 ) returns jsonb
 ```
 
-This returns at most one row containing only delivery-safe identifiers, type key, slug, published revision id, published data, a names-only `richtext_field_keys` projection, the boolean `richtext_field_keys_supported`, title/meta inputs, and published timestamp. Binding keys use `^[A-Za-z][A-Za-z0-9_-]{0,127}$`; a false support flag maps to `delivery_richtext_field_key_unsupported` and a generic `500 no-store` response rather than exposing stored doc JSON as prose. The complete field schema is never returned; V1 treats the published revision data object as wholly public.
+This returns at most one row containing only delivery-safe identifiers, type key, slug, published revision id, published data, a names-only `richtext_field_keys` projection, the boolean `richtext_field_keys_supported`, title/meta inputs, and published timestamp. Binding keys use `^[A-Za-z][A-Za-z0-9_-]{0,127}$`; a missing or non-true support proof maps to `delivery_richtext_field_key_unsupported` and a generic `500 no-store` response rather than exposing stored doc JSON as prose. The complete field schema is never returned; V1 treats the published revision data object as wholly public.
 
 ```sql
 public.list_published_delivery(

@@ -116,6 +116,29 @@ describe('published delivery adapter', () => {
     })
   })
 
+  it('uses the unsupported-key code when the RPC support proof is absent', async () => {
+    const result = await getPublishedBySlug(
+      env,
+      'article',
+      'safe-page',
+      vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({
+        item_id: ITEM_ID,
+        content_type_key: 'article',
+        slug: 'safe-page',
+        published_revision_id: REVISION_ID,
+        published_at: '2026-07-23T12:00:00Z',
+        data: { body: '{"type":"doc","content":[]}' },
+        richtext_field_keys: ['body'],
+        meta: null,
+        jsonld: null,
+      })),
+    )
+    expect(result).toEqual({
+      status: 'error',
+      code: 'delivery_richtext_field_key_unsupported',
+    })
+  })
+
   it('rejects wrong content types and oversized streamed bodies before parsing', async () => {
     const wrongType = await getPublishedBySlug(
       env,

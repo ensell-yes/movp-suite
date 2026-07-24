@@ -164,7 +164,8 @@ describe('delivery observability', () => {
     const page = await readFile(`${ROOT}/src/pages/[contentType]/[slug].astro`, 'utf8')
     expect(page.match(/recordDeliveryEvent\(observation\)/g)).toHaveLength(1)
     expect(page).not.toContain('catch {')
-    expect(page).toContain("result.code === 'delivery_upstream_timeout' ? 503 : 500")
+    expect(page).toContain('deliveryFailureStatus(result.code)')
+    expect(page).not.toContain("result.code === 'delivery_upstream_timeout' ? 503 : 500")
 
     for (const route of [
       'sitemap.xml.ts',

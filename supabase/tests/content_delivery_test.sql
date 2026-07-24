@@ -299,6 +299,7 @@ select is(
   'true'::jsonb,
   'published output confirms every rich-text field key is supported'
 );
+savepoint unsupported_richtext_field_key;
 update public.content_type
 set field_schema = field_schema || '[{"name":"Body.Dot","type":"richtext"}]'::jsonb
 where id = 'd7010000-0000-0000-0000-000000000001';
@@ -320,6 +321,8 @@ select is(
   '["body","bodyHtml"]'::jsonb,
   'unsupported rich-text keys are never returned as binding names'
 );
+rollback to savepoint unsupported_richtext_field_key;
+release savepoint unsupported_richtext_field_key;
 select ok(
   not (
     public.get_published_by_slug(

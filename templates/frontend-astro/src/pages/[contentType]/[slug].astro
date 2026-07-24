@@ -9,6 +9,7 @@ import { getPublishedBySlug, parseDeclaredPublishedRichText } from '../../lib/de
 import {
   createDeliveryRequestContext,
   deliveryFailureCode,
+  deliveryFailureStatus,
   recordDeliveryEvent,
   type DeliveryObservation,
 } from '../../lib/delivery-observability.ts'
@@ -107,7 +108,7 @@ try {
     }
   } else {
     state = 'error'
-    errorStatus = result.code === 'delivery_upstream_timeout' ? 503 : 500
+    errorStatus = deliveryFailureStatus(result.code)
     observation = {
       event: 'delivery.public_read',
       routeKind: 'page',

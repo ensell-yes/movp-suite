@@ -187,8 +187,9 @@ in published revision data. The RPC does not return the complete field schema;
 it derives `richtext_field_keys` in SQL, accepts only the same bounded field-key
 shape as the renderer (`^[A-Za-z][A-Za-z0-9_-]{0,127}$`), and returns no labels,
 enum values, or other schema metadata. CamelCase and hyphenated names therefore
-remain valid. If any declared rich-text name falls outside that shape, the
-boolean is false and the adapter returns
+remain valid. If any declared rich-text name falls outside that shape—or the
+support proof is absent or not exactly `true` during a rolling deploy—the
+adapter returns
 `delivery_richtext_field_key_unsupported`; the page fails with a generic
 `500 no-store` response instead of rendering stored doc JSON as prose. Otherwise
 the page parses and binds doc-shaped JSON only when its key appears in the
@@ -745,7 +746,7 @@ revealing whether a draft exists.
 | type key uniqueness preflight is counts-only and transactional | new pgTAP migration test; `content_type_key_duplicates` pinned |
 | reserved top-level namespaces cannot shadow typed delivery | pgTAP existing-row preflight + direct insert/update; `content_type_key_reserved` pinned |
 | anon sees only the exact published revision | pgTAP public-delivery positive/negative suite |
-| only supported, declared rich-text fields receive bindings | RPC projection/support-flag pgTAP + camelCase/hyphen renderer tests + doc-shaped ordinary-text frontend regression |
+| only supported, declared rich-text fields receive bindings | RPC projection/support-flag pgTAP + guarded two-literal SQL↔renderer pattern drift gate + camelCase/hyphen renderer tests + doc-shaped ordinary-text frontend regression |
 | definer/grants/search-path audit | pgTAP catalog assertions |
 | shard timeout is bounded and maps cancellation deterministically | `pg_proc.proconfig` assertion + transaction-local inner SQLSTATE `57014` scan-helper replacement; outer `P5701`/`delivery_shards_timeout` assertion |
 | renderer allowlist, escaping, depth/node/text bounds | `pnpm --filter @movp/delivery test` |
