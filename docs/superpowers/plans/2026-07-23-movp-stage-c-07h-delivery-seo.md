@@ -268,6 +268,12 @@ git commit -m "test(delivery): pin published SEO metadata parity"
 
 ## Task 4: Complete delivery observability and cache-withdrawal behavior
 
+The 07e post-review follow-up already landed the server-only observation
+helper, workspace-hash known vector, exactly-one-event route wiring, safe
+failure codes, and recorder-failure hook. Preserve and extend those tests here;
+do not create a second event owner. The remaining 07h work in this task is the
+fake-clock/cache-withdrawal coverage and its focused browser gate.
+
 **Red first**
 
 - [ ] Create `delivery-observability.test.ts` with an injected recorder/clock. Pin exactly one event per request:

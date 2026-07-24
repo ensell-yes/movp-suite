@@ -11,6 +11,7 @@ export type PublishedContent = Readonly<{
   publishedRevisionId: string
   publishedAt: string
   data: Readonly<Record<string, unknown>>
+  richTextFieldKeys: readonly string[]
   meta: unknown
   jsonld: unknown
 }>
@@ -51,6 +52,7 @@ const MAX_RICHTEXT_BYTES = 1024 * 1024
 const REQUEST_TIMEOUT_MS = 5_000
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const TYPE_KEY_PATTERN = /^[a-z][a-z0-9_-]{0,127}$/
+const FIELD_KEY_PATTERN = /^[a-z][a-z0-9_]{0,127}$/
 const CURSOR_PATTERN = /^[A-Za-z0-9_-]{4,128}$/
 const CONTROL_PATTERN = /[\u0000-\u001f\u007f-\u009f]/
 const encoder = new TextEncoder()
@@ -208,8 +210,23 @@ function validatePublishedContent(value: unknown): PublishedContent | null {
     || !UUID_PATTERN.test(String(value.published_revision_id))
     || !validTimestamp(value.published_at)
     || !isRecord(value.data)
+    || !Array.isArray(value.richtext_field_keys)
+    || value.richtext_field_keys.length > 256
   ) {
     return null
+  }
+  const richTextFieldKeys: string[] = []
+  const seenFieldKeys = new Set<string>()
+  for (const fieldKey of value.richtext_field_keys) {
+    if (
+      typeof fieldKey !== 'string'
+      || !FIELD_KEY_PATTERN.test(fieldKey)
+      || seenFieldKeys.has(fieldKey)
+    ) {
+      return null
+    }
+    seenFieldKeys.add(fieldKey)
+    richTextFieldKeys.push(fieldKey)
   }
   return {
     itemId: String(value.item_id),
@@ -218,6 +235,7 @@ function validatePublishedContent(value: unknown): PublishedContent | null {
     publishedRevisionId: String(value.published_revision_id),
     publishedAt: value.published_at,
     data: value.data,
+    richTextFieldKeys,
     meta: value.meta ?? null,
     jsonld: value.jsonld ?? null,
   }
@@ -351,4 +369,12 @@ export function parsePublishedRichText(value: unknown): unknown | null {
   } catch {
     return null
   }
+}
+
+export function parseDeclaredPublishedRichText(
+  value: unknown,
+  fieldKey: string,
+  richTextFieldKeys: readonly string[],
+): unknown | null {
+  return richTextFieldKeys.includes(fieldKey) ? parsePublishedRichText(value) : null
 }

@@ -174,7 +174,19 @@ data through that exact revision id. It returns only:
 
 - item id, content-type key, slug, published revision id, and `published_at`;
 - the published revision's `data`; and
+- `richtext_field_keys`, a names-only projection of declared `richtext`
+  fields used to decide which published values receive editor bindings; and
 - the public SEO `meta`/`jsonld` values associated with the item.
+
+The published revision `data` object is the atomic public content unit. V1 has
+no field-level private/publish visibility: every scalar field in that object
+may be rendered publicly. A field that must remain private must not be stored
+in published revision data. The RPC does not return the complete field schema;
+it derives `richtext_field_keys` in SQL, accepts only the same bounded field-key
+shape as the renderer, and returns no labels, enum values, or other schema
+metadata. The page parses and binds doc-shaped JSON only when its key appears
+in that projection, so an ordinary text field with a coincidentally doc-shaped
+value remains inert text.
 
 `content_seo` is item-scoped current state rather than revision-scoped. Its
 writes require the owner/admin `edit` capability. In V1, an authorized SEO
@@ -720,6 +732,7 @@ revealing whether a draft exists.
 | type key uniqueness preflight is counts-only and transactional | new pgTAP migration test; `content_type_key_duplicates` pinned |
 | reserved top-level namespaces cannot shadow typed delivery | pgTAP existing-row preflight + direct insert/update; `content_type_key_reserved` pinned |
 | anon sees only the exact published revision | pgTAP public-delivery positive/negative suite |
+| only declared rich-text fields receive bindings | RPC projection pgTAP + doc-shaped ordinary-text frontend regression |
 | definer/grants/search-path audit | pgTAP catalog assertions |
 | shard timeout is bounded and maps cancellation deterministically | `pg_proc.proconfig` assertion + transaction-local inner SQLSTATE `57014` scan-helper replacement; outer `P5701`/`delivery_shards_timeout` assertion |
 | renderer allowlist, escaping, depth/node/text bounds | `pnpm --filter @movp/delivery test` |

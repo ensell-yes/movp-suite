@@ -218,7 +218,7 @@ public.get_published_by_slug(
 ) returns jsonb
 ```
 
-This returns at most one row containing only delivery-safe identifiers, type key, slug, published revision id, published data, title/meta inputs, and published timestamp.
+This returns at most one row containing only delivery-safe identifiers, type key, slug, published revision id, published data, a names-only `richtext_field_keys` projection, title/meta inputs, and published timestamp. The complete field schema is never returned; V1 treats the published revision data object as wholly public.
 
 ```sql
 public.list_published_delivery(
@@ -510,7 +510,7 @@ Do not instantiate/capture a client at module load.
 - [ ] Implement `/[contentType]/[slug]`:
   - resolve workspace id from request-time public env/config;
   - call the published-only RPC;
-  - render rich-text fields through `renderDocToHtml`;
+  - render through `renderDocToHtml` only when a field key appears in the RPC's declared `richtext_field_keys` projection;
   - use the one documented `set:html` boundary only for renderer output;
   - output canonical/meta/JSON-LD;
   - set `Referrer-Policy`, a restrictive CSP compatible with later bootstrap, and cache headers;

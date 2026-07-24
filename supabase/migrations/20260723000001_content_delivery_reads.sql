@@ -226,6 +226,22 @@ begin
     'published_revision_id', revision.id,
     'published_at', item.published_at,
     'data', revision.data,
+    'richtext_field_keys', (
+      select coalesce(
+        pg_catalog.jsonb_agg(field.value->>'name' order by field.ordinality),
+        '[]'::jsonb
+      )
+      from pg_catalog.jsonb_array_elements(
+        case
+          when pg_catalog.jsonb_typeof(content_type.field_schema) = 'array'
+            then content_type.field_schema
+          else '[]'::jsonb
+        end
+      ) with ordinality as field(value, ordinality)
+      where pg_catalog.jsonb_typeof(field.value) = 'object'
+        and field.value->>'type' = 'richtext'
+        and field.value->>'name' ~ '^[a-z][a-z0-9_]{0,127}$'
+    ),
     'meta', seo.meta,
     'jsonld', seo.jsonld
   )

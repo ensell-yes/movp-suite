@@ -5,6 +5,7 @@ import {
   getPublishedBySlug,
   listPublishedDelivery,
   listPublishedDeliveryShards,
+  parseDeclaredPublishedRichText,
   parsePublishedRichText,
   type DeliveryPublicEnv,
 } from './delivery.ts'
@@ -37,6 +38,7 @@ describe('published delivery adapter', () => {
         title: 'Safe page',
         body: '{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Published"}]}]}',
       },
+      richtext_field_keys: ['body'],
       meta: { description: 'Description' },
       jsonld: { '@type': 'Article' },
     }))
@@ -55,6 +57,7 @@ describe('published delivery adapter', () => {
           title: 'Safe page',
           body: '{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Published"}]}]}',
         },
+        richTextFieldKeys: ['body'],
         meta: { description: 'Description' },
         jsonld: { '@type': 'Article' },
       },
@@ -157,6 +160,15 @@ describe('published delivery adapter', () => {
     })
     expect(parsePublishedRichText('ordinary text')).toBeNull()
     expect(parsePublishedRichText(`{"type":"doc","content":[]}${' '.repeat(1_100_000)}`)).toBeNull()
+  })
+
+  it('parses doc-shaped JSON only for a declared rich-text field', () => {
+    const doc = '{"type":"doc","content":[{"type":"paragraph"}]}'
+    expect(parseDeclaredPublishedRichText(doc, 'body', ['body'])).toEqual({
+      type: 'doc',
+      content: [{ type: 'paragraph' }],
+    })
+    expect(parseDeclaredPublishedRichText(doc, 'lookalike', ['body'])).toBeNull()
   })
 })
 

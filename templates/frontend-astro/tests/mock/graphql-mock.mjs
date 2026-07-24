@@ -393,6 +393,10 @@ const publishedDelivery = {
   ...deliveryRoute,
   data: {
     title: 'Published page',
+    lookalike: JSON.stringify({
+      type: 'doc',
+      content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Not rich text' }] }],
+    }),
     body: JSON.stringify({
       type: 'doc',
       content: [{
@@ -401,6 +405,7 @@ const publishedDelivery = {
       }],
     }),
   },
+  richtext_field_keys: ['body'],
   meta: { title: 'Published page', description: 'Public description' },
   jsonld: {
     '@context': 'https://schema.org',

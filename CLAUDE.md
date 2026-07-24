@@ -170,9 +170,19 @@
 - `@movp/delivery` is the client/server-safe published-delivery leaf. Anonymous pages read only through the
   three published-only definer RPCs with the anon key; they never query content tables or expose draft/current
   revision state. `PUBLIC_SITE_URL` is the canonical origin—never derive it from `Host`.
+- Typed public delivery reserves `admin`, `api`, `auth`, `campaigns`, `content`, `notes`, `segments`,
+  `settings`, `tasks`, and `workflows` as first segments. The migration preflight and write trigger reject
+  collisions with `content_type_key_reserved`; adding another static two-segment namespace requires an additive
+  predicate migration and matching pgTAP inventory update.
 - The delivery renderer owns the public page's only `set:html` sink. Its StarterKit allowlist, structural
   validation, XSS escaping, and exact depth/node/text bounds must stay pinned. Anonymous delivery routes must
   not statically or dynamically import editor/TipTap code.
+- Published revision `data` is wholly public in V1; there is no field-level private visibility. The read RPC
+  returns only a names-only `richtext_field_keys` schema projection, and the page binds doc JSON only for those
+  declared keys. Never return the complete field schema merely to detect editor regions.
+- Public page and artifact handlers emit exactly one content-disciplined `delivery.public_read` or
+  `delivery.artifact` record with route kind, workspace hash, generated request id, outcome/safe code, and
+  latency. No event includes a path, slug, URL, content, schema, token, cookie, email, or payload.
 - Successful page and artifact responses emit an origin `public, s-maxage=60` ceiling; 404s and all upstream
   or validation failures are `no-store`. The end-to-end 60-second withdrawal guarantee additionally depends
   on the exact-route Cloudflare Cache Rule deployment check; there is no purge webhook, cache-tag, or API token.

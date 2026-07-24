@@ -5,7 +5,13 @@ import {
   renderDocToHtml,
   type DeliveryRoute,
 } from '@movp/delivery'
-import { getPublishedBySlug, parsePublishedRichText } from '../../lib/delivery.ts'
+import { getPublishedBySlug, parseDeclaredPublishedRichText } from '../../lib/delivery.ts'
+import {
+  createDeliveryRequestContext,
+  deliveryFailureCode,
+  recordDeliveryEvent,
+  type DeliveryObservation,
+} from '../../lib/delivery-observability.ts'
 import { readServerEnv } from '../../lib/env.ts'
 
 const CACHE_SUCCESS = 'public, s-maxage=60'
@@ -18,9 +24,21 @@ let canonical: string | null = null
 let safeGeneratedHtml = ''
 let plainFields: Array<readonly [string, string | number | boolean]> = []
 let state: 'found' | 'not_found' | 'error' = 'error'
+let errorStatus = 500
+let observationWorkspaceId: string | undefined
+const observationContext = createDeliveryRequestContext()
+let observation: DeliveryObservation = {
+  event: 'delivery.public_read',
+  routeKind: 'page',
+  outcome: 'error',
+  errorCode: 'delivery_internal_error',
+  requestId: observationContext.requestId,
+  startedAt: observationContext.startedAt,
+}
 
 try {
   const { publicSiteUrl, workspaceId, supabaseUrl, supabaseAnonKey } = readServerEnv()
+  observationWorkspaceId = workspaceId
   const result = await getPublishedBySlug(
     { workspaceId, supabaseUrl, supabaseAnonKey },
     contentType,
@@ -50,7 +68,7 @@ try {
     const renderedFields: string[] = []
     const visiblePlainFields: Array<readonly [string, string | number | boolean]> = []
     for (const [fieldKey, value] of Object.entries(item.data)) {
-      const doc = parsePublishedRichText(value)
+      const doc = parseDeclaredPublishedRichText(value, fieldKey, item.richTextFieldKeys)
       if (doc !== null) {
         renderedFields.push(renderDocToHtml(doc, {
           bind: { itemId: item.itemId, fieldKey },
@@ -69,18 +87,56 @@ try {
     safeGeneratedHtml = renderedFields.join('')
     plainFields = visiblePlainFields
     state = 'found'
+    observation = {
+      event: 'delivery.public_read',
+      routeKind: 'page',
+      outcome: 'found',
+      workspaceId,
+      requestId: observationContext.requestId,
+      startedAt: observationContext.startedAt,
+    }
+  } else if (result.status === 'not_found') {
+    state = 'not_found'
+    observation = {
+      event: 'delivery.public_read',
+      routeKind: 'page',
+      outcome: 'not_found',
+      workspaceId,
+      requestId: observationContext.requestId,
+      startedAt: observationContext.startedAt,
+    }
   } else {
-    state = result.status === 'not_found' ? 'not_found' : 'error'
+    state = 'error'
+    errorStatus = result.code === 'delivery_upstream_timeout' ? 503 : 500
+    observation = {
+      event: 'delivery.public_read',
+      routeKind: 'page',
+      outcome: 'error',
+      errorCode: result.code,
+      workspaceId,
+      requestId: observationContext.requestId,
+      startedAt: observationContext.startedAt,
+    }
   }
-} catch {
+} catch (error: unknown) {
   state = 'error'
+  observation = {
+    event: 'delivery.public_read',
+    routeKind: 'page',
+    outcome: 'error',
+    errorCode: deliveryFailureCode(error),
+    workspaceId: observationWorkspaceId,
+    requestId: observationContext.requestId,
+    startedAt: observationContext.startedAt,
+  }
 }
 
+await recordDeliveryEvent(observation)
 Astro.response.headers.set('Cache-Control', state === 'found' ? CACHE_SUCCESS : CACHE_FAILURE)
 Astro.response.headers.set('Content-Security-Policy', "default-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'; img-src https: data:; script-src 'self'; style-src 'self'")
 Astro.response.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin')
 Astro.response.headers.set('X-Content-Type-Options', 'nosniff')
-if (state !== 'found') Astro.response.status = state === 'not_found' ? 404 : 502
+if (state !== 'found') Astro.response.status = state === 'not_found' ? 404 : errorStatus
 ---
 <!doctype html>
 <html lang="en">

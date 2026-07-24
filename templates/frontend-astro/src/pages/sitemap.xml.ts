@@ -1,19 +1,34 @@
 import { generateSitemapIndex } from '@movp/delivery'
 import type { APIRoute } from 'astro'
 import { listPublishedDeliveryShards } from '../lib/delivery.ts'
+import {
+  createDeliveryRequestContext,
+  deliveryFailureCode,
+  finishDeliveryArtifact,
+} from '../lib/delivery-observability.ts'
 import { readServerEnv } from '../lib/env.ts'
 
 export const GET: APIRoute = async () => {
+  const context = createDeliveryRequestContext()
+  let observationWorkspaceId: string | undefined
   try {
     const { publicSiteUrl, workspaceId, supabaseUrl, supabaseAnonKey } = readServerEnv()
+    observationWorkspaceId = workspaceId
     const result = await listPublishedDeliveryShards({ workspaceId, supabaseUrl, supabaseAnonKey })
     if (result.status !== 'found') {
-      return new Response('sitemap_unavailable\n', {
+      return finishDeliveryArtifact(new Response('sitemap_unavailable\n', {
         status: result.status === 'error' && result.code === 'delivery_shards_timeout' ? 503 : 502,
         headers: { 'Cache-Control': 'no-store', 'Content-Type': 'text/plain; charset=utf-8' },
+      }), {
+        routeKind: 'sitemap_index',
+        outcome: 'error',
+        errorCode: result.status === 'error' ? result.code : 'delivery_internal_error',
+        workspaceId,
+        requestId: context.requestId,
+        startedAt: context.startedAt,
       })
     }
-    return new Response(generateSitemapIndex(
+    return finishDeliveryArtifact(new Response(generateSitemapIndex(
       publicSiteUrl,
       result.value.map((shard) => shard.until),
     ), {
@@ -22,11 +37,24 @@ export const GET: APIRoute = async () => {
         'Content-Type': 'application/xml; charset=utf-8',
         'X-Content-Type-Options': 'nosniff',
       },
+    }), {
+      routeKind: 'sitemap_index',
+      outcome: 'generated',
+      workspaceId,
+      requestId: context.requestId,
+      startedAt: context.startedAt,
     })
-  } catch {
-    return new Response('sitemap_unavailable\n', {
+  } catch (error: unknown) {
+    return finishDeliveryArtifact(new Response('sitemap_unavailable\n', {
       status: 502,
       headers: { 'Cache-Control': 'no-store', 'Content-Type': 'text/plain; charset=utf-8' },
+    }), {
+      routeKind: 'sitemap_index',
+      outcome: 'error',
+      errorCode: deliveryFailureCode(error),
+      workspaceId: observationWorkspaceId,
+      requestId: context.requestId,
+      startedAt: context.startedAt,
     })
   }
 }

@@ -1,5 +1,5 @@
 begin;
-select plan(47);
+select plan(49);
 
 insert into public.workspace (id, name) values
   ('d7000000-0000-0000-0000-000000000001', 'Delivery One'),
@@ -11,14 +11,14 @@ insert into public.content_type (id, workspace_id, key, label, field_schema) val
     'd7000000-0000-0000-0000-000000000001',
     'blog',
     'Blog',
-    '[{"name":"title","type":"text"},{"name":"body","type":"richText"}]'::jsonb
+    '[{"name":"title","type":"text"},{"name":"body","type":"richtext"}]'::jsonb
   ),
   (
     'd7010000-0000-0000-0000-000000000002',
     'd7000000-0000-0000-0000-000000000002',
     'blog',
     'Blog',
-    '[{"name":"title","type":"text"},{"name":"body","type":"richText"}]'::jsonb
+    '[{"name":"title","type":"text"},{"name":"body","type":"richtext"}]'::jsonb
   );
 
 insert into public.content_item (
@@ -280,6 +280,25 @@ select is(
   )->'jsonld',
   '{"@context":"https://schema.org","@type":"Article"}'::jsonb,
   'published output includes item-scoped public JSON-LD'
+);
+select is(
+  public.get_published_by_slug(
+    'd7000000-0000-0000-0000-000000000001',
+    'blog',
+    'public'
+  )->'richtext_field_keys',
+  '["body"]'::jsonb,
+  'published output exposes only declared rich-text field keys'
+);
+select ok(
+  not (
+    public.get_published_by_slug(
+      'd7000000-0000-0000-0000-000000000001',
+      'blog',
+      'public'
+    ) ? 'field_schema'
+  ),
+  'published output does not expose the complete field schema'
 );
 select is(
   public.get_published_by_slug(

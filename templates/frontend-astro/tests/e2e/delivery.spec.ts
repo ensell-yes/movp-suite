@@ -18,6 +18,8 @@ test.describe('published delivery', () => {
     )
     await expect(page.getByText('<img src=x onerror=alert(1)>', { exact: true })).toBeVisible()
     await expect(page.locator('img')).toHaveCount(0)
+    await expect(page.locator('[data-movp-field="body"]')).toHaveCount(1)
+    await expect(page.locator('[data-movp-field="lookalike"]')).toHaveCount(0)
     expect(requestedScripts.filter((url) => /editor|tiptap/i.test(url))).toEqual([])
   })
 
