@@ -1,5 +1,5 @@
 begin;
-select plan(49);
+select plan(52);
 
 insert into public.workspace (id, name) values
   ('d7000000-0000-0000-0000-000000000001', 'Delivery One'),
@@ -11,7 +11,7 @@ insert into public.content_type (id, workspace_id, key, label, field_schema) val
     'd7000000-0000-0000-0000-000000000001',
     'blog',
     'Blog',
-    '[{"name":"title","type":"text"},{"name":"body","type":"richtext"}]'::jsonb
+    '[{"name":"title","type":"text"},{"name":"body","type":"richtext"},{"name":"bodyHtml","type":"richtext"}]'::jsonb
   ),
   (
     'd7010000-0000-0000-0000-000000000002',
@@ -287,8 +287,38 @@ select is(
     'blog',
     'public'
   )->'richtext_field_keys',
-  '["body"]'::jsonb,
+  '["body","bodyHtml"]'::jsonb,
   'published output exposes only declared rich-text field keys'
+);
+select is(
+  public.get_published_by_slug(
+    'd7000000-0000-0000-0000-000000000001',
+    'blog',
+    'public'
+  )->'richtext_field_keys_supported',
+  'true'::jsonb,
+  'published output confirms every rich-text field key is supported'
+);
+update public.content_type
+set field_schema = field_schema || '[{"name":"Body.Dot","type":"richtext"}]'::jsonb
+where id = 'd7010000-0000-0000-0000-000000000001';
+select is(
+  public.get_published_by_slug(
+    'd7000000-0000-0000-0000-000000000001',
+    'blog',
+    'public'
+  )->'richtext_field_keys_supported',
+  'false'::jsonb,
+  'published output fails loud when a rich-text key cannot be bound safely'
+);
+select is(
+  public.get_published_by_slug(
+    'd7000000-0000-0000-0000-000000000001',
+    'blog',
+    'public'
+  )->'richtext_field_keys',
+  '["body","bodyHtml"]'::jsonb,
+  'unsupported rich-text keys are never returned as binding names'
 );
 select ok(
   not (

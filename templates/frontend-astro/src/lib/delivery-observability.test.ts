@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it, vi } from 'vitest'
 import {
   createDeliveryRequestContext,
+  deliveryFailureStatus,
   hashWorkspaceId,
   recordDeliveryEvent,
   type DeliveryLogRecord,
@@ -16,6 +17,12 @@ const ROOT = fileURLToPath(new URL('../..', import.meta.url))
 describe('delivery observability', () => {
   it('matches the shared SHA-256 workspace known vector', async () => {
     await expect(hashWorkspaceId(WORKSPACE_ID)).resolves.toBe(WORKSPACE_HASH)
+  })
+
+  it('maps only bounded upstream timeouts to 503', () => {
+    expect(deliveryFailureStatus('delivery_upstream_timeout')).toBe(503)
+    expect(deliveryFailureStatus('delivery_shards_timeout')).toBe(503)
+    expect(deliveryFailureStatus('delivery_internal_error')).toBe(500)
   })
 
   it('emits exactly one content-disciplined public-read event per outcome', async () => {
@@ -44,12 +51,14 @@ describe('delivery observability', () => {
       expect(records).toHaveLength(1)
       expect(records[0]).toEqual({
         event: 'delivery.public_read',
+        surface: 'delivery',
         route_kind: 'page',
         workspace_id_hash: WORKSPACE_HASH,
         request_id: REQUEST_ID,
         outcome: outcome.outcome,
         ...(outcome.outcome === 'error' ? { error_code: outcome.errorCode } : {}),
         latency_ms: 25,
+        redaction_version: 1,
       })
       expect(JSON.stringify(records[0])).not.toMatch(
         /slug|path|url|content|schema|token|cookie|email|payload/i,
@@ -66,6 +75,7 @@ describe('delivery observability', () => {
         outcome: 'error' as const,
         errorCode: 'delivery_sitemap_url_limit' as const,
       },
+      { routeKind: 'sitemap_child' as const, outcome: 'not_found' as const },
       { routeKind: 'robots' as const, outcome: 'generated' as const },
       { routeKind: 'llms' as const, outcome: 'generated' as const },
     ]) {
@@ -82,20 +92,29 @@ describe('delivery observability', () => {
       })
     }
 
-    expect(records).toHaveLength(4)
+    expect(records).toHaveLength(5)
     expect(records.map((record) => [record.event, record.route_kind, record.outcome])).toEqual([
       ['delivery.artifact', 'sitemap_index', 'generated'],
       ['delivery.artifact', 'sitemap_child', 'error'],
+      ['delivery.artifact', 'sitemap_child', 'not_found'],
       ['delivery.artifact', 'robots', 'generated'],
       ['delivery.artifact', 'llms', 'generated'],
     ])
+    expect(records[2]).not.toHaveProperty('error_code')
+    expect(records.every((record) => (
+      record.surface === 'delivery' && record.redaction_version === 1
+    ))).toBe(true)
   })
 
   it('uses generated request correlation and surfaces recorder failures without rejecting', async () => {
     const reportFailure = vi.fn()
+    let uuidCallCount = 0
     const context = createDeliveryRequestContext({
       now: () => 40,
-      randomUUID: () => REQUEST_ID,
+      randomUUID: () => {
+        uuidCallCount += 1
+        return uuidCallCount === 1 ? 'malformed' : REQUEST_ID
+      },
     })
     expect(context).toEqual({ requestId: REQUEST_ID, startedAt: 40 })
 
@@ -117,9 +136,28 @@ describe('delivery observability', () => {
     expect(reportFailure).toHaveBeenCalledOnce()
     expect(reportFailure).toHaveBeenCalledWith({
       event: 'delivery.observability_failure',
+      surface: 'delivery',
       request_id: REQUEST_ID,
       error_code: 'delivery_observability_write_failed',
+      redaction_version: 1,
     })
+  })
+
+  it('replaces an invalid runtime error classifier with the safe internal code', async () => {
+    const records: DeliveryLogRecord[] = []
+    await recordDeliveryEvent({
+      event: 'delivery.public_read',
+      routeKind: 'page',
+      outcome: 'error',
+      errorCode: 'not-a-delivery-code',
+      requestId: REQUEST_ID,
+      startedAt: 1,
+    } as unknown as Parameters<typeof recordDeliveryEvent>[0], {
+      now: () => 2,
+      write: (record) => records.push(record),
+      reportFailure: vi.fn(),
+    })
+    expect(records[0]?.error_code).toBe('delivery_internal_error')
   })
 
   it('routes every public response through its single observation owner', async () => {
@@ -138,6 +176,9 @@ describe('delivery observability', () => {
       expect(source, route).toContain('finishDeliveryArtifact')
       expect(source, route).not.toContain('return new Response')
       expect(source, route).not.toContain('catch {')
+      expect(source, route).not.toContain('status: 502')
     }
+    const owner = await readFile(`${ROOT}/src/lib/delivery-observability.ts`, 'utf8')
+    expect(owner).not.toContain("if (observation.outcome === 'generated')")
   })
 })

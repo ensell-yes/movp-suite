@@ -404,8 +404,16 @@ const publishedDelivery = {
         content: [{ type: 'text', text: '<img src=x onerror=alert(1)>' }],
       }],
     }),
+    bodyHtml: JSON.stringify({
+      type: 'doc',
+      content: [{
+        type: 'paragraph',
+        content: [{ type: 'text', text: 'Camel rich text' }],
+      }],
+    }),
   },
-  richtext_field_keys: ['body'],
+  richtext_field_keys: ['body', 'bodyHtml'],
+  richtext_field_keys_supported: true,
   meta: { title: 'Published page', description: 'Public description' },
   jsonld: {
     '@context': 'https://schema.org',

@@ -176,6 +176,8 @@ data through that exact revision id. It returns only:
 - the published revision's `data`; and
 - `richtext_field_keys`, a names-only projection of declared `richtext`
   fields used to decide which published values receive editor bindings; and
+- `richtext_field_keys_supported`, a boolean fail-loud signal proving that no
+  declared rich-text key was dropped from the projection; and
 - the public SEO `meta`/`jsonld` values associated with the item.
 
 The published revision `data` object is the atomic public content unit. V1 has
@@ -183,10 +185,15 @@ no field-level private/publish visibility: every scalar field in that object
 may be rendered publicly. A field that must remain private must not be stored
 in published revision data. The RPC does not return the complete field schema;
 it derives `richtext_field_keys` in SQL, accepts only the same bounded field-key
-shape as the renderer, and returns no labels, enum values, or other schema
-metadata. The page parses and binds doc-shaped JSON only when its key appears
-in that projection, so an ordinary text field with a coincidentally doc-shaped
-value remains inert text.
+shape as the renderer (`^[A-Za-z][A-Za-z0-9_-]{0,127}$`), and returns no labels,
+enum values, or other schema metadata. CamelCase and hyphenated names therefore
+remain valid. If any declared rich-text name falls outside that shape, the
+boolean is false and the adapter returns
+`delivery_richtext_field_key_unsupported`; the page fails with a generic
+`500 no-store` response instead of rendering stored doc JSON as prose. Otherwise
+the page parses and binds doc-shaped JSON only when its key appears in the
+projection, so an ordinary text field with a coincidentally doc-shaped value
+remains inert text.
 
 `content_seo` is item-scoped current state rather than revision-scoped. Its
 writes require the owner/admin `edit` capability. In V1, an authorized SEO
@@ -713,15 +720,21 @@ revision-scoped SEO model remains deferred.
 |---|---|---|
 | public missing/unpublished | `404`, `no-store`, no draft distinction | `delivery.public_read`, route kind + workspace hash + `not_found` + latency |
 | public RPC/renderer failure | `500` or bounded-timeout `503`, `no-store`, generic page | same event with safe code/request id/latency |
+| unsupported published rich-text key | `500`, `no-store`, never render stored doc JSON as prose | `delivery.public_read`, `delivery_richtext_field_key_unsupported` |
 | overlay capability denied | no chrome; save endpoint `403` | server operational event, validated ids only |
 | rich-text conflict | GraphQL `CONFLICT`; existing draft-preserving UI | resolver + proxy logs; no new revision event |
 | Realtime subscribe exhausted | editor continues; presence absent; host receives error | `content.realtime_subscribe`, attempt `3`, safe code/latency |
 | database Broadcast send failure | revision remains committed | one app-owned warning with item/revision ids and safe SQLSTATE/error code |
 | artifact bound exceeded | fail hard; never emit invalid/truncated XML | `delivery.artifact`, kind + safe bound code + latency |
+| retired/unknown sitemap child | `404`, `no-store` | `delivery.artifact`, `not_found`, no error code |
+| artifact operational failure | `500` or bounded-timeout `503`, `no-store` | `delivery.artifact`, `error`, runtime-allowlisted safe code |
 
 Public logs use route kinds (`page`, `sitemap_index`, `sitemap_child`,
 `robots`, `llms`) rather than paths/slugs. No signal includes content, a URL,
 schema, payload preview, token, cookie, email, or unvalidated field/topic.
+Every record uses the registered `delivery` surface and imports the canonical
+`@movp/obs` redaction version. Error classifiers are checked against an exact
+runtime allowlist before emission.
 Expected 404s remain distinguishable from operational failures without
 revealing whether a draft exists.
 
@@ -732,7 +745,7 @@ revealing whether a draft exists.
 | type key uniqueness preflight is counts-only and transactional | new pgTAP migration test; `content_type_key_duplicates` pinned |
 | reserved top-level namespaces cannot shadow typed delivery | pgTAP existing-row preflight + direct insert/update; `content_type_key_reserved` pinned |
 | anon sees only the exact published revision | pgTAP public-delivery positive/negative suite |
-| only declared rich-text fields receive bindings | RPC projection pgTAP + doc-shaped ordinary-text frontend regression |
+| only supported, declared rich-text fields receive bindings | RPC projection/support-flag pgTAP + camelCase/hyphen renderer tests + doc-shaped ordinary-text frontend regression |
 | definer/grants/search-path audit | pgTAP catalog assertions |
 | shard timeout is bounded and maps cancellation deterministically | `pg_proc.proconfig` assertion + transaction-local inner SQLSTATE `57014` scan-helper replacement; outer `P5701`/`delivery_shards_timeout` assertion |
 | renderer allowlist, escaping, depth/node/text bounds | `pnpm --filter @movp/delivery test` |

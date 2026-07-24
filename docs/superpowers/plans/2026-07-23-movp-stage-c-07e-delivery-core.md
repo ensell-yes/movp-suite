@@ -218,7 +218,7 @@ public.get_published_by_slug(
 ) returns jsonb
 ```
 
-This returns at most one row containing only delivery-safe identifiers, type key, slug, published revision id, published data, a names-only `richtext_field_keys` projection, title/meta inputs, and published timestamp. The complete field schema is never returned; V1 treats the published revision data object as wholly public.
+This returns at most one row containing only delivery-safe identifiers, type key, slug, published revision id, published data, a names-only `richtext_field_keys` projection, the boolean `richtext_field_keys_supported`, title/meta inputs, and published timestamp. Binding keys use `^[A-Za-z][A-Za-z0-9_-]{0,127}$`; a false support flag maps to `delivery_richtext_field_key_unsupported` and a generic `500 no-store` response rather than exposing stored doc JSON as prose. The complete field schema is never returned; V1 treats the published revision data object as wholly public.
 
 ```sql
 public.list_published_delivery(
@@ -511,6 +511,7 @@ Do not instantiate/capture a client at module load.
   - resolve workspace id from request-time public env/config;
   - call the published-only RPC;
   - render through `renderDocToHtml` only when a field key appears in the RPC's declared `richtext_field_keys` projection;
+  - fail the entire public read with `delivery_richtext_field_key_unsupported` when `richtext_field_keys_supported` is false;
   - use the one documented `set:html` boundary only for renderer output;
   - output canonical/meta/JSON-LD;
   - set `Referrer-Policy`, a restrictive CSP compatible with later bootstrap, and cache headers;

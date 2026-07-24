@@ -4,6 +4,7 @@ import { listPublishedDeliveryShards } from '../lib/delivery.ts'
 import {
   createDeliveryRequestContext,
   deliveryFailureCode,
+  deliveryFailureStatus,
   finishDeliveryArtifact,
 } from '../lib/delivery-observability.ts'
 import { readServerEnv } from '../lib/env.ts'
@@ -17,7 +18,9 @@ export const GET: APIRoute = async () => {
     const result = await listPublishedDeliveryShards({ workspaceId, supabaseUrl, supabaseAnonKey })
     if (result.status !== 'found') {
       return finishDeliveryArtifact(new Response('sitemap_unavailable\n', {
-        status: result.status === 'error' && result.code === 'delivery_shards_timeout' ? 503 : 502,
+        status: deliveryFailureStatus(
+          result.status === 'error' ? result.code : 'delivery_internal_error',
+        ),
         headers: { 'Cache-Control': 'no-store', 'Content-Type': 'text/plain; charset=utf-8' },
       }), {
         routeKind: 'sitemap_index',
@@ -46,7 +49,7 @@ export const GET: APIRoute = async () => {
     })
   } catch (error: unknown) {
     return finishDeliveryArtifact(new Response('sitemap_unavailable\n', {
-      status: 502,
+      status: 500,
       headers: { 'Cache-Control': 'no-store', 'Content-Type': 'text/plain; charset=utf-8' },
     }), {
       routeKind: 'sitemap_index',

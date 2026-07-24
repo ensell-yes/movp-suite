@@ -23,6 +23,7 @@ export const DELIVERY_MARK_TYPES = ['bold', 'italic', 'strike', 'code'] as const
 export const DELIVERY_MAX_DEPTH = 64
 export const DELIVERY_MAX_NODES = 20_000
 export const DELIVERY_MAX_TEXT_BYTES = 1024 * 1024
+export const DELIVERY_FIELD_KEY_PATTERN_SOURCE = '^[A-Za-z][A-Za-z0-9_-]{0,127}$'
 
 type DeliveryNodeType = (typeof DELIVERY_NODE_TYPES)[number]
 type DeliveryMarkType = (typeof DELIVERY_MARK_TYPES)[number]
@@ -42,7 +43,11 @@ const BLOCK_TYPES = new Set<DeliveryNodeType>([
 const INLINE_TYPES = new Set<DeliveryNodeType>(['text', 'hardBreak'])
 const LANGUAGE_PATTERN = /^[A-Za-z0-9_+-]{1,32}$/
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
-const FIELD_KEY_PATTERN = /^[a-z][a-z0-9_]{0,127}$/
+const FIELD_KEY_PATTERN = new RegExp(DELIVERY_FIELD_KEY_PATTERN_SOURCE)
+
+export function isDeliveryFieldKey(value: unknown): value is string {
+  return typeof value === 'string' && FIELD_KEY_PATTERN.test(value)
+}
 
 function fail(code: DeliveryRenderErrorCode): never {
   throw new DeliveryRenderError(code)
@@ -305,7 +310,7 @@ function renderNode(
 function renderBinding(html: string, options: RenderOptions | undefined): string {
   if (!options?.bind) return html
   const { itemId, fieldKey } = options.bind
-  if (!UUID_PATTERN.test(itemId) || !FIELD_KEY_PATTERN.test(fieldKey)) {
+  if (!UUID_PATTERN.test(itemId) || !isDeliveryFieldKey(fieldKey)) {
     fail('delivery_render_binding_invalid')
   }
   return `<div data-movp-item="${escapeHtml(itemId)}" data-movp-field="${escapeHtml(fieldKey)}">${html}</div>`

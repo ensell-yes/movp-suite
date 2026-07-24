@@ -4,6 +4,7 @@ import { listPublishedDelivery, listPublishedDeliveryShards } from '../lib/deliv
 import {
   createDeliveryRequestContext,
   deliveryFailureCode,
+  deliveryFailureStatus,
   finishDeliveryArtifact,
 } from '../lib/delivery-observability.ts'
 import { readServerEnv } from '../lib/env.ts'
@@ -19,7 +20,9 @@ export const GET: APIRoute = async ({ params }) => {
     const shardResult = await listPublishedDeliveryShards(env)
     if (shardResult.status !== 'found') {
       return finishDeliveryArtifact(new Response('sitemap_unavailable\n', {
-        status: shardResult.status === 'error' && shardResult.code === 'delivery_shards_timeout' ? 503 : 502,
+        status: deliveryFailureStatus(
+          shardResult.status === 'error' ? shardResult.code : 'delivery_internal_error',
+        ),
         headers: { 'Cache-Control': 'no-store', 'Content-Type': 'text/plain; charset=utf-8' },
       }), {
         routeKind: 'sitemap_child',
@@ -39,8 +42,7 @@ export const GET: APIRoute = async ({ params }) => {
         headers: { 'Cache-Control': 'no-store', 'Content-Type': 'text/plain; charset=utf-8' },
       }), {
         routeKind: 'sitemap_child',
-        outcome: 'error',
-        errorCode: 'delivery_artifact_not_found',
+        outcome: 'not_found',
         workspaceId,
         requestId: context.requestId,
         startedAt: context.startedAt,
@@ -54,7 +56,9 @@ export const GET: APIRoute = async ({ params }) => {
       const page = await listPublishedDelivery(env, { after, until: shard.until, limit: 1_000 })
       if (page.status !== 'found') {
         return finishDeliveryArtifact(new Response('sitemap_unavailable\n', {
-          status: 502,
+          status: deliveryFailureStatus(
+            page.status === 'error' ? page.code : 'delivery_internal_error',
+          ),
           headers: { 'Cache-Control': 'no-store', 'Content-Type': 'text/plain; charset=utf-8' },
         }), {
           routeKind: 'sitemap_child',
@@ -68,7 +72,7 @@ export const GET: APIRoute = async ({ params }) => {
       for (const item of page.value.items) {
         if (seen.has(item.itemId) || routes.length >= 4_000) {
           return finishDeliveryArtifact(new Response('sitemap_bounds_invalid\n', {
-            status: 502,
+            status: 500,
             headers: { 'Cache-Control': 'no-store', 'Content-Type': 'text/plain; charset=utf-8' },
           }), {
             routeKind: 'sitemap_child',
@@ -105,7 +109,7 @@ export const GET: APIRoute = async ({ params }) => {
       after = page.value.nextCursor
     }
     return finishDeliveryArtifact(new Response('sitemap_bounds_invalid\n', {
-      status: 502,
+      status: 500,
       headers: { 'Cache-Control': 'no-store', 'Content-Type': 'text/plain; charset=utf-8' },
     }), {
       routeKind: 'sitemap_child',
@@ -117,7 +121,7 @@ export const GET: APIRoute = async ({ params }) => {
     })
   } catch (error: unknown) {
     return finishDeliveryArtifact(new Response('sitemap_unavailable\n', {
-      status: 502,
+      status: 500,
       headers: { 'Cache-Control': 'no-store', 'Content-Type': 'text/plain; charset=utf-8' },
     }), {
       routeKind: 'sitemap_child',

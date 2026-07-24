@@ -4,6 +4,7 @@ import * as delivery from '../src/index.ts'
 describe('@movp/delivery public surface', () => {
   it('exports only the approved delivery runtime contract', () => {
     expect(Object.keys(delivery).sort()).toEqual([
+      'DELIVERY_FIELD_KEY_PATTERN_SOURCE',
       'DELIVERY_MARK_TYPES',
       'DELIVERY_MAX_DEPTH',
       'DELIVERY_MAX_NODES',
@@ -23,6 +24,7 @@ describe('@movp/delivery public surface', () => {
       'generateRobots',
       'generateSitemap',
       'generateSitemapIndex',
+      'isDeliveryFieldKey',
       'renderDocToHtml',
     ])
   })

@@ -4,6 +4,7 @@ import { listPublishedDelivery } from '../lib/delivery.ts'
 import {
   createDeliveryRequestContext,
   deliveryFailureCode,
+  deliveryFailureStatus,
   finishDeliveryArtifact,
 } from '../lib/delivery-observability.ts'
 import { readServerEnv } from '../lib/env.ts'
@@ -18,7 +19,9 @@ export const GET: APIRoute = async () => {
     const first = await listPublishedDelivery(env, { after: null, until: null, limit: 1_000 })
     if (first.status !== 'found') {
       return finishDeliveryArtifact(new Response('llms_unavailable\n', {
-        status: 502,
+        status: deliveryFailureStatus(
+          first.status === 'error' ? first.code : 'delivery_internal_error',
+        ),
         headers: { 'Cache-Control': 'no-store', 'Content-Type': 'text/plain; charset=utf-8' },
       }), {
         routeKind: 'llms',
@@ -42,7 +45,9 @@ export const GET: APIRoute = async () => {
       })
       if (sentinel.status !== 'found' || sentinel.value.items.length < 1) {
         return finishDeliveryArtifact(new Response('llms_unavailable\n', {
-          status: 502,
+          status: deliveryFailureStatus(
+            sentinel.status === 'error' ? sentinel.code : 'delivery_artifact_bounds_invalid',
+          ),
           headers: { 'Cache-Control': 'no-store', 'Content-Type': 'text/plain; charset=utf-8' },
         }), {
           routeKind: 'llms',
@@ -77,7 +82,7 @@ export const GET: APIRoute = async () => {
     })
   } catch (error: unknown) {
     return finishDeliveryArtifact(new Response('llms_unavailable\n', {
-      status: 502,
+      status: 500,
       headers: { 'Cache-Control': 'no-store', 'Content-Type': 'text/plain; charset=utf-8' },
     }), {
       routeKind: 'llms',

@@ -1,6 +1,15 @@
 import { REDACTION_VERSION, type ObsEvent, type Surface } from './event.ts'
 
-const SURFACES: readonly string[] = ['graphql', 'mcp', 'cli', 'flows', 'embed', 'ingest', 'exchange']
+const SURFACES: readonly string[] = [
+  'graphql',
+  'mcp',
+  'cli',
+  'flows',
+  'embed',
+  'ingest',
+  'exchange',
+  'delivery',
+]
 
 function isSurface(v: unknown): v is Surface {
   return typeof v === 'string' && SURFACES.includes(v)

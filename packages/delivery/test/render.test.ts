@@ -283,6 +283,18 @@ describe('renderDocToHtml', () => {
         fieldKey: 'body" onmouseover="x',
       },
     })
+    expect(renderDocToHtml(doc, {
+      bind: {
+        itemId: 'd7100000-0000-0000-0000-000000000001',
+        fieldKey: 'bodyHtml',
+      },
+    })).toContain('data-movp-field="bodyHtml"')
+    expect(renderDocToHtml(doc, {
+      bind: {
+        itemId: 'd7100000-0000-0000-0000-000000000001',
+        fieldKey: 'body-html',
+      },
+    })).toContain('data-movp-field="body-html"')
   })
 
   it('does not mutate the input document', () => {

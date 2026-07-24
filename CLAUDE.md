@@ -178,14 +178,19 @@
   validation, XSS escaping, and exact depth/node/text bounds must stay pinned. Anonymous delivery routes must
   not statically or dynamically import editor/TipTap code.
 - Published revision `data` is wholly public in V1; there is no field-level private visibility. The read RPC
-  returns only a names-only `richtext_field_keys` schema projection, and the page binds doc JSON only for those
-  declared keys. Never return the complete field schema merely to detect editor regions.
+  returns only a names-only `richtext_field_keys` schema projection plus `richtext_field_keys_supported`, and
+  the page binds doc JSON only for declared keys matching `^[A-Za-z][A-Za-z0-9_-]{0,127}$`. A residual
+  unsupported rich-text name must fail the public read with `delivery_richtext_field_key_unsupported`; never
+  render its stored doc JSON as prose or return the complete field schema merely to detect editor regions.
 - Public page and artifact handlers emit exactly one content-disciplined `delivery.public_read` or
-  `delivery.artifact` record with route kind, workspace hash, generated request id, outcome/safe code, and
-  latency. No event includes a path, slug, URL, content, schema, token, cookie, email, or payload.
+  `delivery.artifact` record with the registered `delivery` surface, canonical `@movp/obs` redaction version,
+  route kind, workspace hash, generated request id, outcome/runtime-allowlisted safe code, and latency.
+  Retired sitemap children are `not_found`, not errors. No event includes a path, slug, URL, content, schema,
+  token, cookie, email, or payload.
 - Successful page and artifact responses emit an origin `public, s-maxage=60` ceiling; 404s and all upstream
-  or validation failures are `no-store`. The end-to-end 60-second withdrawal guarantee additionally depends
-  on the exact-route Cloudflare Cache Rule deployment check; there is no purge webhook, cache-tag, or API token.
+  or validation failures are `no-store`. Operational failures use `500`, except bounded upstream timeouts use
+  `503`. The end-to-end 60-second withdrawal guarantee additionally depends on the exact-route Cloudflare Cache
+  Rule deployment check; there is no purge webhook, cache-tag, or API token.
 - Sitemap indexes come only from the bounded shard RPC. Each child carries one exclusive/inclusive shard pair,
   performs at most four 1,000-row reads, and remains below 4,000 URLs and the uncompressed protocol byte cap.
   `packages/delivery/test` plus the required `c7-delivery` CI job pin these boundaries.

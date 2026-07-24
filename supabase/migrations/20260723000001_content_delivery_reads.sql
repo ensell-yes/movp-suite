@@ -240,7 +240,23 @@ begin
       ) with ordinality as field(value, ordinality)
       where pg_catalog.jsonb_typeof(field.value) = 'object'
         and field.value->>'type' = 'richtext'
-        and field.value->>'name' ~ '^[a-z][a-z0-9_]{0,127}$'
+        and field.value->>'name' ~ '^[A-Za-z][A-Za-z0-9_-]{0,127}$'
+    ),
+    'richtext_field_keys_supported', not exists (
+      select 1
+      from pg_catalog.jsonb_array_elements(
+        case
+          when pg_catalog.jsonb_typeof(content_type.field_schema) = 'array'
+            then content_type.field_schema
+          else '[]'::jsonb
+        end
+      ) as field(value)
+      where pg_catalog.jsonb_typeof(field.value) = 'object'
+        and field.value->>'type' = 'richtext'
+        and not coalesce(
+          field.value->>'name' ~ '^[A-Za-z][A-Za-z0-9_-]{0,127}$',
+          false
+        )
     ),
     'meta', seo.meta,
     'jsonld', seo.jsonld

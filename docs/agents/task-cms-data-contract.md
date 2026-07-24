@@ -61,7 +61,7 @@ A content type has a workspace-unique `key`, display `label`, `field_schema`, `m
 
 | Field | Required | Contract |
 |---|---|---|
-| `name` | yes | Non-empty and unique within the type. |
+| `name` | yes | Non-empty and unique within the type. Public rich-text delivery bindings additionally require `^[A-Za-z][A-Za-z0-9_-]{0,127}$`; other rich-text names fail public delivery with `delivery_richtext_field_key_unsupported` rather than exposing stored doc JSON. |
 | `type` | yes | `text`, `richtext`, `number`, `bool`, `date`, `enum`, `asset`, `reference`, or `json`. |
 | `required` | no | Boolean; omitted means optional. |
 | `values` | for `enum` | Non-empty string array. |

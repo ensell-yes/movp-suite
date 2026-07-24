@@ -28,7 +28,7 @@ export const GET: APIRoute = async () => {
     })
   } catch (error: unknown) {
     return finishDeliveryArtifact(new Response('robots_unavailable\n', {
-      status: 502,
+      status: 500,
       headers: { 'Cache-Control': 'no-store', 'Content-Type': 'text/plain; charset=utf-8' },
     }), {
       routeKind: 'robots',

@@ -284,7 +284,8 @@ fake-clock/cache-withdrawal coverage and its focused browser gate.
 | missing/unpublished 404 | `delivery.public_read` | `not_found` |
 | RPC timeout | `delivery.public_read` | `error`, safe timeout code |
 | renderer failure | `delivery.public_read` | `error`, safe render code |
-| each artifact | `delivery.artifact` | `generated` or safe error |
+| generated artifact | `delivery.artifact` | `generated` |
+| retired/unknown sitemap child | `delivery.artifact` | `not_found`, no error code |
 | artifact bound breach | `delivery.artifact` | error, bound code |
 
 Assert exact allowed keys and absence of slug/path/URL/content/schema/token/cookie/email/payload values.
@@ -306,7 +307,7 @@ Expected: **FAIL** because the shared event owner/fake-clock behavior is absent.
 
 **Green implementation**
 
-- [ ] Implement one server-only reporting helper whose input type is a closed, content-disciplined union. Callers pass already validated route kind/ids/outcomes. Define `hashWorkspaceId(workspaceId)` in `templates/frontend-astro/src/lib/delivery-observability.ts` using Web Crypto SHA-256, matching `sha256Hex` in `supabase/functions/graphql/index.ts`; pin a shared known-vector test. Do not invent another hash format or salt contract.
+- [ ] Implement one server-only reporting helper whose input type is a closed, content-disciplined union. Callers pass already validated route kind/ids/outcomes. Use the registered `delivery` surface, import `REDACTION_VERSION` from `@movp/obs`, and check error classifiers against an exact runtime allowlist. Define `hashWorkspaceId(workspaceId)` in `templates/frontend-astro/src/lib/delivery-observability.ts` using Web Crypto SHA-256, matching `sha256Hex` in `supabase/functions/graphql/index.ts`; pin a shared known-vector test. Do not invent another hash format or salt contract.
 
 - [ ] Each request handler resolves request id/clock/reporter per request. A reporting failure must not change a successful public response, but must surface hard through the platform’s own logging/error hook rather than silently swallowing.
 

@@ -1,3 +1,5 @@
+import { isDeliveryFieldKey } from '@movp/delivery'
+
 export type DeliveryPublicEnv = Readonly<{
   supabaseUrl: string
   supabaseAnonKey: string
@@ -32,6 +34,7 @@ export type DeliveryShard = Readonly<{
 
 export type DeliveryErrorCode =
   | 'delivery_request_invalid'
+  | 'delivery_richtext_field_key_unsupported'
   | 'delivery_upstream_aborted'
   | 'delivery_upstream_content_type'
   | 'delivery_upstream_invalid'
@@ -52,7 +55,6 @@ const MAX_RICHTEXT_BYTES = 1024 * 1024
 const REQUEST_TIMEOUT_MS = 5_000
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const TYPE_KEY_PATTERN = /^[a-z][a-z0-9_-]{0,127}$/
-const FIELD_KEY_PATTERN = /^[a-z][a-z0-9_]{0,127}$/
 const CURSOR_PATTERN = /^[A-Za-z0-9_-]{4,128}$/
 const CONTROL_PATTERN = /[\u0000-\u001f\u007f-\u009f]/
 const encoder = new TextEncoder()
@@ -212,6 +214,7 @@ function validatePublishedContent(value: unknown): PublishedContent | null {
     || !isRecord(value.data)
     || !Array.isArray(value.richtext_field_keys)
     || value.richtext_field_keys.length > 256
+    || value.richtext_field_keys_supported !== true
   ) {
     return null
   }
@@ -220,7 +223,7 @@ function validatePublishedContent(value: unknown): PublishedContent | null {
   for (const fieldKey of value.richtext_field_keys) {
     if (
       typeof fieldKey !== 'string'
-      || !FIELD_KEY_PATTERN.test(fieldKey)
+      || !isDeliveryFieldKey(fieldKey)
       || seenFieldKeys.has(fieldKey)
     ) {
       return null
@@ -278,6 +281,12 @@ export async function getPublishedBySlug(
   }, fetcher)
   if (!result.ok) return { status: 'error', code: result.code }
   if (result.value === null) return { status: 'not_found' }
+  if (
+    isRecord(result.value)
+    && result.value.richtext_field_keys_supported === false
+  ) {
+    return { status: 'error', code: 'delivery_richtext_field_key_unsupported' }
+  }
   const value = validatePublishedContent(result.value)
   return value
     ? { status: 'found', value }

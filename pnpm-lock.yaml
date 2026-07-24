@@ -372,6 +372,9 @@ importers:
       '@movp/editor-sdk':
         specifier: workspace:*
         version: link:../../packages/editor-sdk
+      '@movp/obs':
+        specifier: workspace:*
+        version: link:../../packages/obs
       '@movp/richtext':
         specifier: workspace:*
         version: link:../../packages/richtext

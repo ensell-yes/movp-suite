@@ -37,8 +37,10 @@ describe('published delivery adapter', () => {
       data: {
         title: 'Safe page',
         body: '{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Published"}]}]}',
+        bodyHtml: '{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Camel"}]}]}',
       },
-      richtext_field_keys: ['body'],
+      richtext_field_keys: ['body', 'bodyHtml'],
+      richtext_field_keys_supported: true,
       meta: { description: 'Description' },
       jsonld: { '@type': 'Article' },
     }))
@@ -56,8 +58,9 @@ describe('published delivery adapter', () => {
         data: {
           title: 'Safe page',
           body: '{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Published"}]}]}',
+          bodyHtml: '{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Camel"}]}]}',
         },
-        richTextFieldKeys: ['body'],
+        richTextFieldKeys: ['body', 'bodyHtml'],
         meta: { description: 'Description' },
         jsonld: { '@type': 'Article' },
       },
@@ -87,6 +90,30 @@ describe('published delivery adapter', () => {
       vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(null)),
     )
     expect(result).toEqual({ status: 'not_found' })
+  })
+
+  it('fails loudly when the RPC reports an unsupported rich-text field key', async () => {
+    const result = await getPublishedBySlug(
+      env,
+      'article',
+      'safe-page',
+      vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({
+        item_id: ITEM_ID,
+        content_type_key: 'article',
+        slug: 'safe-page',
+        published_revision_id: REVISION_ID,
+        published_at: '2026-07-23T12:00:00Z',
+        data: { 'Body.Dot': '{"type":"doc","content":[]}' },
+        richtext_field_keys: [],
+        richtext_field_keys_supported: false,
+        meta: null,
+        jsonld: null,
+      })),
+    )
+    expect(result).toEqual({
+      status: 'error',
+      code: 'delivery_richtext_field_key_unsupported',
+    })
   })
 
   it('rejects wrong content types and oversized streamed bodies before parsing', async () => {
@@ -165,6 +192,10 @@ describe('published delivery adapter', () => {
   it('parses doc-shaped JSON only for a declared rich-text field', () => {
     const doc = '{"type":"doc","content":[{"type":"paragraph"}]}'
     expect(parseDeclaredPublishedRichText(doc, 'body', ['body'])).toEqual({
+      type: 'doc',
+      content: [{ type: 'paragraph' }],
+    })
+    expect(parseDeclaredPublishedRichText(doc, 'bodyHtml', ['bodyHtml'])).toEqual({
       type: 'doc',
       content: [{ type: 'paragraph' }],
     })
