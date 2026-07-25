@@ -38,9 +38,13 @@ async function guardedFiles(root) {
   return files
 }
 
-function staticImports(source) {
+// Rollup minifies to `import{t as e}from"./chunk.js"` with no space before `from`, so the
+// clause separator must be optional whitespace. Requiring `\s` here silently emptied the
+// reachable set and made the whole walk inert on production builds.
+// `import(` never matches: the optional clause excludes quotes, so dynamic imports stay lazy.
+export function staticImports(source) {
   const imports = []
-  const pattern = /\b(?:import|export)\s*(?:[^"'`]*?\sfrom\s*)?["'](\.[^"']+)["']/g
+  const pattern = /(?:^|[^\w$.])(?:import|export)\s*(?:[^"'`;]*?from\s*)?["'](\.[^"']+)["']/g
   for (const match of source.matchAll(pattern)) imports.push(match[1])
   return imports
 }
@@ -59,14 +63,16 @@ export function assertStaticOverlayBoundary({
     if (!current) continue
     const source = sources.get(current)
     if (!source) throw new Error(`overlay_static_chunk_missing:${current}`)
-    totalBytes += new TextEncoder().encode(source).byteLength
-    if (totalBytes > maxBytes) throw new Error('overlay_static_bytes_exceeded')
+    // Name the editor leak before the size symptom: a 300 KB TipTap chunk would otherwise
+    // surface as a generic budget overrun, which does not tell the reader what to remove.
     if (
       EDITOR_RUNTIME.test(source)
       || OVERLAY_MARKERS.some((marker) => source.includes(marker))
     ) {
       throw new Error(`overlay_editor_runtime_static_reachability:${current}`)
     }
+    totalBytes += new TextEncoder().encode(source).byteLength
+    if (totalBytes > maxBytes) throw new Error('overlay_static_bytes_exceeded')
     for (const specifier of staticImports(source)) {
       const target = resolve(dirname(current), specifier)
       if (target === overlayPath) throw new Error('overlay_static_import_detected')
