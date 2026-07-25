@@ -8,7 +8,7 @@ afterEach(cleanup)
 
 function TiptapJsdomHarness() {
   const editor = useEditor({
-    extensions: [StarterKit],
+    extensions: [StarterKit.configure({ dropcursor: false })],
     content: { type: 'doc', content: [{ type: 'paragraph' }] },
     immediatelyRender: false,
   })

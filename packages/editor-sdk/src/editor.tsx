@@ -21,6 +21,8 @@ export interface MovpEditorProps {
   onLoadLatest?(): void
   /** reports whether the live editor document differs from the last loaded or saved document */
   onDirtyChange?(dirty: boolean): void
+  /** host-owned, already-sanitized copy for a structured save error */
+  errorMessage?: string
   readOnly?: boolean
 }
 
@@ -31,6 +33,7 @@ export function MovpEditor({
   onRefresh,
   onLoadLatest,
   onDirtyChange,
+  errorMessage,
   readOnly = false,
 }: MovpEditorProps) {
   const [status, setStatus] = useState<EditorStatus>('idle')
@@ -54,7 +57,7 @@ export function MovpEditor({
   }, [])
 
   const editor = useEditor({
-    extensions: [StarterKit],
+    extensions: [StarterKit.configure({ dropcursor: false })],
     editable: !readOnly,
     immediatelyRender: false, // TipTap 2.27.2 warns on SSR unless false (useEditor.ts:110)
     editorProps: {
@@ -179,7 +182,7 @@ export function MovpEditor({
       {hostActionError && (
         <div role="alert">Could not refresh or load latest. Your draft is unchanged.</div>
       )}
-      {status === 'error' && <div role="alert">Save failed. Please try again.</div>}
+      {status === 'error' && <div role="alert">{errorMessage ?? 'Save failed. Please try again.'}</div>}
       <EditorContent editor={editor} />
       {!readOnly && (
         <button type="button" aria-label="Save content" disabled={status === 'saving'} onClick={() => void save()}>

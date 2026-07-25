@@ -160,6 +160,26 @@ for (const dirName of publishable) {
         throw new Error('package artifact check failed: @movp/delivery entry artifacts are absent')
       }
     }
+    if (dirName === 'editor-sdk') {
+      const overlayExport = packedManifest.exports?.['./overlay']
+      if (
+        typeof overlayExport !== 'object'
+        || overlayExport === null
+        || overlayExport.types !== './dist/overlay.d.ts'
+        || overlayExport.import !== './dist/overlay.js'
+      ) {
+        throw new Error('package artifact check failed: @movp/editor-sdk overlay export is absent')
+      }
+      for (const artifact of [
+        'package/dist/overlay.js',
+        'package/dist/overlay.d.ts',
+        'package/dist/overlay.css',
+      ]) {
+        if (!listing.includes(artifact)) {
+          throw new Error(`package artifact check failed: @movp/editor-sdk artifact is absent: ${artifact}`)
+        }
+      }
+    }
   } finally {
     rmSync(out, { recursive: true, force: true })
   }
