@@ -61,14 +61,14 @@ async function makeWorkspace(name: string): Promise<string> {
   return rows[0].id as string
 }
 
-async function addMember(ws: string, userId: string): Promise<void> {
+async function addOwner(ws: string, userId: string): Promise<void> {
   await assertOk(
     await fetch(`${env.url}/rest/v1/workspace_membership`, {
       method: 'POST',
       headers: admin,
-      body: JSON.stringify({ workspace_id: ws, user_id: userId, role: 'member' }),
+      body: JSON.stringify({ workspace_id: ws, user_id: userId, role: 'owner' }),
     }),
-    'add member',
+    'add owner',
   )
 }
 
@@ -77,7 +77,7 @@ describe('content integration', () => {
     const ws1 = await makeWorkspace('Content WS')
     const ws2 = await makeWorkspace('Other WS')
     const owner = await makeUser()
-    await addMember(ws1, owner.id)
+    await addOwner(ws1, owner.id)
     const ownerDomain = createDomain({ db: userClient(owner.token), userId: owner.id }, { schema })
     const adminDb = serviceClient()
 
@@ -177,7 +177,7 @@ describe('content integration', () => {
   it('stores richtext as canonical doc-JSON and derives human search_body', async () => {
     const ws = await makeWorkspace('RichText WS')
     const owner = await makeUser()
-    await addMember(ws, owner.id)
+    await addOwner(ws, owner.id)
     const domain = createDomain({ db: userClient(owner.token), userId: owner.id }, { schema })
     const adminDb = serviceClient()
 

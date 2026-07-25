@@ -30,4 +30,24 @@ describe('client boundary', () => {
     const offenders = walkRegularFiles(SRC).filter((f) => FORBIDDEN.test(readFileSync(f, 'utf8')))
     expect(offenders).toEqual([])
   })
+
+  it('configures every source StarterKit construction without Dropcursor', () => {
+    for (const file of walkRegularFiles(SRC)) {
+      const source = readFileSync(file, 'utf8').replace(/^import .*StarterKit.*$/gm, '')
+      const referenceCount = source.match(/\bStarterKit\b/g)?.length ?? 0
+      const configuredCount = source.match(
+        /\bStarterKit\.configure\(\s*\{\s*dropcursor:\s*false\s*\}\s*\)/g,
+      )?.length ?? 0
+      expect(configuredCount, file).toBe(referenceCount)
+    }
+  })
+
+  it('disables TipTap inline style injection at every editor construction', () => {
+    for (const file of walkRegularFiles(SRC)) {
+      const source = readFileSync(file, 'utf8')
+      const editorCount = source.match(/\buseEditor\(\s*\{/g)?.length ?? 0
+      const strictCount = source.match(/\binjectCSS:\s*false\b/g)?.length ?? 0
+      expect(strictCount, file).toBe(editorCount)
+    }
+  })
 })

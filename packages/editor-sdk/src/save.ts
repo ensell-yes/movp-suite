@@ -6,7 +6,7 @@
 export type SaveResult =
   | { status: 'saved'; revisionId: string }
   | { status: 'conflict' }
-  | { status: 'error'; code: 'save_failed' }
+  | { status: 'error'; code: string }
 
 /**
  * The host implements this via content.update. It must translate transport-specific conflicts into

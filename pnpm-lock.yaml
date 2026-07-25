@@ -165,6 +165,12 @@ importers:
         specifier: ^3.2.6
         version: 3.2.6(@types/debug@4.1.13)(@types/node@26.0.1)(jsdom@25.0.1)(lightningcss@1.33.0)(msw@2.14.6(@types/node@26.0.1)(typescript@5.9.3))(tsx@4.22.4)(yaml@2.9.0)
 
+  packages/delivery:
+    devDependencies:
+      vitest:
+        specifier: ^3.2.6
+        version: 3.2.6(@types/debug@4.1.13)(@types/node@26.0.1)(jsdom@25.0.1)(lightningcss@1.33.0)(msw@2.14.6(@types/node@26.0.1)(typescript@5.9.3))(tsx@4.22.4)(yaml@2.9.0)
+
   packages/domain:
     dependencies:
       '@movp/richtext':
@@ -360,9 +366,15 @@ importers:
       '@astrojs/react':
         specifier: ^6.0.1
         version: 6.0.1(@types/node@26.0.1)(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(esbuild@0.25.12)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(tsx@4.22.4)(yaml@2.9.0)
+      '@movp/delivery':
+        specifier: workspace:*
+        version: link:../../packages/delivery
       '@movp/editor-sdk':
         specifier: workspace:*
         version: link:../../packages/editor-sdk
+      '@movp/obs':
+        specifier: workspace:*
+        version: link:../../packages/obs
       '@movp/richtext':
         specifier: workspace:*
         version: link:../../packages/richtext

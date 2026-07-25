@@ -101,7 +101,8 @@
   gate is build first, then `wrangler deploy --dry-run`.
 - The adapter requires `SESSION` KV. Keep the ID-less binding in source so Wrangler auto-provisions
   it; do not manually create or commit an account-specific namespace id.
-- Frontend bindings are the four public vars plus `SESSION`/adapter-generated `ASSETS`. Do not add an
+- Frontend bindings are the five public vars (`GRAPHQL_ENDPOINT`, `PUBLIC_SITE_URL`, `WORKSPACE_ID`,
+  `SUPABASE_URL`, and `SUPABASE_ANON_KEY`) plus `SESSION`/adapter-generated `ASSETS`. Do not add an
   R2 binding until code has a real runtime consumer. Regenerate binding types after config changes.
 - The frontend shell lives in `templates/frontend-astro/src/layouts/Base.astro` with the sticky,
   icon-bearing `TopNav.astro`. Breakpoints are mobile `<768px`, tablet `768px`–`1023px`, and desktop
@@ -163,13 +164,69 @@
   `docChanged`-gated and protects in-flight edits. The SDK's domain-direct classifier recognizes
   `content_update_conflict` by string shape; the GraphQL/frontend path classifies only the sanitized
   `extensions.code = CONFLICT` contract. `packages/editor-sdk/test/boundary.test.ts` is the seam audit, and the
-  required `c7-editor-sdk` CI job runs the complete package suite.
+  required `c7-editor-sdk` CI job runs the complete package suite. Every SDK `StarterKit` construction disables
+  `dropcursor` so the strict public-delivery CSP needs no `style-src-attr` exception; the recursive boundary test
+  pins that configuration.
 - `@movp/richtext` is the client/server-safe canonical doc-JSON leaf. Domain `prepare()` normalizes rich-text
   before hashing and derives human-only `search_body`; legacy HTML remains literal text pending explicit cleanup.
+- `@movp/delivery` is the client/server-safe published-delivery leaf. Anonymous pages read only through the
+  three published-only definer RPCs with the anon key; they never query content tables or expose draft/current
+  revision state. `PUBLIC_SITE_URL` is the canonical origin—never derive it from `Host`.
+- Typed public delivery reserves `admin`, `api`, `auth`, `campaigns`, `content`, `notes`, `segments`,
+  `settings`, `tasks`, and `workflows` as first segments. The migration preflight and write trigger reject
+  collisions with `content_type_key_reserved`; adding another static two-segment namespace requires an additive
+  predicate migration and matching pgTAP inventory update.
+- The delivery renderer owns the public page's only `set:html` sink. Its StarterKit allowlist, structural
+  validation, XSS escaping, and exact depth/node/text bounds must stay pinned. Public delivery routes never
+  statically import editor/TipTap code. A tiny interaction-deferred bootstrap may dynamically import the overlay
+  only after a caller-bound, `no-store` capability probe returns exactly `{ canEdit: true }`; anonymous/member
+  paths must not reach an editor/TipTap chunk. The built-graph gate rejects editor-runtime signatures and enforces
+  a byte budget across every statically reachable chunk; its synthetic graph tests must defeat tree-shaking and
+  prove both failure modes. A delivery page may bind multiple fields from exactly one item; zero, invalid, or
+  mixed item ids fail closed before the probe. The content-free negative marker is bounded to 60 seconds and is
+  valid only while the template remains bound to one `WORKSPACE_ID`.
+- Published revision `data` is wholly public in V1; there is no field-level private visibility. The read RPC
+  returns only a names-only `richtext_field_keys` schema projection plus `richtext_field_keys_supported`, and
+  the page binds doc JSON only for declared keys matching `^[A-Za-z][A-Za-z0-9_-]{0,127}$`. A residual
+  unsupported rich-text name—or a missing/non-true support proof during a rolling deploy—must fail the public
+  read with `delivery_richtext_field_key_unsupported`; never render its stored doc JSON as prose or return the
+  complete field schema merely to detect editor regions. The guarded, size-bounded
+  `packages/delivery/test/field-key-contract.test.ts` pins both SQL predicate literals to the exported renderer
+  pattern and must fail if either copy drifts or another copy appears.
+- Public page and artifact handlers emit exactly one content-disciplined `delivery.public_read` or
+  `delivery.artifact` record with the registered `delivery` surface, canonical `@movp/obs` redaction version,
+  route kind, workspace hash, generated request id, outcome/runtime-allowlisted safe code, and latency.
+  Retired sitemap children are `not_found`, not errors. No event includes a path, slug, URL, content, schema,
+  token, cookie, email, or payload.
+- Successful page and artifact responses emit an origin `public, s-maxage=60` ceiling; 404s and all upstream
+  or validation failures are `no-store`. Operational failures use `500`, except bounded upstream timeouts use
+  `503`. The end-to-end 60-second withdrawal guarantee additionally depends on the exact-route Cloudflare Cache
+  Rule deployment check; there is no purge webhook, cache-tag, or API token.
+- Sitemap indexes come only from the bounded shard RPC. Each child carries one exclusive/inclusive shard pair,
+  performs at most four 1,000-row reads, and remains below 4,000 URLs and the uncompressed protocol byte cap.
+  `packages/delivery/test` plus the required `c7-delivery` CI job pin these boundaries.
+- CMS reads remain membership-gated, while writes require an authoritative capability: `edit`, `approve`, and
+  `publish` are currently owner/admin only. Content-originated edge writes (`src_type = 'content_item'`) require
+  `edit`; inbound campaign `produces` edges whose content item is only the destination remain member-writable.
+  The catalog pgTAP inventory pins every write policy to exactly one capability literal.
+- `updateRichTextField` is the single field-save mutation. It validates and merges one declared rich-text field,
+  then delegates to the existing hash-first `update_content` RPC; do not add a parallel revision writer. Signal
+  ownership is distinct and exact: the resolver emits `content.richtext_save_resolver`, the Astro proxy emits
+  `content.richtext_save`, and the successful DB write emits the single domain event
+  `content.revision_created`. Operational save signals carry `workspace_id_hash`; `error_code` is `ok` only for
+  success, `content_update_conflict` for conflict, and a bounded safe code for failure. The GraphQL edge always
+  mints its own `request_id` and `trace_id`; a valid inbound correlation header is retained only as
+  `client_request_id`.
+- The public overlay host resolves its token, server environment, and request id at handler call time. The
+  `content-assets` function performs the caller-bound `edit` check before constructing any service-role
+  dependency; denial, transport failure, and timeout remain distinct `403`/`500`/`503` outcomes.
 - The Astro CMS mounts one client-safe `RichTextFieldsIsland` over all rich-text fields and one shared revision.
   It reaches the server only through the bounded `/api/content/[id]/richtext` route, which resolves request-bound
   env/token state at call time, validates the field schema, merges one field, and emits one content-disciplined
-  event. Form saves still reload the page, so save rich-text first; the dirty-only `beforeunload` guard protects drafts.
+  event. Oversized request bodies drop buffered chunks but drain the request stream to completion before
+  responding; cancelling or abandoning an unconsumed body corrupts the next request on the same workerd
+  connection. All overlay-facing UUID checks import the shared strict validator. Form saves still reload the
+  page, so save rich-text first; the dirty-only `beforeunload` guard protects drafts.
 
 ## Task/CMS Agent Contracts
 

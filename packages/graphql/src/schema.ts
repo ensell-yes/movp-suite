@@ -25,6 +25,7 @@ import {
   type ReportingStatusCount,
   type ReportingTaskThroughput,
   type ReportingTypeDayCount,
+  type RichTextFieldUpdateResult,
   type SearchHit,
   type TaskBoardColumn,
   type TaskRow,
@@ -36,6 +37,20 @@ import {
 import { COMPLEXITY_BUDGET, DEPTH_LIMIT, clampPageSize } from './limits.ts'
 import { loadEdgeTargets } from './relations.ts'
 import type { GraphQLContext, ReportingOperation, Row } from './types.ts'
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+const RICH_TEXT_FIELD_KEY = /^[A-Za-z][A-Za-z0-9_-]{0,127}$/
+const CONTENT_SAVE_ERROR_CODES: Readonly<Record<string, true>> = Object.freeze({
+  content_field_not_found: true,
+  content_field_not_richtext: true,
+  content_edit_forbidden: true,
+  content_invalid_request: true,
+  content_item_not_found: true,
+  content_revision_invalid: true,
+  content_revision_not_found: true,
+  content_save_failed: true,
+  content_schema_invalid: true,
+})
 
 function pascal(s: string): string {
   return s.split('_').map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join('')
@@ -80,6 +95,112 @@ async function updateContentWithConflictBoundary(
       })
     }
     throw error
+  }
+}
+
+function safeContentSaveCode(code: string): string {
+  return CONTENT_SAVE_ERROR_CODES[code] === true ? code : 'content_save_failed'
+}
+
+async function contentCanEdit(
+  ctx: GraphQLContext,
+  schema: MovpSchema,
+  itemId: string,
+): Promise<boolean> {
+  let workspaceId: string | undefined
+  try {
+    const item = await domainFromSchema(ctx, schema).content.get(itemId)
+    if (!item) return false
+    workspaceId = item.workspace_id
+    const { data, error } = await ctx.db.rpc('has_content_capability', {
+      ws: workspaceId,
+      cap: 'edit',
+    })
+    if (error) throw new Error('content_edit_check_failed')
+    return data === true
+  } catch {
+    await ctx.reportContentCapabilityFailure?.({
+      requestId: ctx.requestId ?? crypto.randomUUID(),
+      actorId: ctx.userId,
+      itemId: UUID.test(itemId) ? itemId : '00000000-0000-4000-8000-000000000000',
+      ...(workspaceId ? { workspaceId } : {}),
+      code: 'content_edit_check_failed',
+    })
+    return false
+  }
+}
+
+async function updateRichTextFieldWithBoundary(
+  ctx: GraphQLContext,
+  schema: MovpSchema,
+  input: { itemId: string; fieldKey: string; body: string; expectedRevisionId: string },
+): Promise<RichTextFieldUpdateResult> {
+  const startedAt = Date.now()
+  const observedItemId = UUID.test(input.itemId)
+    ? input.itemId
+    : '00000000-0000-4000-8000-000000000000'
+  const observedFieldKey = RICH_TEXT_FIELD_KEY.test(input.fieldKey) ? input.fieldKey : 'invalid'
+  let outcome: 'saved' | 'conflict' | 'error' = 'error'
+  let code: string | undefined
+  let errorCode = 'content_save_failed'
+  let workspaceId: string | undefined
+  let result: RichTextFieldUpdateResult
+
+  try {
+    if (
+      !UUID.test(input.itemId)
+      || !UUID.test(input.expectedRevisionId)
+      || !RICH_TEXT_FIELD_KEY.test(input.fieldKey)
+    ) {
+      code = 'content_invalid_request'
+      errorCode = code
+      result = { status: 'error', code }
+    } else {
+      result = await domainFromSchema(ctx, schema).content.updateRichTextField(input)
+      workspaceId = result.workspaceId
+      outcome = result.status
+      errorCode = outcome === 'saved'
+        ? 'ok'
+        : outcome === 'conflict'
+          ? 'content_update_conflict'
+          : 'content_save_failed'
+      if (result.status === 'conflict') {
+        throw new GraphQLError('This content was updated by someone else.', {
+          extensions: { code: 'CONFLICT', safeContentConflict: true },
+        })
+      }
+      if (result.status === 'error') {
+        code = safeContentSaveCode(result.code)
+        errorCode = code
+        result = { status: 'error', code }
+      }
+    }
+    return result
+  } catch (error: unknown) {
+    if (
+      error instanceof GraphQLError
+      && error.extensions.safeContentConflict === true
+      && error.extensions.code === 'CONFLICT'
+    ) {
+      outcome = 'conflict'
+      errorCode = 'content_update_conflict'
+      throw error
+    }
+    outcome = 'error'
+    code = 'content_save_failed'
+    errorCode = code
+    return { status: 'error', code }
+  } finally {
+    await ctx.reportContentSave?.({
+      requestId: ctx.requestId ?? crypto.randomUUID(),
+      actorId: ctx.userId,
+      itemId: observedItemId,
+      fieldKey: observedFieldKey,
+      ...(workspaceId ? { workspaceId } : {}),
+      outcome,
+      errorCode,
+      latencyMs: Date.now() - startedAt,
+    })
   }
 }
 
@@ -1436,6 +1557,29 @@ export function buildSchema(schema: MovpSchema): GraphQLSchema {
         revision: t.field({ type: contentRevisionRef, resolve: (p: { revision: Row }) => p.revision }),
       }),
     })
+    const richTextFieldUpdateResult = builder.objectRef<RichTextFieldUpdateResult>(
+      'RichTextFieldUpdateResult',
+    ).implement({
+      fields: (t) => ({
+        status: t.exposeString('status', { nullable: false }),
+        revisionId: t.id({
+          nullable: true,
+          resolve: (result) => result.status === 'saved' ? result.revisionId : null,
+        }),
+        code: t.string({
+          nullable: true,
+          resolve: (result) => result.status === 'error' ? result.code : null,
+        }),
+      }),
+    })
+    const updateRichTextFieldInput = builder.inputType('UpdateRichTextFieldInput', {
+      fields: (t) => ({
+        itemId: t.id({ required: true }),
+        fieldKey: t.string({ required: true }),
+        body: t.string({ required: true }),
+        expectedRevisionId: t.id({ required: true }),
+      }),
+    })
     const seoAudit = builder.objectRef<Row>('ContentSeoAudit').implement({
       fields: (t: any) => ({
         score: t.float({ nullable: true, resolve: (r: Row) => (r.score == null ? null : Number(r.score)) }),
@@ -1498,6 +1642,14 @@ export function buildSchema(schema: MovpSchema): GraphQLSchema {
         complexity: 1,
         args: { id: t.arg.id({ required: true }) },
         resolve: (_r: unknown, a: any, ctx: GraphQLContext) => domainFrom(ctx).content.get(String(a.id)),
+      }),
+    )
+    builder.queryField('contentCanEdit', (t) =>
+      t.boolean({
+        nullable: false,
+        complexity: 2,
+        args: { itemId: t.arg.id({ required: true }) },
+        resolve: (_root, args, ctx) => contentCanEdit(ctx, schema, String(args.itemId)),
       }),
     )
     builder.queryField('contentRevisions', (t: any) =>
@@ -1581,6 +1733,20 @@ export function buildSchema(schema: MovpSchema): GraphQLSchema {
         args: { id: t.arg.id({ required: true }), data: t.arg.string({ required: true }), expectedRevisionId: t.arg.id({ required: false }) },
         resolve: (_r: unknown, a: any, ctx: GraphQLContext) =>
           updateContentWithConflictBoundary(ctx, schema, a),
+      }),
+    )
+    builder.mutationField('updateRichTextField', (t) =>
+      t.field({
+        type: richTextFieldUpdateResult,
+        nullable: false,
+        complexity: 10,
+        args: { input: t.arg({ type: updateRichTextFieldInput, required: true }) },
+        resolve: (_root, args, ctx) => updateRichTextFieldWithBoundary(ctx, schema, {
+          itemId: String(args.input.itemId),
+          fieldKey: args.input.fieldKey,
+          body: args.input.body,
+          expectedRevisionId: String(args.input.expectedRevisionId),
+        }),
       }),
     )
     builder.mutationField('submitForApproval', (t: any) =>

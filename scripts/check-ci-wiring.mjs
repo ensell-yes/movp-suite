@@ -85,6 +85,35 @@ export const REQUIRED_JOBS = {
   'c7-editor-sdk': {
     runs: ['pnpm --filter @movp/editor-sdk test', 'pnpm --filter @movp/richtext test'],
   },
+  'c7-delivery': {
+    runs: [
+      'pnpm --filter @movp/delivery test',
+      'pnpm --filter @movp/delivery typecheck',
+      'pnpm --filter @movp/delivery build',
+      'pnpm --filter @movp/frontend-astro test',
+      'pnpm --filter @movp/frontend-astro typecheck',
+      'pnpm --filter @movp/frontend-astro build',
+    ],
+  },
+  'c7-inline-overlay': {
+    runs: [
+      'supabase start',
+      'supabase db reset',
+      'pnpm --filter @movp/editor-sdk test',
+      'pnpm --filter @movp/editor-sdk typecheck',
+      'pnpm --filter @movp/editor-sdk build',
+      'pnpm --filter @movp/domain test',
+      'pnpm --filter @movp/graphql test',
+      'pnpm --filter @movp/mcp exec vitest run test/surface-wiring.test.ts',
+      'pnpm --filter @movp/frontend-astro exec vitest run src/components/delivery/overlay-bootstrap.test.ts',
+      'pnpm --filter @movp/frontend-astro typecheck',
+      'pnpm --filter @movp/frontend-astro build',
+      'pnpm --filter @movp/frontend-astro exec node scripts/check-overlay-bundle.mjs',
+      'pnpm --filter @movp/frontend-astro exec playwright install --with-deps chromium',
+      'pnpm --filter @movp/frontend-astro exec playwright test --grep "inline overlay"',
+      'supabase test db supabase/tests/content_edit_capability_test.sql',
+    ],
+  },
   'pack-artifacts': {
     runs: ['bash fixtures/verdaccio-gallery/pack.sh ./artifacts'],
   },

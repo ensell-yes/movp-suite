@@ -32,6 +32,7 @@ export type GqlResult<T> =
 export type GqlClientOpts = {
   endpoint: string
   token: string
+  requestId?: string
   fetchImpl?: typeof fetch
 }
 
@@ -112,6 +113,7 @@ export async function gqlRequest<T>(
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${opts.token}`,
+        ...(opts.requestId ? { 'x-request-id': opts.requestId } : {}),
       },
       body: JSON.stringify({ query, variables }),
     })

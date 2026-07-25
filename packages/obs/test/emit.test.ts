@@ -36,6 +36,12 @@ describe('emit', () => {
     expect(parsed.redaction_version).toBe(1)
   })
 
+  it('recognizes delivery as a first-class surface', () => {
+    emit(baseEvent({ surface: 'delivery' }))
+    expect(logs).toHaveLength(1)
+    expect(JSON.parse(logs[0]!).surface).toBe('delivery')
+  })
+
   it('coerces an out-of-enum surface to unknown and emits a violation event', () => {
     emit(baseEvent({ surface: 'webhook' as unknown as ObsEvent['surface'] }))
     expect(logs).toHaveLength(2)

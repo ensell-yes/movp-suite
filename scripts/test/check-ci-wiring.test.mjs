@@ -157,6 +157,93 @@ jobs:
   })
 })
 
+describe('checkCiWiring — the C7 delivery gate stays armed', () => {
+  const workflow = `name: ci
+on: [push]
+jobs:
+  c7-delivery:
+    runs-on: ubuntu-latest
+    steps:
+      - run: pnpm --filter @movp/delivery test
+      - run: pnpm --filter @movp/delivery typecheck
+      - run: pnpm --filter @movp/delivery build
+      - run: pnpm --filter @movp/frontend-astro test
+      - run: pnpm --filter @movp/frontend-astro typecheck
+      - run: pnpm --filter @movp/frontend-astro build
+`
+
+  it('requires every package and frontend delivery command in one job', () => {
+    const requirement = REQUIRED_JOBS['c7-delivery']
+    assert.ok(requirement)
+    assert.deepEqual(checkCiWiring(fixture('c7-delivery', workflow), {
+      'c7-delivery': requirement,
+    }), [])
+
+    for (const command of requirement.runs) {
+      const withoutCommand = workflow.replace(`      - run: ${command}\n`, '')
+      const problems = checkCiWiring(fixture('c7-delivery-missing-command', withoutCommand), {
+        'c7-delivery': requirement,
+      })
+      assert.equal(problems.length, 1)
+      assert.match(problems[0], /ci_wiring_run_missing/)
+    }
+  })
+})
+
+describe('checkCiWiring — the C7 inline-overlay gate stays armed', () => {
+  const requirement = REQUIRED_JOBS['c7-inline-overlay']
+  const runLines = requirement.runs.map((command) => `      - run: ${command}`).join('\n')
+  const workflow = `name: ci
+on: [push]
+jobs:
+  c7-inline-overlay:
+    runs-on: ubuntu-latest
+    steps:
+${runLines}
+`
+
+  it('requires the job and every exact command inside that job', () => {
+    assert.ok(requirement)
+    assert.deepEqual(checkCiWiring(fixture('c7-inline-overlay', workflow), {
+      'c7-inline-overlay': requirement,
+    }), [])
+
+    const missingJob = workflow.replace('  c7-inline-overlay:', '  some-other-job:')
+    assert.match(
+      checkCiWiring(fixture('c7-inline-overlay-job-missing', missingJob), {
+        'c7-inline-overlay': requirement,
+      })[0],
+      /ci_wiring_job_missing/,
+    )
+
+    for (const command of requirement.runs) {
+      const withoutCommand = workflow.replace(`      - run: ${command}\n`, '')
+      const problems = checkCiWiring(fixture('c7-inline-overlay-command-missing', withoutCommand), {
+        'c7-inline-overlay': requirement,
+      })
+      assert.equal(problems.length, 1)
+      assert.match(problems[0], /ci_wiring_run_missing/)
+    }
+  })
+
+  it('does not accept a similarly named command or a command in another job', () => {
+    const command = 'pnpm --filter @movp/frontend-astro exec node scripts/check-overlay-bundle.mjs'
+    const wrongPlacement = workflow
+      .replace(`      - run: ${command}\n`, `      - run: ${command} --quiet\n`)
+      .concat(`
+  c7-delivery:
+    runs-on: ubuntu-latest
+    steps:
+      - run: ${command}
+`)
+    const problems = checkCiWiring(fixture('c7-inline-overlay-wrong-placement', wrongPlacement), {
+      'c7-inline-overlay': requirement,
+    })
+    assert.equal(problems.length, 1)
+    assert.match(problems[0], /ci_wiring_run_missing/)
+  })
+})
+
 describe('checkCiWiring — hostile workflows that MUST fail (each false-greened the substring scan)', () => {
   // THE reproduced defect: `y.includes('publishable-versions:')` is true for a COMMENTED-OUT job.
   it('FAILS: the job and its commands appear ONLY inside # comments', () => {
@@ -442,6 +529,35 @@ ${ARMED_JOB}
     steps:
       - run: pnpm --filter @movp/editor-sdk test
       - run: pnpm --filter @movp/richtext test
+
+  c7-delivery:
+    runs-on: ubuntu-latest
+    steps:
+      - run: pnpm --filter @movp/delivery test
+      - run: pnpm --filter @movp/delivery typecheck
+      - run: pnpm --filter @movp/delivery build
+      - run: pnpm --filter @movp/frontend-astro test
+      - run: pnpm --filter @movp/frontend-astro typecheck
+      - run: pnpm --filter @movp/frontend-astro build
+
+  c7-inline-overlay:
+    runs-on: ubuntu-latest
+    steps:
+      - run: supabase start
+      - run: supabase db reset
+      - run: pnpm --filter @movp/editor-sdk test
+      - run: pnpm --filter @movp/editor-sdk typecheck
+      - run: pnpm --filter @movp/editor-sdk build
+      - run: pnpm --filter @movp/domain test
+      - run: pnpm --filter @movp/graphql test
+      - run: pnpm --filter @movp/mcp exec vitest run test/surface-wiring.test.ts
+      - run: pnpm --filter @movp/frontend-astro exec vitest run src/components/delivery/overlay-bootstrap.test.ts
+      - run: pnpm --filter @movp/frontend-astro typecheck
+      - run: pnpm --filter @movp/frontend-astro build
+      - run: pnpm --filter @movp/frontend-astro exec node scripts/check-overlay-bundle.mjs
+      - run: pnpm --filter @movp/frontend-astro exec playwright install --with-deps chromium
+      - run: pnpm --filter @movp/frontend-astro exec playwright test --grep "inline overlay"
+      - run: supabase test db supabase/tests/content_edit_capability_test.sql
 
   template-gallery:
     runs-on: ubuntu-latest

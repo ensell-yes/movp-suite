@@ -40,6 +40,16 @@ post_graphql_as() {
     -d "$2"
 }
 
+richtext_update_payload() {
+  node -e '
+    const [itemId, fieldKey, body, expectedRevisionId] = process.argv.slice(1)
+    process.stdout.write(JSON.stringify({
+      query: "mutation UpdateRichTextField($input: UpdateRichTextFieldInput!) { updateRichTextField(input: $input) { status revisionId code } }",
+      variables: { input: { itemId, fieldKey, body, expectedRevisionId } },
+    }))
+  ' "$1" "$2" "$3" "$4"
+}
+
 restart_project_kong() {
   if ! command -v docker >/dev/null 2>&1; then
     return 0
@@ -315,7 +325,7 @@ BAD="$(post_graphql "{\"query\":\"mutation{createContentType(workspaceId:\\\"$WS
 echo "$BAD" | grep -q '"errors"' || { echo "malformed field schema was NOT rejected: $BAD"; exit 1; }
 
 echo "== [content] create a valid type + an item (content.created + revision #1) =="
-CT="$(post_graphql "{\"query\":\"mutation{createContentType(workspaceId:\\\"$WS\\\", key:\\\"article\\\", label:\\\"Article\\\", fieldSchema:\\\"[{\\\\\\\"name\\\\\\\":\\\\\\\"headline\\\\\\\",\\\\\\\"type\\\\\\\":\\\\\\\"text\\\\\\\"}]\\\"){id}}\"}")"
+CT="$(post_graphql "{\"query\":\"mutation{createContentType(workspaceId:\\\"$WS\\\", key:\\\"slice_article\\\", label:\\\"Slice Article\\\", fieldSchema:\\\"[{\\\\\\\"name\\\\\\\":\\\\\\\"headline\\\\\\\",\\\\\\\"type\\\\\\\":\\\\\\\"text\\\\\\\"},{\\\\\\\"name\\\\\\\":\\\\\\\"body\\\\\\\",\\\\\\\"type\\\\\\\":\\\\\\\"richtext\\\\\\\"}]\\\"){id}}\"}")"
 CT_ID="$(echo "$CT" | json_get data.createContentType.id)"
 [ -n "$CT_ID" ] || { echo "createContentType failed: $CT"; exit 1; }
 ITEM="$(post_graphql "{\"query\":\"mutation{createContent(workspaceId:\\\"$WS\\\", contentTypeId:\\\"$CT_ID\\\", slug:\\\"e2e-article\\\", data:\\\"{\\\\\\\"headline\\\\\\\":\\\\\\\"v1\\\\\\\"}\\\"){id status}}\"}")"
@@ -325,6 +335,29 @@ REVS1="$(psql "$DB_URL" -tAc "select count(*) from public.content_revision where
 [ "$REVS1" = "1" ] || { echo "expected 1 revision at create, got $REVS1"; exit 1; }
 CREATED_EVT="$(psql "$DB_URL" -tAc "select count(*) from movp_internal.movp_events where type='content.created' and payload->>'id'='$ITEM_ID';" | tr -d '[:space:]')"
 [ "$CREATED_EVT" -ge 1 ] || { echo "no content.created event"; exit 1; }
+
+echo "== [content] rich-text field save owns one revision event; no-op/conflict own none =="
+INLINE_ITEM="$(post_graphql "{\"query\":\"mutation{createContent(workspaceId:\\\"$WS\\\", contentTypeId:\\\"$CT_ID\\\", slug:\\\"e2e-inline\\\", data:\\\"{\\\\\\\"headline\\\\\\\":\\\\\\\"inline\\\\\\\"}\\\"){id current_revision_id}}\"}")"
+INLINE_ITEM_ID="$(echo "$INLINE_ITEM" | json_get data.createContent.id)"
+INLINE_REV1="$(echo "$INLINE_ITEM" | json_get data.createContent.current_revision_id)"
+[ -n "$INLINE_ITEM_ID" ] && [ -n "$INLINE_REV1" ] || { echo "inline content create failed: $INLINE_ITEM"; exit 1; }
+INLINE_EVENT_COUNT1="$(psql "$DB_URL" -tAc "select count(*) from movp_internal.movp_events e join public.content_revision r on e.payload->>'id'=r.id::text where e.type='content.revision_created' and r.content_item_id='$INLINE_ITEM_ID';" | tr -d '[:space:]')"
+[ "$INLINE_EVENT_COUNT1" = "1" ] || { echo "expected one inline revision event at create, got $INLINE_EVENT_COUNT1"; exit 1; }
+INLINE_BODY='{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"inline save"}]}]}'
+INLINE_SAVE="$(post_graphql "$(richtext_update_payload "$INLINE_ITEM_ID" body "$INLINE_BODY" "$INLINE_REV1")")"
+echo "$INLINE_SAVE" | grep -q '"status":"saved"' || { echo "updateRichTextField save failed: $INLINE_SAVE"; exit 1; }
+INLINE_REV2="$(echo "$INLINE_SAVE" | json_get data.updateRichTextField.revisionId)"
+INLINE_EVENT_COUNT2="$(psql "$DB_URL" -tAc "select count(*) from movp_internal.movp_events e join public.content_revision r on e.payload->>'id'=r.id::text where e.type='content.revision_created' and r.content_item_id='$INLINE_ITEM_ID';" | tr -d '[:space:]')"
+[ "$INLINE_EVENT_COUNT2" = "2" ] || { echo "rich-text save did not add exactly one revision event (got $INLINE_EVENT_COUNT2)"; exit 1; }
+INLINE_NOOP="$(post_graphql "$(richtext_update_payload "$INLINE_ITEM_ID" body "$INLINE_BODY" "$INLINE_REV1")")"
+echo "$INLINE_NOOP" | grep -q "\"revisionId\":\"$INLINE_REV2\"" || { echo "idempotent rich-text no-op did not return the current revision: $INLINE_NOOP"; exit 1; }
+INLINE_EVENT_COUNT_NOOP="$(psql "$DB_URL" -tAc "select count(*) from movp_internal.movp_events e join public.content_revision r on e.payload->>'id'=r.id::text where e.type='content.revision_created' and r.content_item_id='$INLINE_ITEM_ID';" | tr -d '[:space:]')"
+[ "$INLINE_EVENT_COUNT_NOOP" = "$INLINE_EVENT_COUNT2" ] || { echo "idempotent rich-text no-op emitted a revision event"; exit 1; }
+INLINE_CONFLICT_BODY='{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"stale conflict"}]}]}'
+INLINE_CONFLICT="$(post_graphql "$(richtext_update_payload "$INLINE_ITEM_ID" body "$INLINE_CONFLICT_BODY" "$INLINE_REV1")")"
+echo "$INLINE_CONFLICT" | grep -q '"code":"CONFLICT"' || { echo "stale rich-text edit did not return CONFLICT: $INLINE_CONFLICT"; exit 1; }
+INLINE_EVENT_COUNT_CONFLICT="$(psql "$DB_URL" -tAc "select count(*) from movp_internal.movp_events e join public.content_revision r on e.payload->>'id'=r.id::text where e.type='content.revision_created' and r.content_item_id='$INLINE_ITEM_ID';" | tr -d '[:space:]')"
+[ "$INLINE_EVENT_COUNT_CONFLICT" = "$INLINE_EVENT_COUNT2" ] || { echo "conflicting rich-text save emitted a revision event"; exit 1; }
 
 echo "== [content] no-op re-save dedups (still 1 revision) =="
 post_graphql "{\"query\":\"mutation{updateContent(id:\\\"$ITEM_ID\\\", data:\\\"{\\\\\\\"headline\\\\\\\":\\\\\\\"v1\\\\\\\"}\\\"){id}}\"}" >/dev/null
@@ -419,6 +452,10 @@ DENY_DECIDE="$(post_graphql_as "$TOKEN2" "{\"query\":\"mutation{decideApproval(a
 echo "$DENY_DECIDE" | grep -q '"errors"' || { echo "USER2 (no approve cap) was allowed to decide: $DENY_DECIDE"; exit 1; }
 DENY_PUB="$(post_graphql_as "$TOKEN2" "{\"query\":\"mutation{publishContent(itemId:\\\"$ITEM_ID\\\"){id}}\"}")"
 echo "$DENY_PUB" | grep -q '"errors"' || { echo "USER2 (no publish cap) was allowed to publish: $DENY_PUB"; exit 1; }
+DENY_RICH="$(post_graphql_as "$TOKEN2" "$(richtext_update_payload "$INLINE_ITEM_ID" body "$INLINE_CONFLICT_BODY" "$INLINE_REV2")")"
+echo "$DENY_RICH" | grep -q '"code":"content_edit_forbidden"' || { echo "USER2 rich-text denial did not return the stable safe contract: $DENY_RICH"; exit 1; }
+DENY_RICH_EVENTS="$(psql "$DB_URL" -tAc "select count(*) from movp_internal.movp_events e join public.content_revision r on e.payload->>'id'=r.id::text where e.type='content.revision_created' and r.content_item_id='$INLINE_ITEM_ID';" | tr -d '[:space:]')"
+[ "$DENY_RICH_EVENTS" = "$INLINE_EVENT_COUNT2" ] || { echo "denied rich-text save emitted a revision event"; exit 1; }
 
 echo "== [content] authz - a non-member (USER3) sees 0 rows =="
 NM="$(post_graphql_as "$TOKEN3" "{\"query\":\"query{content(workspaceId:\\\"$WS\\\"){items{id}}}\"}")"

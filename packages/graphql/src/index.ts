@@ -1,6 +1,11 @@
 export { buildSchema } from './schema.ts'
 export { createYoga, type CreateYogaOpts } from './yoga.ts'
 export { loadEdgeTargets } from './relations.ts'
+export { sha256Hex } from './hash.ts'
+export {
+  createRequestCorrelation,
+  type RequestCorrelation,
+} from './request-correlation.ts'
 export {
   clampPageSize,
   DEFAULT_PAGE_SIZE,
@@ -8,4 +13,11 @@ export {
   DEPTH_LIMIT,
   COMPLEXITY_BUDGET,
 } from './limits.ts'
-export type { GraphQLContext, ReportingFailureEvent, ReportingOperation, Row } from './types.ts'
+export type {
+  ContentCapabilityFailureEvent,
+  ContentSaveOperationalEvent,
+  GraphQLContext,
+  ReportingFailureEvent,
+  ReportingOperation,
+  Row,
+} from './types.ts'

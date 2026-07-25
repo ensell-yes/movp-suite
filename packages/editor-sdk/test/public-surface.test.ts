@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import * as sdk from '../src/index.ts'
+import * as overlay from '../src/overlay.tsx'
 
 describe('public surface', () => {
   it('exports the documented editor SDK surface', () => {
@@ -11,5 +12,9 @@ describe('public surface', () => {
     expect(sdk.INNER_CANONICAL_VERSION).toBe(1)
     expect(typeof sdk.tipTapAdapter.encode).toBe('function')
     expect(typeof sdk.tipTapAdapter.decode).toBe('function')
+  })
+
+  it('exports the documented overlay subpath surface', () => {
+    expect(typeof overlay.mountOverlay).toBe('function')
   })
 })

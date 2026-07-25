@@ -379,6 +379,71 @@ const collectionsMeta = [
   },
 ]
 
+const deliveryItemId = '11111111-1111-4111-8111-111111111111'
+const deliveryRevisionId = '22222222-2222-4222-8222-222222222222'
+const deliveryBoundary = 'djE6MTExMTExMTEtMTExMS00MTExLTgxMTEtMTExMTExMTExMTEx'
+const deliveryRoute = {
+  item_id: deliveryItemId,
+  content_type_key: 'article',
+  slug: 'published-page',
+  published_revision_id: deliveryRevisionId,
+  published_at: '2026-07-23T12:00:00Z',
+}
+const publishedDelivery = {
+  ...deliveryRoute,
+  data: {
+    title: 'Published page',
+    lookalike: JSON.stringify({
+      type: 'doc',
+      content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Not rich text' }] }],
+    }),
+    body: JSON.stringify({
+      type: 'doc',
+      content: [{
+        type: 'paragraph',
+        content: [{ type: 'text', text: '<img src=x onerror=alert(1)>' }],
+      }],
+    }),
+    bodyHtml: JSON.stringify({
+      type: 'doc',
+      content: [{
+        type: 'paragraph',
+        content: [{ type: 'text', text: 'Camel rich text' }],
+      }],
+    }),
+  },
+  richtext_field_keys: ['body', 'bodyHtml'],
+  richtext_field_keys_supported: true,
+  meta: { title: 'Published page', description: 'Public description' },
+  jsonld: {
+    '@context': 'https://schema.org',
+    '@type': 'Article',
+    name: 'Published page',
+  },
+}
+const deliveryContentType = {
+  id: 'ct-delivery',
+  key: 'article',
+  label: 'Article',
+  field_schema: JSON.stringify([
+    { name: 'title', type: 'text', label: 'Title' },
+    { name: 'body', type: 'richtext', label: 'Body' },
+    { name: 'bodyHtml', type: 'richtext', label: 'Body HTML' },
+  ]),
+}
+const deliveryEditableItem = {
+  id: deliveryItemId,
+  slug: deliveryRoute.slug,
+  status: 'published',
+  content_type_id: deliveryContentType.id,
+  data: JSON.stringify(publishedDelivery.data),
+  current_revision_id: deliveryRevisionId,
+  approved_revision_id: deliveryRevisionId,
+  published_revision_id: deliveryRevisionId,
+  updated_at: deliveryRoute.published_at,
+  content_type: deliveryContentType,
+}
+
 createServer(async (req, res) => {
   const url = new URL(req.url ?? '/', `http://127.0.0.1:${port}`)
   if (url.pathname === '/health') return json(res, 200, { ok: true })
@@ -474,6 +539,39 @@ createServer(async (req, res) => {
     const token = url.searchParams.get('token') ?? 'fallback'
     return json(res, 200, counts.get(token) ?? {})
   }
+  if (url.pathname.startsWith('/rest/v1/rpc/')) {
+    if (
+      req.headers.apikey !== 'test-anon-key'
+      || req.headers.authorization !== 'Bearer test-anon-key'
+    ) {
+      return json(res, 401, { message: 'invalid_token' })
+    }
+    let body = ''
+    for await (const chunk of req) body += String(chunk)
+    const parsed = JSON.parse(body || '{}')
+    if (parsed.ws !== '33333333-3333-4333-8333-333333333333') {
+      return json(res, 400, { message: 'delivery_workspace_invalid' })
+    }
+    if (url.pathname === '/rest/v1/rpc/get_published_by_slug') {
+      return json(
+        res,
+        200,
+        parsed.p_content_type_key === 'article' && parsed.p_slug === 'published-page'
+          ? publishedDelivery
+          : null,
+      )
+    }
+    if (url.pathname === '/rest/v1/rpc/list_published_delivery_shards') {
+      return json(res, 200, [{ after: null, until: deliveryBoundary, count: 1 }])
+    }
+    if (url.pathname === '/rest/v1/rpc/list_published_delivery') {
+      if (parsed.p_after === deliveryBoundary) {
+        return json(res, 200, { items: [], next_cursor: null })
+      }
+      return json(res, 200, { items: [deliveryRoute], next_cursor: null })
+    }
+    return json(res, 404, { message: 'not_found' })
+  }
   if (url.pathname !== '/graphql') return json(res, 404, { error: 'not_found' })
   const scenario = scenarioFor(req)
   const token = tokenFor(req)
@@ -536,6 +634,10 @@ createServer(async (req, res) => {
   if (query.includes('query ContentTypes')) {
     return json(res, 200, { data: { contentTypes: scenario === 'empty' ? [] : contentTypes } })
   }
+  if (query.includes('query ContentCanEdit')) {
+    bump(token, 'contentCanEdit')
+    return json(res, 200, { data: { contentCanEdit: scenario !== 'member' } })
+  }
   if (query.includes('query Content(')) {
     const items = scenario === 'empty' ? [] : [...contentItems, rtStateFor(token).item]
     return json(res, 200, { data: { content: { items, nextCursor: null } } })
@@ -545,6 +647,8 @@ createServer(async (req, res) => {
     const requested = parsed.variables?.id
     const item = requested === RT_ITEM_ID
       ? rtStateFor(token).item
+      : requested === deliveryItemId
+        ? deliveryEditableItem
       : contentItems.find((candidate) => candidate.id === requested) ?? null
     return json(res, 200, { data: { contentItem: scenario === 'empty' ? null : item } })
   }
@@ -568,6 +672,90 @@ createServer(async (req, res) => {
   }
   if (query.includes('mutation RunSeoAudit')) {
     return json(res, 200, { data: { runSeoAudit: { score: 87, checklist: JSON.stringify([{ rule: 'headline', pass: true }]) } } })
+  }
+  if (query.includes('mutation UpdateRichTextField')) {
+    bump(token, 'updateRichTextField')
+    const input = parsed.variables?.input ?? {}
+    if (scenario === 'conflict' && input.itemId === deliveryItemId) {
+      return json(res, 200, {
+        errors: [{
+          message: 'This content was updated by someone else.',
+          extensions: { code: 'CONFLICT' },
+        }],
+      })
+    }
+    if (scenario === 'save-error' && input.itemId === deliveryItemId) {
+      return json(res, 200, {
+        data: {
+          updateRichTextField: {
+            status: 'error',
+            revisionId: null,
+            code: 'content_edit_forbidden',
+          },
+        },
+      })
+    }
+    if (input.itemId === RT_ITEM_ID) {
+      const state = rtStateFor(token)
+      const current = JSON.parse(state.item.data)
+      const submitted = { ...current, [input.fieldKey]: input.body }
+      const submittedData = JSON.stringify(submitted)
+      const currentRevision = state.revisions.find(
+        (revision) => revision.id === state.item.current_revision_id,
+      )
+      if (currentRevision?.data === submittedData) {
+        return json(res, 200, {
+          data: {
+            updateRichTextField: {
+              status: 'saved',
+              revisionId: state.item.current_revision_id,
+              code: null,
+            },
+          },
+        })
+      }
+      if (
+        typeof input.expectedRevisionId === 'string'
+        && input.expectedRevisionId !== state.item.current_revision_id
+      ) {
+        return json(res, 200, {
+          errors: [{
+            message: 'This content was updated by someone else.',
+            extensions: { code: 'CONFLICT' },
+          }],
+        })
+      }
+      state.revSeq += 1
+      const revisionId = rtRevId(state.revSeq)
+      state.revisions.push({
+        id: revisionId,
+        parent_id: state.item.current_revision_id,
+        revision_number: state.revSeq,
+        data: submittedData,
+        author_id: 'u1',
+        created_at: '2026-07-02T00:00:00Z',
+      })
+      state.item.current_revision_id = revisionId
+      state.item.data = submittedData
+      return json(res, 200, {
+        data: {
+          updateRichTextField: {
+            status: 'saved',
+            revisionId,
+            code: null,
+          },
+        },
+      })
+    }
+    return json(res, 200, {
+      data: {
+        updateRichTextField: {
+          status: 'saved',
+          revisionId: '33333333-3333-4333-8333-333333333333',
+          code: null,
+        },
+      },
+    })
   }
   if (query.includes('mutation UpdateContent')) {
     const vid = parsed.variables?.id

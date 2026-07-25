@@ -170,11 +170,24 @@ export interface ContentDetail {
   currentRevision: ContentRevisionRow | null
 }
 
+export type RichTextFieldUpdateInput = Readonly<{
+  itemId: string
+  fieldKey: string
+  body: string
+  expectedRevisionId: string
+}>
+
+export type RichTextFieldUpdateResult =
+  | { status: 'saved'; revisionId: string; workspaceId?: string }
+  | { status: 'conflict'; workspaceId?: string }
+  | { status: 'error'; code: string; workspaceId?: string }
+
 export interface ContentService {
   createType(i: { workspaceId: string; key: string; label: string; fieldSchema: unknown; moderationPolicy?: string; approvalPolicy?: string }): Promise<ContentTypeRow>
   listTypes(a: { workspaceId: string; first?: number; after?: string | null }): Promise<Page<ContentTypeRow>>
   create(i: { workspaceId: string; contentTypeId: string; slug: string; data: Record<string, unknown> }): Promise<ContentItemRow>
   update(i: { itemId: string; data: Record<string, unknown>; expectedRevisionId?: string | null }): Promise<ContentItemRow>
+  updateRichTextField(i: RichTextFieldUpdateInput): Promise<RichTextFieldUpdateResult>
   get(id: string): Promise<ContentItemRow | null>
   getDetail(id: string): Promise<ContentDetail | null>
   list(a: { workspaceId: string; contentTypeId?: string; status?: string; first?: number; after?: string | null }): Promise<Page<ContentItemRow>>

@@ -1,20 +1,26 @@
-import { createYoga, type ReportingFailureEvent } from '@movp/graphql'
+import {
+  createRequestCorrelation,
+  createYoga,
+  sha256Hex,
+  type ContentCapabilityFailureEvent,
+  type ContentSaveOperationalEvent,
+  type ReportingFailureEvent,
+} from '@movp/graphql'
 import { schema } from '@movp/core-schema'
 import { decideAgentAccess, resolvePrincipal } from '@movp/auth'
-import { emit, REDACTION_VERSION } from '@movp/obs'
+import { emit, REDACTION_VERSION, type ObsEvent } from '@movp/obs'
 import { GteSmallProvider } from '@movp/search/gte-small'
 
 const yoga = createYoga({ schema })
 
-async function sha256Hex(value: string): Promise<string> {
-  const bytes = new TextEncoder().encode(value)
-  const digest = await crypto.subtle.digest('SHA-256', bytes)
-  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('')
-}
-
 Deno.serve(async (req: Request): Promise<Response> => {
-  const requestId = crypto.randomUUID()
-  const traceId = crypto.randomUUID()
+  const incomingRequestId = req.headers.get('x-request-id') ?? ''
+  const { requestId, traceId, clientRequestId } = createRequestCorrelation(incomingRequestId)
+  const correlation = {
+    trace_id: traceId,
+    request_id: requestId,
+    ...(clientRequestId ? { client_request_id: clientRequestId } : {}),
+  }
   const env = {
     SUPABASE_URL: Deno.env.get('SUPABASE_URL')!,
     SUPABASE_ANON_KEY: Deno.env.get('SUPABASE_ANON_KEY')!,
@@ -24,8 +30,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
   const principal = await resolvePrincipal(req, env)
   if (!principal.ok) {
     emit({
-      trace_id: traceId,
-      request_id: requestId,
+      ...correlation,
       surface: 'graphql',
       operation: 'authenticate',
       error_code: principal.code,
@@ -41,8 +46,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
     const decision = decideAgentAccess(principal.agentAccess, 'cli')
     if (!decision.ok) {
       emit({
-        trace_id: traceId,
-        request_id: requestId,
+        ...correlation,
         actor_id: principal.userId,
         surface: 'graphql',
         operation: 'authorize',
@@ -60,8 +64,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
   const yogaReq = new Request(new URL(`/graphql${url.search}`, url.origin), req)
   const reportReportingFailure = async ({ operation, errorCode, workspaceId }: ReportingFailureEvent): Promise<void> => {
     emit({
-      trace_id: traceId,
-      request_id: requestId,
+      ...correlation,
       workspace_id_hash: await sha256Hex(workspaceId),
       actor_id: principal.userId,
       surface: 'graphql',
@@ -70,12 +73,64 @@ Deno.serve(async (req: Request): Promise<Response> => {
       redaction_version: REDACTION_VERSION,
     })
   }
+  const reportContentSave = async ({
+    requestId: saveRequestId,
+    actorId,
+    itemId,
+    fieldKey,
+    workspaceId,
+    outcome,
+    errorCode,
+    latencyMs,
+  }: ContentSaveOperationalEvent): Promise<void> => {
+    const event = {
+      ...correlation,
+      request_id: saveRequestId,
+      ...(workspaceId ? { workspace_id_hash: await sha256Hex(workspaceId) } : {}),
+      actor_id: actorId,
+      item_id: itemId,
+      field_key: fieldKey,
+      surface: 'graphql',
+      operation: 'content.richtext_save_resolver',
+      error_code: errorCode,
+      latency_ms: latencyMs,
+      redaction_version: REDACTION_VERSION,
+    } satisfies ObsEvent & {
+      client_request_id?: string
+      item_id: string
+      field_key: string
+    }
+    emit(event)
+  }
+  const reportContentCapabilityFailure = async ({
+    requestId: capabilityRequestId,
+    actorId,
+    itemId,
+    workspaceId,
+    code,
+  }: ContentCapabilityFailureEvent): Promise<void> => {
+    const event = {
+      ...correlation,
+      request_id: capabilityRequestId,
+      ...(workspaceId ? { workspace_id_hash: await sha256Hex(workspaceId) } : {}),
+      actor_id: actorId,
+      item_id: itemId,
+      surface: 'graphql',
+      operation: 'content.edit_capability',
+      error_code: code,
+      redaction_version: REDACTION_VERSION,
+    } satisfies ObsEvent & { client_request_id?: string; item_id: string }
+    emit(event)
+  }
   return yoga.handleRequest(yogaReq, {
     db: principal.db,
     userId: principal.userId,
     embedder: new GteSmallProvider(),
     accessToken: principal.accessToken,
     assetsFnUrl: `${env.SUPABASE_URL}/functions/v1/content-assets`,
+    requestId,
     reportReportingFailure,
+    reportContentSave,
+    reportContentCapabilityFailure,
   })
 })

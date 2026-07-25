@@ -44,6 +44,8 @@ export type {
   ReportingStatusCount,
   ReportingTaskThroughput,
   ReportingTypeDayCount,
+  RichTextFieldUpdateInput,
+  RichTextFieldUpdateResult,
   SearchArgs,
   SearchHit,
   TaskBoardColumn,

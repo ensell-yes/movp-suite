@@ -64,6 +64,11 @@ export const CONTENT_ITEM_QUERY = /* GraphQL */ `
     }
   }`
 
+export const CONTENT_CAN_EDIT_QUERY = /* GraphQL */ `
+  query ContentCanEdit($itemId: ID!) {
+    contentCanEdit(itemId: $itemId)
+  }`
+
 export const CONTENT_REVISIONS_QUERY = /* GraphQL */ `
   query ContentRevisions($itemId: ID!) {
     contentRevisions(itemId: $itemId) { id parent_id revision_number data author_id created_at }
@@ -93,6 +98,11 @@ export const INBOX_QUERY = /* GraphQL */ `
 export const UPDATE_CONTENT_MUTATION = /* GraphQL */ `
   mutation UpdateContent($id: ID!, $data: String!, $expectedRevisionId: ID) {
     updateContent(id: $id, data: $data, expectedRevisionId: $expectedRevisionId) { id status current_revision_id }
+  }`
+
+export const UPDATE_RICH_TEXT_FIELD_MUTATION = /* GraphQL */ `
+  mutation UpdateRichTextField($input: UpdateRichTextFieldInput!) {
+    updateRichTextField(input: $input) { status revisionId code }
   }`
 
 export const RUN_SEO_AUDIT_MUTATION = /* GraphQL */ `

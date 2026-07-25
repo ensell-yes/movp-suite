@@ -187,7 +187,7 @@ test('richtext mock state and scenario resets are isolated by bearer token', asy
   }
 })
 
-test('richtext endpoint enforces bounds, idempotency, conflicts, and one combined read', async ({ page }) => {
+test('richtext endpoint enforces bounds, idempotency, conflicts, and one upstream mutation', async ({ page }) => {
   await page.goto(`/content/${RT}`)
   const url = `/api/content/${RT}/richtext`
   const okDoc = JSON.stringify({
@@ -231,7 +231,8 @@ test('richtext endpoint enforces bounds, idempotency, conflicts, and one combine
   expect(stale.status()).toBe(409)
 
   const after = (await mockCounts()).contentItemRead ?? 0
-  expect(after - before).toBe(3)
+  expect(after - before).toBe(0)
+  expect((await mockCounts()).updateRichTextField).toBe(3)
 })
 
 test('approval queue and calendar render operational states', async ({ page }) => {
