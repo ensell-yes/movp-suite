@@ -156,6 +156,31 @@ export function makeContentService(ctx: DomainCtx): ContentService {
     return (data as ContentItemRow | null) ?? null
   }
 
+  async function getContentDetail(id: string): Promise<{
+    item: ContentItemRow
+    type: ContentTypeRow | null
+    currentRevision: ContentRevisionRow | null
+  } | null> {
+    const { data, error } = await ctx.db
+      .from('content_item')
+      .select(`
+        *,
+        type:content_type!content_item_content_type_id_fkey(*),
+        current_revision:content_revision!content_item_current_revision_fk(*)
+      `)
+      .eq('id', id)
+      .maybeSingle()
+    if (error) fail('getDetail', error.code)
+    if (!data) return null
+    const row = data as ContentDetailQueryRow
+    const { type, current_revision, ...item } = row
+    return {
+      item,
+      type,
+      currentRevision: current_revision,
+    }
+  }
+
   async function prepare(
     fields: FieldDefShape[],
     data: Record<string, unknown>,
@@ -181,7 +206,7 @@ export function makeContentService(ctx: DomainCtx): ContentService {
     return { canonical: parsed, hash, searchText: textParts.join(' '), searchBody: bodyParts.join(' ') }
   }
 
-  return {
+  const service: ContentService = {
     async createType(input) {
       if (!isValidFieldSchema(input.fieldSchema)) {
         throw new Error('domain.content.createType: invalid field_schema (expected array of {name,type,required?})')
@@ -246,28 +271,49 @@ export function makeContentService(ctx: DomainCtx): ContentService {
       return data as ContentItemRow
     },
 
-    get: getContentItem,
+    async updateRichTextField(input) {
+      try {
+        const detail = await getContentDetail(input.itemId)
+        if (!detail) return { status: 'error', code: 'content_item_not_found' }
+        if (!detail.type || !isValidFieldSchema(detail.type.field_schema)) {
+          return { status: 'error', code: 'content_schema_invalid' }
+        }
+        const field = detail.type.field_schema.find((candidate) => candidate.name === input.fieldKey)
+        if (!field) return { status: 'error', code: 'content_field_not_found' }
+        if (field.type !== 'richtext') {
+          return { status: 'error', code: 'content_field_not_richtext' }
+        }
+        if (!detail.currentRevision) {
+          return { status: 'error', code: 'content_revision_not_found' }
+        }
+        const currentData = detail.currentRevision.data
+        if (!currentData || typeof currentData !== 'object' || Array.isArray(currentData)) {
+          return { status: 'error', code: 'content_revision_invalid' }
+        }
 
-    async getDetail(id) {
-      const { data, error } = await ctx.db
-        .from('content_item')
-        .select(`
-          *,
-          type:content_type!content_item_content_type_id_fkey(*),
-          current_revision:content_revision!content_item_current_revision_fk(*)
-        `)
-        .eq('id', id)
-        .maybeSingle()
-      if (error) fail('getDetail', error.code)
-      if (!data) return null
-      const row = data as ContentDetailQueryRow
-      const { type, current_revision, ...item } = row
-      return {
-        item,
-        type,
-        currentRevision: current_revision,
+        const updated = await service.update({
+          itemId: input.itemId,
+          data: { ...(currentData as Record<string, unknown>), [input.fieldKey]: input.body },
+          expectedRevisionId: input.expectedRevisionId,
+        })
+        if (!updated.current_revision_id) {
+          return { status: 'error', code: 'content_save_failed' }
+        }
+        return { status: 'saved', revisionId: updated.current_revision_id }
+      } catch (error: unknown) {
+        if (
+          error instanceof Error
+          && /\[(?:content_update_conflict|40001)\]/.test(error.message)
+        ) {
+          return { status: 'conflict' }
+        }
+        return { status: 'error', code: 'content_save_failed' }
       }
     },
+
+    get: getContentItem,
+
+    getDetail: getContentDetail,
 
     async list(args) {
       const first = clamp(args.first ?? DEFAULT_PAGE, 1, MAX_PAGE)
@@ -562,4 +608,5 @@ export function makeContentService(ctx: DomainCtx): ContentService {
       })
     },
   }
+  return service
 }
