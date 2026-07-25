@@ -315,7 +315,7 @@ BAD="$(post_graphql "{\"query\":\"mutation{createContentType(workspaceId:\\\"$WS
 echo "$BAD" | grep -q '"errors"' || { echo "malformed field schema was NOT rejected: $BAD"; exit 1; }
 
 echo "== [content] create a valid type + an item (content.created + revision #1) =="
-CT="$(post_graphql "{\"query\":\"mutation{createContentType(workspaceId:\\\"$WS\\\", key:\\\"article\\\", label:\\\"Article\\\", fieldSchema:\\\"[{\\\\\\\"name\\\\\\\":\\\\\\\"headline\\\\\\\",\\\\\\\"type\\\\\\\":\\\\\\\"text\\\\\\\"}]\\\"){id}}\"}")"
+CT="$(post_graphql "{\"query\":\"mutation{createContentType(workspaceId:\\\"$WS\\\", key:\\\"slice_article\\\", label:\\\"Slice Article\\\", fieldSchema:\\\"[{\\\\\\\"name\\\\\\\":\\\\\\\"headline\\\\\\\",\\\\\\\"type\\\\\\\":\\\\\\\"text\\\\\\\"}]\\\"){id}}\"}")"
 CT_ID="$(echo "$CT" | json_get data.createContentType.id)"
 [ -n "$CT_ID" ] || { echo "createContentType failed: $CT"; exit 1; }
 ITEM="$(post_graphql "{\"query\":\"mutation{createContent(workspaceId:\\\"$WS\\\", contentTypeId:\\\"$CT_ID\\\", slug:\\\"e2e-article\\\", data:\\\"{\\\\\\\"headline\\\\\\\":\\\\\\\"v1\\\\\\\"}\\\"){id status}}\"}")"
