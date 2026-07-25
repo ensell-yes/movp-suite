@@ -207,4 +207,20 @@ describe('content.updateRichTextField', () => {
     expect(JSON.stringify(result)).not.toContain('private database')
     expect(JSON.stringify(result)).not.toContain('secret')
   })
+
+  it('classifies an RLS denial without exposing the database message', async () => {
+    const service = makeContentService({ db: detailDb() as never, userId: 'user-1' })
+    vi.spyOn(service, 'update').mockRejectedValue(
+      new Error('domain.content.update failed [42501]: private policy detail'),
+    )
+
+    const result = await service.updateRichTextField({
+      itemId: 'item-1',
+      fieldKey: 'body',
+      body: '{"type":"doc","content":[]}',
+      expectedRevisionId: 'revision-1',
+    })
+    expect(result).toEqual({ status: 'error', code: 'content_edit_forbidden' })
+    expect(JSON.stringify(result)).not.toContain('private policy')
+  })
 })

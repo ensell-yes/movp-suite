@@ -59,6 +59,12 @@ const companySchema = defineSchema({
 })
 
 describe('buildSchema', () => {
+  it('pins the complete root-field counts after inline editing', () => {
+    const schema = buildSchema(movpSchema)
+    expect(Object.keys(schema.getQueryType()?.getFields() ?? {})).toHaveLength(87)
+    expect(Object.keys(schema.getMutationType()?.getFields() ?? {})).toHaveLength(75)
+  })
+
   it('generates a type, queries, mutation, and search', () => {
     const sdl = printSchema(buildSchema(movpSchema))
     expect(sdl).toContain('type Note')

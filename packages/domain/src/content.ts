@@ -307,6 +307,9 @@ export function makeContentService(ctx: DomainCtx): ContentService {
         ) {
           return { status: 'conflict' }
         }
+        if (error instanceof Error && /\[42501\]/.test(error.message)) {
+          return { status: 'error', code: 'content_edit_forbidden' }
+        }
         return { status: 'error', code: 'content_save_failed' }
       }
     },
