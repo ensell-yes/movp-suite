@@ -95,6 +95,11 @@ export const UPDATE_CONTENT_MUTATION = /* GraphQL */ `
     updateContent(id: $id, data: $data, expectedRevisionId: $expectedRevisionId) { id status current_revision_id }
   }`
 
+export const UPDATE_RICH_TEXT_FIELD_MUTATION = /* GraphQL */ `
+  mutation UpdateRichTextField($input: UpdateRichTextFieldInput!) {
+    updateRichTextField(input: $input) { status revisionId code }
+  }`
+
 export const RUN_SEO_AUDIT_MUTATION = /* GraphQL */ `
   mutation RunSeoAudit($itemId: ID!) { runSeoAudit(itemId: $itemId) { score checklist } }`
 

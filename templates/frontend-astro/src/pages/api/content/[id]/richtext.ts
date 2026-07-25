@@ -3,7 +3,10 @@ import { isDocShape } from '@movp/richtext'
 import { readServerEnv } from '../../../../lib/env.ts'
 import { getSessionToken } from '../../../../lib/session.ts'
 import { gqlRequest } from '../../../../lib/graphql.ts'
-import { CONTENT_ITEM_QUERY, UPDATE_CONTENT_MUTATION } from '../../../../lib/content-queries.ts'
+import {
+  CONTENT_ITEM_QUERY,
+  UPDATE_RICH_TEXT_FIELD_MUTATION,
+} from '../../../../lib/content-queries.ts'
 
 export const MAX_BODY_BYTES = 262_144
 
@@ -39,6 +42,14 @@ type ContentItemNode = {
 type FieldDef = {
   name: string
   type?: string
+}
+
+type RichTextFieldUpdatePayload = {
+  updateRichTextField: {
+    status: string
+    revisionId?: string | null
+    code?: string | null
+  }
 }
 
 /** Read the request stream with a hard byte cap before buffering. */
@@ -140,6 +151,7 @@ export function emit(row: {
   itemId?: string
   fieldKey?: string
   startedAt: number
+  requestId: string
 }): void {
   // Only validated identifiers and bounded metadata cross this logging boundary; never payloads or tokens.
   console.log(JSON.stringify({
@@ -147,19 +159,23 @@ export function emit(row: {
     outcome: row.outcome,
     item_id: row.itemId,
     field_key: row.fieldKey,
-    request_id: crypto.randomUUID(),
+    request_id: row.requestId,
     latency_ms: Date.now() - row.startedAt,
   }))
 }
 
-function finish(result: HandlerResult, startedAt: number): Response {
+function finish(result: HandlerResult, startedAt: number, requestId: string): Response {
   emit({
     outcome: result.outcome,
     itemId: result.itemId,
     fieldKey: result.fieldKey,
     startedAt,
+    requestId,
   })
-  return Response.json(result.body, { status: result.status })
+  return Response.json(result.body, {
+    status: result.status,
+    headers: { 'cache-control': 'no-store' },
+  })
 }
 
 function errorResult(itemId?: string): HandlerResult {
@@ -198,8 +214,74 @@ function parsePostInput(raw: string): {
   }
 }
 
+function classifySavePayload(
+  payload: RichTextFieldUpdatePayload['updateRichTextField'],
+  itemId: string,
+  fieldKey: string,
+): HandlerResult {
+  if (payload.status === 'saved' && typeof payload.revisionId === 'string') {
+    return {
+      outcome: 'saved',
+      status: 200,
+      body: { status: 'saved', revisionId: payload.revisionId },
+      itemId,
+      fieldKey,
+    }
+  }
+  if (payload.status !== 'error' || typeof payload.code !== 'string') {
+    return errorResult(itemId)
+  }
+  if (payload.code === 'content_item_not_found') {
+    return {
+      outcome: 'not_found',
+      status: 404,
+      body: { status: 'error', code: 'not_found' },
+      itemId,
+      fieldKey,
+    }
+  }
+  if (
+    payload.code === 'content_field_not_found'
+    || payload.code === 'content_field_not_richtext'
+    || payload.code === 'content_invalid_request'
+  ) {
+    return {
+      outcome: 'validation',
+      status: 422,
+      body: { status: 'error', code: 'invalid_request' },
+      itemId,
+      fieldKey,
+    }
+  }
+  if (payload.code === 'content_edit_forbidden') {
+    return {
+      outcome: 'error',
+      status: 403,
+      body: { status: 'error', code: payload.code },
+      itemId,
+      fieldKey,
+    }
+  }
+  if (
+    payload.code === 'content_revision_invalid'
+    || payload.code === 'content_revision_not_found'
+    || payload.code === 'content_save_failed'
+    || payload.code === 'content_schema_invalid'
+  ) {
+    return {
+      outcome: 'error',
+      status: 500,
+      body: { status: 'error', code: payload.code },
+      itemId,
+      fieldKey,
+    }
+  }
+  return errorResult(itemId)
+}
+
 export const POST: APIRoute = async ({ params, request, cookies }) => {
   const startedAt = Date.now()
+  const requestId = crypto.randomUUID()
   const id = String(params.id ?? '')
   const validatedItemId = UUID.test(id) ? id : undefined
   let result: HandlerResult
@@ -249,66 +331,31 @@ export const POST: APIRoute = async ({ params, request, cookies }) => {
         } else {
           // Resolve request-bound workerd env and credentials at call time, never at module initialization.
           const { graphqlEndpoint } = readServerEnv()
-          const read = await gqlRequest<{ contentItem: ContentItemNode | null }>(
-            { endpoint: graphqlEndpoint, token },
-            CONTENT_ITEM_QUERY,
-            { id },
+          const write = await gqlRequest<RichTextFieldUpdatePayload>(
+            { endpoint: graphqlEndpoint, token, requestId },
+            UPDATE_RICH_TEXT_FIELD_MUTATION,
+            {
+              input: {
+                itemId: id,
+                fieldKey: input.fieldKey,
+                body: input.body,
+                expectedRevisionId: input.expectedRevisionId,
+              },
+            },
           )
 
-          if (!read.ok) {
-            result = { ...classifyOutcome(read), itemId: validatedItemId }
-          } else if (!read.data.contentItem) {
+          if (!write.ok) {
             result = {
-              outcome: 'not_found',
-              status: 404,
-              body: { status: 'error', code: 'not_found' },
+              ...classifyOutcome(write),
               itemId: validatedItemId,
+              fieldKey: input.fieldKey,
             }
           } else {
-            const item = read.data.contentItem
-            const schema = parseSchema(item.content_type?.field_schema ?? null)
-            const current = parseData(item.data ?? '{}')
-            if (!schema || !current) {
-              result = errorResult(validatedItemId)
-            } else if (!schema.some((field) => field.name === input.fieldKey && field.type === 'richtext')) {
-              result = {
-                outcome: 'validation',
-                status: 422,
-                body: { status: 'error', code: 'invalid_request' },
-                itemId: validatedItemId,
-              }
-            } else {
-              const merged = { ...current, [input.fieldKey]: input.body }
-              const write = await gqlRequest<{
-                updateContent: { id: string; status: string; current_revision_id: string }
-              }>(
-                { endpoint: graphqlEndpoint, token },
-                UPDATE_CONTENT_MUTATION,
-                {
-                  id,
-                  data: JSON.stringify(merged),
-                  expectedRevisionId: input.expectedRevisionId,
-                },
-              )
-              if (!write.ok) {
-                result = {
-                  ...classifyOutcome(write),
-                  itemId: validatedItemId,
-                  fieldKey: input.fieldKey,
-                }
-              } else {
-                result = {
-                  outcome: 'saved',
-                  status: 200,
-                  body: {
-                    status: 'saved',
-                    revisionId: write.data.updateContent.current_revision_id,
-                  },
-                  itemId: validatedItemId,
-                  fieldKey: input.fieldKey,
-                }
-              }
-            }
+            result = classifySavePayload(
+              write.data.updateRichTextField,
+              id,
+              input.fieldKey,
+            )
           }
         }
       }
@@ -317,11 +364,12 @@ export const POST: APIRoute = async ({ params, request, cookies }) => {
     result = errorResult(validatedItemId)
   }
 
-  return finish(result, startedAt)
+  return finish(result, startedAt, requestId)
 }
 
 export const GET: APIRoute = async ({ params, request, cookies }) => {
   const startedAt = Date.now()
+  const requestId = crypto.randomUUID()
   const id = String(params.id ?? '')
   const validatedItemId = UUID.test(id) ? id : undefined
   let result: HandlerResult
@@ -391,5 +439,5 @@ export const GET: APIRoute = async ({ params, request, cookies }) => {
     result = errorResult(validatedItemId)
   }
 
-  return finish(result, startedAt)
+  return finish(result, startedAt, requestId)
 }

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { gqlRequest, NOTES_QUERY } from '../src/lib/graphql.ts'
 
 function mockFetch(status: number, body: unknown): typeof fetch {
@@ -10,6 +10,29 @@ function mockFetch(status: number, body: unknown): typeof fetch {
 }
 
 describe('gqlRequest', () => {
+  it('forwards an injected request id without reading ambient state', async () => {
+    const fetchImpl = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      new Response(JSON.stringify({ data: { notes: { items: [], nextCursor: null } } }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }))
+
+    await gqlRequest(
+      {
+        endpoint: 'http://example/graphql',
+        token: 'token',
+        requestId: 'd3000000-0000-4000-8000-000000000001',
+        fetchImpl,
+      },
+      NOTES_QUERY,
+      { workspaceId: 'workspace-1', first: 20 },
+    )
+
+    expect(new Headers(fetchImpl.mock.calls[0]?.[1]?.headers).get('x-request-id')).toBe(
+      'd3000000-0000-4000-8000-000000000001',
+    )
+  })
+
   it('sends the Bearer token and POSTs the query, returning data', async () => {
     let seen: { url: string; init: RequestInit } | undefined
     const fetchImpl = (async (url: string, init: RequestInit) => {

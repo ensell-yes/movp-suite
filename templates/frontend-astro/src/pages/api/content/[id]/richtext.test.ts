@@ -44,6 +44,14 @@ const itemOk = {
     },
   },
 }
+const saveResult = (result: {
+  status: 'saved' | 'error'
+  revisionId?: string | null
+  code?: string | null
+}) => ({
+  ok: true,
+  data: { updateRichTextField: result },
+})
 
 let logs: string[] = []
 
@@ -115,41 +123,42 @@ describe('POST outcomes — exactly one content-disciplined event each', () => {
     expectEvent('too_large')
   })
 
-  it('404 when the combined read returns no item', async () => {
-    h.gql.mockResolvedValueOnce({ ok: true, data: { contentItem: null } })
+  it('404 when the mutation returns the safe item-not-found code', async () => {
+    h.gql.mockResolvedValueOnce(saveResult({
+      status: 'error',
+      code: 'content_item_not_found',
+    }))
     spyLogs()
     expect((await post({ fieldKey: 'body', body: okDoc, expectedRevisionId: REV })).status).toBe(404)
     expectEvent('not_found')
   })
 
-  it('500 when persisted state is structurally malformed', async () => {
-    h.gql.mockResolvedValueOnce({
-      ok: true,
-      data: {
-        contentItem: {
-          data: 'not json',
-          current_revision_id: REV,
-          content_type: { field_schema: '[{"name":"body","type":"richtext"}]' },
-        },
-      },
-    })
+  it('500 when the primitive returns a safe operational code', async () => {
+    h.gql.mockResolvedValueOnce(saveResult({
+      status: 'error',
+      code: 'content_schema_invalid',
+    }))
     spyLogs()
-    expect((await post({ fieldKey: 'body', body: okDoc, expectedRevisionId: REV })).status).toBe(500)
+    const res = await post({ fieldKey: 'body', body: okDoc, expectedRevisionId: REV })
+    expect(res.status).toBe(500)
+    expect(await res.json()).toEqual({ status: 'error', code: 'content_schema_invalid' })
     expectEvent('error')
   })
 
-  it('422 for a non-richtext fieldKey without logging the key', async () => {
-    h.gql.mockResolvedValueOnce(itemOk)
+  it('422 for a non-richtext fieldKey without exposing the upstream code', async () => {
+    h.gql.mockResolvedValueOnce(saveResult({
+      status: 'error',
+      code: 'content_field_not_richtext',
+    }))
     spyLogs()
     const res = await post({ fieldKey: 'nope', body: okDoc, expectedRevisionId: REV })
     expect(res.status).toBe(422)
-    expect(expectEvent('validation').field_key).toBeUndefined()
+    expect(await res.json()).toEqual({ status: 'error', code: 'invalid_request' })
+    expect(expectEvent('validation').field_key).toBe('nope')
   })
 
   it('409 on a structured CONFLICT from the write', async () => {
-    h.gql
-      .mockResolvedValueOnce(itemOk)
-      .mockResolvedValueOnce({ ok: false, code: 'graphql_error', errorCode: 'CONFLICT' })
+    h.gql.mockResolvedValueOnce({ ok: false, code: 'graphql_error', errorCode: 'CONFLICT' })
     spyLogs()
     const res = await post({ fieldKey: 'body', body: okDoc, expectedRevisionId: REV })
     expect(res.status).toBe(409)
@@ -157,19 +166,36 @@ describe('POST outcomes — exactly one content-disciplined event each', () => {
     expectEvent('conflict')
   })
 
-  it('200 on success — new revision id, one combined read, no payload in the event', async () => {
-    h.gql
-      .mockResolvedValueOnce(itemOk)
-      .mockResolvedValueOnce({
-        ok: true,
-        data: { updateContent: { current_revision_id: 'rNEW' } },
-      })
+  it('200 on success — one upstream mutation, correlated id, no payload in the event', async () => {
+    h.gql.mockResolvedValueOnce(saveResult({
+      status: 'saved',
+      revisionId: 'rNEW',
+    }))
+    vi.spyOn(crypto, 'randomUUID').mockReturnValue(
+      'd3000000-0000-4000-8000-000000000001',
+    )
     spyLogs()
     const res = await post({ fieldKey: 'body', body: okDoc, expectedRevisionId: REV })
     expect(res.status).toBe(200)
     expect(await res.json()).toEqual({ status: 'saved', revisionId: 'rNEW' })
-    expect(h.gql).toHaveBeenCalledTimes(2)
-    expect(expectEvent('saved').field_key).toBe('body')
+    expect(res.headers.get('cache-control')).toBe('no-store')
+    expect(h.gql).toHaveBeenCalledTimes(1)
+    expect(String(h.gql.mock.calls[0]?.[1])).toContain('mutation UpdateRichTextField')
+    expect(h.gql.mock.calls[0]?.[2]).toEqual({
+      input: {
+        itemId: ITEM,
+        fieldKey: 'body',
+        body: okDoc,
+        expectedRevisionId: REV,
+      },
+    })
+    const event = expectEvent('saved')
+    expect(event.field_key).toBe('body')
+    expect(h.gql.mock.calls[0]?.[0]).toEqual({
+      endpoint: 'http://x/graphql',
+      token: 'tok',
+      requestId: event.request_id,
+    })
   })
 
   it('500 + one error event when a request-bound dependency throws unexpectedly', async () => {
@@ -180,6 +206,32 @@ describe('POST outcomes — exactly one content-disciplined event each', () => {
     const res = await post({ fieldKey: 'body', body: okDoc, expectedRevisionId: REV })
     expect(res.status).toBe(500)
     expectEvent('error')
+  })
+
+  it('resolves env and the HttpOnly token independently for every request', async () => {
+    h.gql
+      .mockResolvedValueOnce(saveResult({ status: 'saved', revisionId: 'r1' }))
+      .mockResolvedValueOnce(saveResult({ status: 'saved', revisionId: 'r2' }))
+    spyLogs()
+    await post({ fieldKey: 'body', body: okDoc, expectedRevisionId: REV })
+    h.token = 'tok-next'
+    h.env.mockReturnValueOnce({
+      graphqlEndpoint: 'http://next/graphql',
+      workspaceId: 'w',
+      supabaseUrl: 'http://next',
+      supabaseAnonKey: 'anon-next',
+    })
+    await post({ fieldKey: 'body', body: okDoc, expectedRevisionId: REV })
+
+    expect(h.env).toHaveBeenCalledTimes(2)
+    expect(h.gql.mock.calls[0]?.[0]).toMatchObject({
+      endpoint: 'http://x/graphql',
+      token: 'tok',
+    })
+    expect(h.gql.mock.calls[1]?.[0]).toMatchObject({
+      endpoint: 'http://next/graphql',
+      token: 'tok-next',
+    })
   })
 })
 
@@ -193,6 +245,7 @@ describe('GET returns the field body + revision', () => {
     })
     expect(res.status).toBe(200)
     expect(await res.json()).toEqual({ body: '', revisionId: REV })
+    expect(res.headers.get('cache-control')).toBe('no-store')
     expectEvent('read_ok')
   })
 })
@@ -284,6 +337,7 @@ describe('emit content discipline', () => {
       itemId: ITEM,
       fieldKey: 'body',
       startedAt: Date.now(),
+      requestId: 'd3000000-0000-4000-8000-000000000001',
     })
     spy.mockRestore()
     expect(lines).toHaveLength(1)
