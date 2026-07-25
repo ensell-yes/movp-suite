@@ -49,7 +49,10 @@ test.describe('inline overlay', () => {
     )
     await dialog.getByRole('button', { name: 'Save content' }).click()
     const saveResponse = await saveResponsePromise
-    expect(saveResponse.status(), await saveResponse.text()).toBe(200)
+    // An expect() message is evaluated even on success. This page-network body read crosses CDP
+    // and can race Chrome's buffer eviction, so keep the diagnostic best-effort.
+    const saveBody = await saveResponse.text().catch(() => '<body unavailable>')
+    expect(saveResponse.status(), saveBody).toBe(200)
     await expect(dialog.getByRole('status')).toHaveText('Saved')
     await page.keyboard.press('Escape')
     await expect(dialog).toHaveCount(0)
