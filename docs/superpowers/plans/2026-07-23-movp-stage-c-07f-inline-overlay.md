@@ -846,7 +846,7 @@ the exact unavoidable component.
 pnpm --filter @movp/frontend-astro test -- overlay-bootstrap.test.ts
 pnpm --filter @movp/frontend-astro build
 pnpm --filter @movp/frontend-astro exec node scripts/check-overlay-bundle.mjs
-pnpm --filter @movp/frontend-astro e2e -- --grep "inline overlay"
+pnpm --filter @movp/frontend-astro exec playwright test --grep "inline overlay"
 ```
 
 Expected:
@@ -900,7 +900,7 @@ pnpm --filter @movp/frontend-astro typecheck
 pnpm --filter @movp/frontend-astro build
 pnpm --filter @movp/frontend-astro exec node scripts/check-overlay-bundle.mjs
 pnpm --filter @movp/frontend-astro exec playwright install --with-deps chromium
-pnpm --filter @movp/frontend-astro e2e -- --grep "inline overlay"
+pnpm --filter @movp/frontend-astro exec playwright test --grep "inline overlay"
 supabase start
 supabase db reset
 supabase test db supabase/tests/content_edit_capability_test.sql

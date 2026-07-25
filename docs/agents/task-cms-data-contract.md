@@ -9,7 +9,9 @@ must use MCP or the `movp` CLI for writes that span more than one row.
 
 - IDs are UUID strings. Date values use `YYYY-MM-DD`; timestamps are ISO-8601 strings.
 - Every application row is scoped by `workspace_id`. A Personal Access Token is user-scoped, while
-  membership and row-level security determine access to each workspace.
+  membership and row-level security grant reads within each workspace. CMS authoring additionally requires
+  the owner/admin `edit` capability; approval and publication require their corresponding privileged
+  capabilities.
 - Rows normally carry `id`, `workspace_id`, `created_at`, and `updated_at` in addition to the fields below.
 - Foreign keys use snake-case names such as `status_id`; MCP arguments use camel case such as `statusId`.
 - An inaccessible row is commonly indistinguishable from a missing row. Do not infer that another tenant's
