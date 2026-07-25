@@ -75,11 +75,13 @@ describe('inline overlay', () => {
     expect(screen.queryByRole('button', { name: 'Edit body' })).toBeNull()
   })
 
-  it.each(['Enter', ' '])('%s opens; Escape closes and restores trigger focus', async (key) => {
+  it('moves focus into the opened dialog; Escape closes and restores trigger focus', async () => {
     mount(`<section data-movp-item="${ITEM}" data-movp-field="body"></section>`, options())
     const trigger = await screen.findByRole('button', { name: 'Edit body' })
-    fireEvent.keyDown(trigger, { key })
+    fireEvent.click(trigger)
     const dialog = await screen.findByRole('dialog', { name: 'Edit body' })
+    const close = screen.getByRole('button', { name: 'Close body editor' })
+    await waitFor(() => expect(document.activeElement).toBe(close))
     fireEvent.keyDown(dialog, { key: 'Escape' })
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Edit body' })).toBeNull())
     expect(document.activeElement).toBe(trigger)

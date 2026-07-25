@@ -68,6 +68,22 @@ describe('overlay bootstrap', () => {
     handle.destroy()
   })
 
+  it('fails closed when a delivery document binds more than one content item', async () => {
+    const secondItem = 'd1000000-0000-4000-8000-000000000002'
+    document.body.innerHTML = `
+      <div data-movp-item="${ITEM}" data-movp-field="body"></div>
+      <div data-movp-item="${secondItem}" data-movp-field="body"></div>
+    `
+    const fetchImpl = vi.fn(async () => Response.json({ canEdit: true }))
+    const value = deps(fetchImpl as typeof fetch)
+    installContentOverlayBootstrap(value)
+
+    document.dispatchEvent(new Event('pointerdown', { bubbles: true }))
+    await Promise.resolve()
+    expect(fetchImpl).not.toHaveBeenCalled()
+    expect(value.loadOverlay).not.toHaveBeenCalled()
+  })
+
   it('negative-caches exact false for 60 seconds across bootstrap mounts', async () => {
     document.body.innerHTML = `<div data-movp-item="${ITEM}" data-movp-field="body"></div>`
     const fetchImpl = vi.fn(async () => Response.json({ canEdit: false }))

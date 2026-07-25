@@ -520,11 +520,14 @@ Three signals have distinct owners:
 3. a newly inserted revision continues to emit exactly one database domain
    event `content.revision_created`.
 
-The resolver log contains only `request_id`, validated `actor_id`, validated
-`item_id`, validated `field_key`, outcome, safe error code, and `latency_ms`.
-It never contains the body, content hash, token, cookie, email, schema, URL, or
-value preview. The GraphQL request context receives the Edge request id so the
-proxy can forward a request-id header and correlate both operational logs.
+The resolver log contains only a server-minted `request_id` and `trace_id`,
+optional validated `client_request_id`, `workspace_id_hash`, validated
+`actor_id`, validated `item_id`, validated `field_key`, outcome, safe error
+code, and `latency_ms`. Success uses `error_code='ok'`; conflict uses
+`content_update_conflict`; failures use a bounded safe code. It never contains
+the body, content hash, token, cookie, email, schema, URL, or value preview.
+The proxy forwards its request id as client correlation, but the internet-facing
+GraphQL edge never trusts that value as its own audit identity.
 
 A direct GraphQL test with no Astro proxy proves the resolver log exists
 exactly once. Separate tests prove a new save creates one domain event, an
@@ -566,9 +569,11 @@ export function mountOverlay(options: OverlayOptions): { destroy(): void }
 
 The overlay scans only elements containing both binding attributes, validates
 them structurally, deduplicates regions, and asks `canEdit` before adding
-chrome. `canEdit` controls presentation only. `resolveEditable` and `save`
-remain authoritative server calls, and `save` ultimately reaches the RLS-gated
-GraphQL mutation.
+chrome. The reference bootstrap permits multiple bound fields only when every
+region has the same validated item id; zero, invalid, or mixed item ids fail
+closed before the capability probe. `canEdit` controls presentation only.
+`resolveEditable` and `save` remain authoritative server calls, and `save`
+ultimately reaches the RLS-gated GraphQL mutation.
 
 The overlay reuses `MovpEditor` and its non-destructive conflict surface. It
 does not fork editor state, canonicalization, or conflict classification.
@@ -587,7 +592,11 @@ technology through `role="alert"`.
 The typed page always emits the same public bound HTML and a tiny bootstrap
 entry that has **no static import path** to `@movp/editor-sdk`,
 `@movp/editor-sdk/overlay`, TipTap, React editor code, or their transitive
-chunks. The bootstrap reads the one validated bound item id and makes a
+chunks. The built-graph gate walks every statically reachable chunk, rejects
+TipTap/ProseMirror runtime signatures or overlay markers, and enforces a
+bounded aggregate byte budget; synthetic graph tests prove both rejection
+paths with non-tree-shakeable fixtures. The bootstrap reads the one validated
+bound item id and makes a
 same-origin, credentialed, `no-store` capability probe. A missing/invalid
 session returns `{canEdit:false}`. Only `{canEdit:true}` triggers:
 
@@ -617,7 +626,8 @@ Only authorized regions receive a visible edit affordance. The overlay has:
 - keyboard activation with Enter/Space;
 - 44px minimum controls and visible focus;
 - descriptive accessible names including the field;
-- Escape to close and return focus to the originating affordance;
+- focus moves into the dialog on open; Escape closes and returns focus to the
+  originating affordance;
 - `aria-live` saved/conflict/error feedback;
 - no hover-only action;
 - reduced-motion behavior; and

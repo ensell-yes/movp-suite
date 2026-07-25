@@ -22,7 +22,7 @@
 - Approval votes require `approve`; workspace membership alone is never sufficient.
 - Service-role writes check the caller’s capability with the caller-bound client before the privileged write.
 - `updateRichTextField` validates the field schema, merges one field, and calls `ContentService.update`. It never inserts a revision or reimplements canonical hashing.
-- One GraphQL resolver request emits one `content.richtext_save_resolver` operational log. A created revision emits one existing `content.revision_created` domain event. The Astro proxy retains its separate `content.richtext_save` request log.
+- One GraphQL resolver request emits one `content.richtext_save_resolver` operational log with a tenant hash and server-owned correlation ids. A created revision emits one existing `content.revision_created` domain event. The Astro proxy retains its separate `content.richtext_save` request log.
 - Logs contain identifiers/outcome/safe code/latency only; never content, schema, hashes, URLs, tokens, cookies, emails, or previews.
 - The overlay subpath remains client-safe and is covered by the recursive editor SDK boundary test.
 - The public bootstrap has no static import path to editor SDK, React editor code, or TipTap.
@@ -43,6 +43,8 @@
 - `packages/domain/test/content-richtext-field.test.ts`
 - `packages/graphql/test/content-richtext-field.test.ts`
 - `packages/graphql/test/content-richtext-observability.test.ts`
+- `packages/graphql/src/request-correlation.ts`
+- `packages/graphql/test/request-correlation.test.ts`
 - `packages/editor-sdk/src/overlay.tsx`
 - `packages/editor-sdk/src/overlay.css`
 - `packages/editor-sdk/test/overlay.test.tsx`
@@ -53,6 +55,10 @@
 - `templates/frontend-astro/src/components/delivery/overlay-bootstrap.test.ts`
 - `templates/frontend-astro/src/pages/[contentType]/delivery-headers.test.ts`
 - `templates/frontend-astro/scripts/check-overlay-bundle.mjs`
+- `templates/frontend-astro/scripts/check-overlay-bundle.d.mts`
+- `templates/frontend-astro/tests/overlay-bundle-gate.test.ts`
+- `templates/frontend-astro/src/lib/identifiers.ts`
+- `templates/frontend-astro/src/lib/identifiers.test.ts`
 - `templates/frontend-astro/tests/e2e/overlay.spec.ts`
 
 **Modify**
@@ -511,20 +517,28 @@ export type ContentSaveOperationalEvent = Readonly<{
   actorId: string
   itemId: string
   fieldKey: string
+  workspaceId?: string
   outcome: 'saved' | 'conflict' | 'error'
-  code?: string
+  errorCode: string
   latencyMs: number
 }>
 ```
 
 and a `reportContentSave(event)` callback. Do not log inside a reusable package with ambient globals; invoke the injected reporter exactly once in a `finally`-owned resolver outcome path.
 
-- [ ] In `supabase/functions/graphql/index.ts`, resolve `requestId` per request. Accept an incoming correlation header only if it is a valid UUID; otherwise generate `crypto.randomUUID()`. Pass it and a content-disciplined reporter into Yoga context at request time. Never capture the request id in module scope.
+- [ ] In `supabase/functions/graphql/index.ts`, mint a fresh `requestId` and
+  `traceId` per request. A valid incoming correlation header is retained only
+  as `clientRequestId`; it never becomes the server audit identity. Pass the
+  correlation values and a content-disciplined reporter into Yoga context at
+  request time. Never capture request correlation in module scope.
 
 - [ ] Implement resolver behavior:
   - `contentCanEdit` resolves the item/workspace caller-bound, then checks `has_content_capability('edit')`; failure returns false and is separately reported at the Edge;
   - mutation calls the domain method once;
   - conflict uses sanitized `extensions.code='CONFLICT'`;
+  - save and capability operational events hash the resolved workspace;
+  - save `errorCode` is `ok` for success, `content_update_conflict` for a
+    conflict, and a bounded safe code for failure;
   - all responses are structurally stable.
 
 - [ ] Now that the mutation exists, extend the existing `[content]` HTTP slice
@@ -575,6 +589,7 @@ git commit -m "feat(graphql): expose rich text field editing"
     correlation header;
   - it resolves `readServerEnv()` and HttpOnly token during each request;
   - it retains Astro origin checking and bounded request parsing;
+  - it cancels the request reader immediately after the first over-limit chunk;
   - conflict and safe error mappings match the existing client contract;
   - response is `no-store`;
   - exactly one `content.richtext_save` proxy log remains;
@@ -599,6 +614,10 @@ Expected: **FAIL** on the new GraphQL/correlation assertions.
   `emit(...)` and the forwarded request-id header. The test must compare the
   logged `request_id` to the outbound header for the same request; checking
   that each is merely UUID-shaped is insufficient.
+
+- [ ] Import one shared strict UUID validator across capability, bootstrap,
+  host-adapter, and rich-text routes. A guarded source test pins the imports
+  and rejects divergent literal copies.
 
 The handler body must call `readServerEnv()` and read the session cookie inside the request. It may pass those values down explicit call parameters for that request; it must not install them in a singleton or module closure.
 
@@ -627,7 +646,8 @@ git commit -m "refactor(frontend): proxy rich text saves through graphql"
   - deduplicates identical regions;
   - invalid ids/keys produce no call/chrome;
   - advisory `canEdit:false` produces no chrome;
-  - Enter and Space open; Escape closes and restores focus;
+  - native button Enter/Space activation opens exactly once, focus moves to
+    the dialog close control, and Escape closes and restores trigger focus;
   - controls are named by field, keyboard reachable, and at least 44px;
   - reduced motion disables animated transitions;
   - save reuses `MovpEditor` and advances revision id;
@@ -738,6 +758,7 @@ git commit -m "feat(editor-sdk): add accessible overlay subpath"
   `dist/`, an Astro/Vite manifest, or any build output. Parse/import-analyze
   only the bootstrap and its source graph, and pin:
   - no static import/re-export/reference to editor SDK/TipTap/React editor code;
+  - zero/invalid/mixed bound item ids fail closed before a capability request;
   - no probe occurs before the first pointer, keyboard, or focus interaction;
   - dynamic import occurs only after an exact `{canEdit:true}` response;
   - missing/false/malformed/error response never imports;
@@ -754,7 +775,10 @@ git commit -m "feat(editor-sdk): add accessible overlay subpath"
   after `astro build`, with lstat/symlink rejection and size bounds before
   every read. Pin that the bootstrap chunk has no static path to
   editor/React/TipTap chunks, that the overlay is a separate lazy chunk, and
-  that its stylesheet is emitted. Do not name this file `*.test.*`: the
+  that its stylesheet is emitted. The static walk also rejects TipTap or
+  ProseMirror runtime signatures and enforces a 64 KiB aggregate byte budget.
+  A build-independent synthetic graph test proves both failures using imports
+  that cannot be tree-shaken away. Do not name this file `*.test.*`: the
   existing `c7-delivery` job intentionally runs the default frontend Vitest
   suite before build, so default discovery must never collect a
   build-dependent assertion.
@@ -853,6 +877,8 @@ Expected:
 
 - the source-only bootstrap test passes before a build on a clean checkout;
 - the bundle gate runs only after build and proves the lazy chunk graph;
+- its synthetic graph tests fail on a marker-free ProseMirror chunk and an
+  oversized statically reachable set;
 - anonymous, non-interacting navigation makes zero capability requests;
 - the first interaction starts exactly one probe sequence (at most two HTTP
   attempts only for the bounded transient retry);

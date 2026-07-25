@@ -11,9 +11,14 @@ test.describe('inline overlay', () => {
   }) => {
     await seedSession(context)
     const probeResponses: number[] = []
+    const editableReads: string[] = []
     const cspViolations: string[] = []
     page.on('response', (response) => {
       if (response.url().includes('/capability')) probeResponses.push(response.status())
+      if (
+        response.request().method() === 'GET'
+        && response.url().includes('/richtext?fieldKey=')
+      ) editableReads.push(response.url())
     })
     page.on('console', (message) => {
       const text = message.text()
@@ -31,9 +36,12 @@ test.describe('inline overlay', () => {
     expect(probeResponses).toEqual([200])
 
     const trigger = page.getByRole('button', { name: 'Edit body', exact: true })
-    await trigger.click()
+    await trigger.focus()
+    await page.keyboard.press('Enter')
     const dialog = page.getByRole('dialog', { name: 'Edit body' })
     await expect(dialog).toBeVisible()
+    await expect(dialog.getByRole('button', { name: 'Close body editor' })).toBeFocused()
+    expect(editableReads).toHaveLength(1)
     await expect(dialog.getByRole('textbox', { name: 'Rich text editor' })).toBeVisible()
     const saveResponsePromise = page.waitForResponse((candidate) =>
       candidate.request().method() === 'POST'

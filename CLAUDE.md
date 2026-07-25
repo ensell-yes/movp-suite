@@ -180,7 +180,10 @@
   validation, XSS escaping, and exact depth/node/text bounds must stay pinned. Public delivery routes never
   statically import editor/TipTap code. A tiny interaction-deferred bootstrap may dynamically import the overlay
   only after a caller-bound, `no-store` capability probe returns exactly `{ canEdit: true }`; anonymous/member
-  paths must not reach an editor/TipTap chunk. The content-free negative marker is bounded to 60 seconds and is
+  paths must not reach an editor/TipTap chunk. The built-graph gate rejects editor-runtime signatures and enforces
+  a byte budget across every statically reachable chunk; its synthetic graph tests must defeat tree-shaking and
+  prove both failure modes. A delivery page may bind multiple fields from exactly one item; zero, invalid, or
+  mixed item ids fail closed before the probe. The content-free negative marker is bounded to 60 seconds and is
   valid only while the template remains bound to one `WORKSPACE_ID`.
 - Published revision `data` is wholly public in V1; there is no field-level private visibility. The read RPC
   returns only a names-only `richtext_field_keys` schema projection plus `richtext_field_keys_supported`, and
@@ -210,14 +213,19 @@
   then delegates to the existing hash-first `update_content` RPC; do not add a parallel revision writer. Signal
   ownership is distinct and exact: the resolver emits `content.richtext_save_resolver`, the Astro proxy emits
   `content.richtext_save`, and the successful DB write emits the single domain event
-  `content.revision_created`.
+  `content.revision_created`. Operational save signals carry `workspace_id_hash`; `error_code` is `ok` only for
+  success, `content_update_conflict` for conflict, and a bounded safe code for failure. The GraphQL edge always
+  mints its own `request_id` and `trace_id`; a valid inbound correlation header is retained only as
+  `client_request_id`.
 - The public overlay host resolves its token, server environment, and request id at handler call time. The
   `content-assets` function performs the caller-bound `edit` check before constructing any service-role
   dependency; denial, transport failure, and timeout remain distinct `403`/`500`/`503` outcomes.
 - The Astro CMS mounts one client-safe `RichTextFieldsIsland` over all rich-text fields and one shared revision.
   It reaches the server only through the bounded `/api/content/[id]/richtext` route, which resolves request-bound
   env/token state at call time, validates the field schema, merges one field, and emits one content-disciplined
-  event. Form saves still reload the page, so save rich-text first; the dirty-only `beforeunload` guard protects drafts.
+  event. Oversized request bodies cancel their reader immediately, and all overlay-facing UUID checks import the
+  shared strict validator. Form saves still reload the page, so save rich-text first; the dirty-only
+  `beforeunload` guard protects drafts.
 
 ## Task/CMS Agent Contracts
 

@@ -91,6 +91,13 @@ describe('rich-text field GraphQL surface', () => {
     expect(result.errors).toBeUndefined()
     expect(result.data).toEqual({ contentCanEdit: false })
     expect(state.reportContentCapabilityFailure).toHaveBeenCalledTimes(1)
+    expect(state.reportContentCapabilityFailure).toHaveBeenCalledWith({
+      requestId: state.value.requestId,
+      actorId: state.value.userId,
+      itemId: item.id,
+      workspaceId: item.workspace_id,
+      code: 'content_edit_check_failed',
+    })
     expect(JSON.stringify(state.reportContentCapabilityFailure.mock.calls)).not.toContain('XX000')
   })
 

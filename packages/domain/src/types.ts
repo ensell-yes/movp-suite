@@ -178,9 +178,9 @@ export type RichTextFieldUpdateInput = Readonly<{
 }>
 
 export type RichTextFieldUpdateResult =
-  | { status: 'saved'; revisionId: string }
-  | { status: 'conflict' }
-  | { status: 'error'; code: string }
+  | { status: 'saved'; revisionId: string; workspaceId?: string }
+  | { status: 'conflict'; workspaceId?: string }
+  | { status: 'error'; code: string; workspaceId?: string }
 
 export interface ContentService {
   createType(i: { workspaceId: string; key: string; label: string; fieldSchema: unknown; moderationPolicy?: string; approvalPolicy?: string }): Promise<ContentTypeRow>

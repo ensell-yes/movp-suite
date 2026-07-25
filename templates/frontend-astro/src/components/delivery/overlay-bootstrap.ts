@@ -1,6 +1,6 @@
 import { createOverlayHostOptions } from '../../lib/content-overlay.ts'
+import { UUID_PATTERN } from '../../lib/identifiers.ts'
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const NEGATIVE_TTL_MS = 60_000
 export const NEGATIVE_MARKER_KEY = 'movp-overlay-negative-v1'
 
@@ -97,8 +97,11 @@ export function installContentOverlayBootstrap(
   const fetchImpl = overrides.fetchImpl ?? fetch
   const loadOverlay = overrides.loadOverlay ?? defaultLoadOverlay
   const now = overrides.now ?? Date.now
-  const bound = doc.querySelector<HTMLElement>('[data-movp-item][data-movp-field]')
-  const itemId = bound?.dataset.movpItem ?? ''
+  const boundItemIds = new Set(
+    Array.from(doc.querySelectorAll<HTMLElement>('[data-movp-item][data-movp-field]'))
+      .map((element) => element.dataset.movpItem ?? ''),
+  )
+  const itemId = boundItemIds.size === 1 ? [...boundItemIds][0] ?? '' : ''
   let started = false
   let destroyed = false
   let overlay: OverlayHandle | null = null
@@ -111,7 +114,7 @@ export function installContentOverlayBootstrap(
     if (started || destroyed) return
     started = true
     removeListeners()
-    if (!UUID.test(itemId) || hasFreshNegative(storage, now())) return
+    if (!UUID_PATTERN.test(itemId) || hasFreshNegative(storage, now())) return
     void (async () => {
       let response: Response | null = null
       let operationalFailure = false

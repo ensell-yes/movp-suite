@@ -22,8 +22,9 @@ export type ContentSaveOperationalEvent = Readonly<{
   actorId: string
   itemId: string
   fieldKey: string
+  workspaceId?: string
   outcome: 'saved' | 'conflict' | 'error'
-  code?: string
+  errorCode: string
   latencyMs: number
 }>
 
@@ -31,6 +32,7 @@ export type ContentCapabilityFailureEvent = Readonly<{
   requestId: string
   actorId: string
   itemId: string
+  workspaceId?: string
   code: 'content_edit_check_failed'
 }>
 

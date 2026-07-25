@@ -7,6 +7,7 @@ import { sha256Hex } from '../src/index.ts'
 const itemId = 'd1000000-0000-4000-8000-000000000001'
 const actorId = 'd2000000-0000-4000-8000-000000000001'
 const requestId = 'd3000000-0000-4000-8000-000000000001'
+const workspaceId = 'd5000000-0000-4000-8000-000000000001'
 const submittedBody = '{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"PRIVATE"}]}]}'
 const reportContentSave = vi.fn()
 const updateRichTextField = vi.fn()
@@ -52,13 +53,25 @@ describe('rich-text field resolver observability', () => {
   })
 
   it.each([
-    [{ status: 'saved', revisionId: 'revision-2' }, 'saved', undefined],
-    [{ status: 'conflict' }, 'conflict', undefined],
-    [{ status: 'error', code: 'content_field_not_found' }, 'error', 'content_field_not_found'],
+    [
+      { status: 'saved', revisionId: 'revision-2', workspaceId },
+      'saved',
+      'ok',
+    ],
+    [
+      { status: 'conflict', workspaceId },
+      'conflict',
+      'content_update_conflict',
+    ],
+    [
+      { status: 'error', code: 'content_field_not_found', workspaceId },
+      'error',
+      'content_field_not_found',
+    ],
   ] as const)('emits exactly one content-disciplined resolver event for %#', async (
     domainResult,
     outcome,
-    code,
+    errorCode,
   ) => {
     updateRichTextField.mockResolvedValueOnce(domainResult)
 
@@ -70,8 +83,9 @@ describe('rich-text field resolver observability', () => {
       actorId,
       itemId,
       fieldKey: 'body',
+      workspaceId,
       outcome,
-      ...(code ? { code } : {}),
+      errorCode,
       latencyMs: expect.any(Number),
     })
     const serialized = JSON.stringify(reportContentSave.mock.calls)
@@ -102,7 +116,7 @@ describe('rich-text field resolver observability', () => {
       itemId: '00000000-0000-4000-8000-000000000000',
       fieldKey: 'invalid',
       outcome: 'error',
-      code: 'content_invalid_request',
+      errorCode: 'content_invalid_request',
     }))
     const serialized = JSON.stringify(reportContentSave.mock.calls)
     expect(serialized).not.toContain(maliciousItemId)

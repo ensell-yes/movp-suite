@@ -107,11 +107,13 @@ async function contentCanEdit(
   schema: MovpSchema,
   itemId: string,
 ): Promise<boolean> {
+  let workspaceId: string | undefined
   try {
     const item = await domainFromSchema(ctx, schema).content.get(itemId)
     if (!item) return false
+    workspaceId = item.workspace_id
     const { data, error } = await ctx.db.rpc('has_content_capability', {
-      ws: item.workspace_id,
+      ws: workspaceId,
       cap: 'edit',
     })
     if (error) throw new Error('content_edit_check_failed')
@@ -121,6 +123,7 @@ async function contentCanEdit(
       requestId: ctx.requestId ?? crypto.randomUUID(),
       actorId: ctx.userId,
       itemId: UUID.test(itemId) ? itemId : '00000000-0000-4000-8000-000000000000',
+      ...(workspaceId ? { workspaceId } : {}),
       code: 'content_edit_check_failed',
     })
     return false
@@ -139,6 +142,8 @@ async function updateRichTextFieldWithBoundary(
   const observedFieldKey = RICH_TEXT_FIELD_KEY.test(input.fieldKey) ? input.fieldKey : 'invalid'
   let outcome: 'saved' | 'conflict' | 'error' = 'error'
   let code: string | undefined
+  let errorCode = 'content_save_failed'
+  let workspaceId: string | undefined
   let result: RichTextFieldUpdateResult
 
   try {
@@ -148,10 +153,17 @@ async function updateRichTextFieldWithBoundary(
       || !RICH_TEXT_FIELD_KEY.test(input.fieldKey)
     ) {
       code = 'content_invalid_request'
+      errorCode = code
       result = { status: 'error', code }
     } else {
       result = await domainFromSchema(ctx, schema).content.updateRichTextField(input)
+      workspaceId = result.workspaceId
       outcome = result.status
+      errorCode = outcome === 'saved'
+        ? 'ok'
+        : outcome === 'conflict'
+          ? 'content_update_conflict'
+          : 'content_save_failed'
       if (result.status === 'conflict') {
         throw new GraphQLError('This content was updated by someone else.', {
           extensions: { code: 'CONFLICT', safeContentConflict: true },
@@ -159,6 +171,7 @@ async function updateRichTextFieldWithBoundary(
       }
       if (result.status === 'error') {
         code = safeContentSaveCode(result.code)
+        errorCode = code
         result = { status: 'error', code }
       }
     }
@@ -170,10 +183,12 @@ async function updateRichTextFieldWithBoundary(
       && error.extensions.code === 'CONFLICT'
     ) {
       outcome = 'conflict'
+      errorCode = 'content_update_conflict'
       throw error
     }
     outcome = 'error'
     code = 'content_save_failed'
+    errorCode = code
     return { status: 'error', code }
   } finally {
     await ctx.reportContentSave?.({
@@ -181,8 +196,9 @@ async function updateRichTextFieldWithBoundary(
       actorId: ctx.userId,
       itemId: observedItemId,
       fieldKey: observedFieldKey,
+      ...(workspaceId ? { workspaceId } : {}),
       outcome,
-      ...(code ? { code } : {}),
+      errorCode,
       latencyMs: Date.now() - startedAt,
     })
   }

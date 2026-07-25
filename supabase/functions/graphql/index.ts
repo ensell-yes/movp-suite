@@ -1,4 +1,5 @@
 import {
+  createRequestCorrelation,
   createYoga,
   sha256Hex,
   type ContentCapabilityFailureEvent,
@@ -12,12 +13,14 @@ import { GteSmallProvider } from '@movp/search/gte-small'
 
 const yoga = createYoga({ schema })
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
-
 Deno.serve(async (req: Request): Promise<Response> => {
   const incomingRequestId = req.headers.get('x-request-id') ?? ''
-  const requestId = UUID.test(incomingRequestId) ? incomingRequestId : crypto.randomUUID()
-  const traceId = crypto.randomUUID()
+  const { requestId, traceId, clientRequestId } = createRequestCorrelation(incomingRequestId)
+  const correlation = {
+    trace_id: traceId,
+    request_id: requestId,
+    ...(clientRequestId ? { client_request_id: clientRequestId } : {}),
+  }
   const env = {
     SUPABASE_URL: Deno.env.get('SUPABASE_URL')!,
     SUPABASE_ANON_KEY: Deno.env.get('SUPABASE_ANON_KEY')!,
@@ -27,8 +30,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
   const principal = await resolvePrincipal(req, env)
   if (!principal.ok) {
     emit({
-      trace_id: traceId,
-      request_id: requestId,
+      ...correlation,
       surface: 'graphql',
       operation: 'authenticate',
       error_code: principal.code,
@@ -44,8 +46,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
     const decision = decideAgentAccess(principal.agentAccess, 'cli')
     if (!decision.ok) {
       emit({
-        trace_id: traceId,
-        request_id: requestId,
+        ...correlation,
         actor_id: principal.userId,
         surface: 'graphql',
         operation: 'authorize',
@@ -63,8 +64,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
   const yogaReq = new Request(new URL(`/graphql${url.search}`, url.origin), req)
   const reportReportingFailure = async ({ operation, errorCode, workspaceId }: ReportingFailureEvent): Promise<void> => {
     emit({
-      trace_id: traceId,
-      request_id: requestId,
+      ...correlation,
       workspace_id_hash: await sha256Hex(workspaceId),
       actor_id: principal.userId,
       surface: 'graphql',
@@ -73,45 +73,53 @@ Deno.serve(async (req: Request): Promise<Response> => {
       redaction_version: REDACTION_VERSION,
     })
   }
-  const reportContentSave = ({
+  const reportContentSave = async ({
     requestId: saveRequestId,
     actorId,
     itemId,
     fieldKey,
+    workspaceId,
     outcome,
-    code,
+    errorCode,
     latencyMs,
-  }: ContentSaveOperationalEvent): void => {
+  }: ContentSaveOperationalEvent): Promise<void> => {
     const event = {
-      trace_id: traceId,
+      ...correlation,
       request_id: saveRequestId,
+      ...(workspaceId ? { workspace_id_hash: await sha256Hex(workspaceId) } : {}),
       actor_id: actorId,
       item_id: itemId,
       field_key: fieldKey,
       surface: 'graphql',
       operation: 'content.richtext_save_resolver',
-      error_code: code ?? outcome,
+      error_code: errorCode,
       latency_ms: latencyMs,
       redaction_version: REDACTION_VERSION,
-    } satisfies ObsEvent & { item_id: string; field_key: string }
+    } satisfies ObsEvent & {
+      client_request_id?: string
+      item_id: string
+      field_key: string
+    }
     emit(event)
   }
-  const reportContentCapabilityFailure = ({
+  const reportContentCapabilityFailure = async ({
     requestId: capabilityRequestId,
     actorId,
     itemId,
+    workspaceId,
     code,
-  }: ContentCapabilityFailureEvent): void => {
+  }: ContentCapabilityFailureEvent): Promise<void> => {
     const event = {
-      trace_id: traceId,
+      ...correlation,
       request_id: capabilityRequestId,
+      ...(workspaceId ? { workspace_id_hash: await sha256Hex(workspaceId) } : {}),
       actor_id: actorId,
       item_id: itemId,
       surface: 'graphql',
       operation: 'content.edit_capability',
       error_code: code,
       redaction_version: REDACTION_VERSION,
-    } satisfies ObsEvent & { item_id: string }
+    } satisfies ObsEvent & { client_request_id?: string; item_id: string }
     emit(event)
   }
   return yoga.handleRequest(yogaReq, {

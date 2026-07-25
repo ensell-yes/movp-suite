@@ -7,10 +7,10 @@ import {
   CONTENT_ITEM_QUERY,
   UPDATE_RICH_TEXT_FIELD_MUTATION,
 } from '../../../../lib/content-queries.ts'
+import { hashWorkspaceId } from '../../../../lib/delivery-observability.ts'
+import { UUID_PATTERN } from '../../../../lib/identifiers.ts'
 
 export const MAX_BODY_BYTES = 262_144
-
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 export type Outcome =
   | 'too_large'
@@ -59,21 +59,17 @@ export async function boundedText(request: Request, max: number): Promise<string
 
   const chunks: Uint8Array[] = []
   let total = 0
-  let tooLarge = false
   for (;;) {
     const { done, value } = await reader.read()
     if (done) break
-    if (tooLarge) continue
     total += value.byteLength
     if (total > max) {
-      tooLarge = true
       chunks.length = 0
-      continue
+      await reader.cancel()
+      return null
     }
     chunks.push(value)
   }
-
-  if (tooLarge) return null
 
   const merged = new Uint8Array(total)
   let offset = 0
@@ -152,6 +148,7 @@ export function emit(row: {
   fieldKey?: string
   startedAt: number
   requestId: string
+  workspaceIdHash?: string
 }): void {
   // Only validated identifiers and bounded metadata cross this logging boundary; never payloads or tokens.
   console.log(JSON.stringify({
@@ -160,17 +157,24 @@ export function emit(row: {
     item_id: row.itemId,
     field_key: row.fieldKey,
     request_id: row.requestId,
+    ...(row.workspaceIdHash ? { workspace_id_hash: row.workspaceIdHash } : {}),
     latency_ms: Date.now() - row.startedAt,
   }))
 }
 
-function finish(result: HandlerResult, startedAt: number, requestId: string): Response {
+function finish(
+  result: HandlerResult,
+  startedAt: number,
+  requestId: string,
+  workspaceIdHash?: string,
+): Response {
   emit({
     outcome: result.outcome,
     itemId: result.itemId,
     fieldKey: result.fieldKey,
     startedAt,
     requestId,
+    workspaceIdHash,
   })
   return Response.json(result.body, {
     status: result.status,
@@ -283,10 +287,13 @@ export const POST: APIRoute = async ({ params, request, cookies }) => {
   const startedAt = Date.now()
   const requestId = crypto.randomUUID()
   const id = String(params.id ?? '')
-  const validatedItemId = UUID.test(id) ? id : undefined
+  const validatedItemId = UUID_PATTERN.test(id) ? id : undefined
+  let workspaceIdHash: string | undefined
   let result: HandlerResult
 
   try {
+    const { graphqlEndpoint, workspaceId } = readServerEnv()
+    workspaceIdHash = await hashWorkspaceId(workspaceId)
     const token = getSessionToken(cookies)
     if (!token) {
       result = {
@@ -315,8 +322,8 @@ export const POST: APIRoute = async ({ params, request, cookies }) => {
         }
 
         const validInput = input
-          && UUID.test(id)
-          && UUID.test(input.expectedRevisionId)
+          && UUID_PATTERN.test(id)
+          && UUID_PATTERN.test(input.expectedRevisionId)
           && input.fieldKey.length > 0
           && fieldKeyBytes(input.fieldKey) <= 256
           && isDocShape(parsedBody)
@@ -330,7 +337,6 @@ export const POST: APIRoute = async ({ params, request, cookies }) => {
           }
         } else {
           // Resolve request-bound workerd env and credentials at call time, never at module initialization.
-          const { graphqlEndpoint } = readServerEnv()
           const write = await gqlRequest<RichTextFieldUpdatePayload>(
             { endpoint: graphqlEndpoint, token, requestId },
             UPDATE_RICH_TEXT_FIELD_MUTATION,
@@ -364,17 +370,20 @@ export const POST: APIRoute = async ({ params, request, cookies }) => {
     result = errorResult(validatedItemId)
   }
 
-  return finish(result, startedAt, requestId)
+  return finish(result, startedAt, requestId, workspaceIdHash)
 }
 
 export const GET: APIRoute = async ({ params, request, cookies }) => {
   const startedAt = Date.now()
   const requestId = crypto.randomUUID()
   const id = String(params.id ?? '')
-  const validatedItemId = UUID.test(id) ? id : undefined
+  const validatedItemId = UUID_PATTERN.test(id) ? id : undefined
+  let workspaceIdHash: string | undefined
   let result: HandlerResult
 
   try {
+    const { graphqlEndpoint, workspaceId } = readServerEnv()
+    workspaceIdHash = await hashWorkspaceId(workspaceId)
     const fieldKey = new URL(request.url).searchParams.get('fieldKey') ?? ''
     const token = getSessionToken(cookies)
     if (!token) {
@@ -383,7 +392,7 @@ export const GET: APIRoute = async ({ params, request, cookies }) => {
         status: 401,
         body: { status: 'error', code: 'auth_error' },
       }
-    } else if (!UUID.test(id) || !fieldKey || fieldKeyBytes(fieldKey) > 256) {
+    } else if (!UUID_PATTERN.test(id) || !fieldKey || fieldKeyBytes(fieldKey) > 256) {
       result = {
         outcome: 'validation',
         status: 422,
@@ -392,7 +401,6 @@ export const GET: APIRoute = async ({ params, request, cookies }) => {
       }
     } else {
       // Resolve request-bound workerd env and credentials at call time, never at module initialization.
-      const { graphqlEndpoint } = readServerEnv()
       const read = await gqlRequest<{ contentItem: ContentItemNode | null }>(
         { endpoint: graphqlEndpoint, token },
         CONTENT_ITEM_QUERY,
@@ -439,5 +447,5 @@ export const GET: APIRoute = async ({ params, request, cookies }) => {
     result = errorResult(validatedItemId)
   }
 
-  return finish(result, startedAt, requestId)
+  return finish(result, startedAt, requestId, workspaceIdHash)
 }

@@ -87,13 +87,21 @@ describe('content.updateRichTextField', () => {
       fieldKey: 'missing',
       body: '{}',
       expectedRevisionId: 'revision-1',
-    })).toEqual({ status: 'error', code: 'content_field_not_found' })
+    })).toEqual({
+      status: 'error',
+      code: 'content_field_not_found',
+      workspaceId: 'workspace-1',
+    })
     expect(await service.updateRichTextField({
       itemId: 'item-1',
       fieldKey: 'headline',
       body: '{}',
       expectedRevisionId: 'revision-1',
-    })).toEqual({ status: 'error', code: 'content_field_not_richtext' })
+    })).toEqual({
+      status: 'error',
+      code: 'content_field_not_richtext',
+      workspaceId: 'workspace-1',
+    })
   })
 
   it('merges only the named field and delegates exactly once to ContentService.update', async () => {
@@ -110,7 +118,11 @@ describe('content.updateRichTextField', () => {
       fieldKey: 'body',
       body: nextBody,
       expectedRevisionId: 'revision-1',
-    })).resolves.toEqual({ status: 'saved', revisionId: 'revision-2' })
+    })).resolves.toEqual({
+      status: 'saved',
+      revisionId: 'revision-2',
+      workspaceId: 'workspace-1',
+    })
 
     expect(update).toHaveBeenCalledTimes(1)
     expect(update).toHaveBeenCalledWith({
@@ -156,7 +168,11 @@ describe('content.updateRichTextField', () => {
       fieldKey: 'body',
       body: '<p>Hello</p>',
       expectedRevisionId: 'revision-1',
-    })).resolves.toEqual({ status: 'saved', revisionId: 'revision-2' })
+    })).resolves.toEqual({
+      status: 'saved',
+      revisionId: 'revision-2',
+      workspaceId: 'workspace-1',
+    })
 
     expect(rpc).toHaveBeenCalledTimes(1)
     expect(rpc).toHaveBeenCalledWith('update_content', expect.objectContaining({
@@ -182,13 +198,17 @@ describe('content.updateRichTextField', () => {
       fieldKey: 'body',
       body: revision.data.body,
       expectedRevisionId: 'revision-stale',
-    })).resolves.toEqual({ status: 'saved', revisionId: 'revision-current' })
+    })).resolves.toEqual({
+      status: 'saved',
+      revisionId: 'revision-current',
+      workspaceId: 'workspace-1',
+    })
     await expect(service.updateRichTextField({
       itemId: 'item-1',
       fieldKey: 'body',
       body: '{"type":"doc","content":[]}',
       expectedRevisionId: 'revision-stale',
-    })).resolves.toEqual({ status: 'conflict' })
+    })).resolves.toEqual({ status: 'conflict', workspaceId: 'workspace-1' })
   })
 
   it('never exposes operational or database messages as result codes', async () => {
@@ -203,7 +223,11 @@ describe('content.updateRichTextField', () => {
       body: '{"type":"doc","content":[]}',
       expectedRevisionId: 'revision-1',
     })
-    expect(result).toEqual({ status: 'error', code: 'content_save_failed' })
+    expect(result).toEqual({
+      status: 'error',
+      code: 'content_save_failed',
+      workspaceId: 'workspace-1',
+    })
     expect(JSON.stringify(result)).not.toContain('private database')
     expect(JSON.stringify(result)).not.toContain('secret')
   })
@@ -220,7 +244,11 @@ describe('content.updateRichTextField', () => {
       body: '{"type":"doc","content":[]}',
       expectedRevisionId: 'revision-1',
     })
-    expect(result).toEqual({ status: 'error', code: 'content_edit_forbidden' })
+    expect(result).toEqual({
+      status: 'error',
+      code: 'content_edit_forbidden',
+      workspaceId: 'workspace-1',
+    })
     expect(JSON.stringify(result)).not.toContain('private policy')
   })
 })

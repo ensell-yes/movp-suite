@@ -1,5 +1,5 @@
 import { createRoot, type Root } from 'react-dom/client'
-import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { MovpEditor } from './editor.tsx'
 import type { SaveResult } from './save.ts'
 
@@ -70,6 +70,7 @@ function RegionOverlay({
   options: OverlayOptions
 }) {
   const triggerRef = useRef<HTMLButtonElement>(null)
+  const closeButtonRef = useRef<HTMLButtonElement>(null)
   const [region, setRegion] = useState<OverlayRegion | null>(null)
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -106,6 +107,7 @@ function RegionOverlay({
 
   useEffect(() => {
     if (!open) return
+    closeButtonRef.current?.focus()
     const closeOnEscape = (event: globalThis.KeyboardEvent) => {
       if (event.key !== 'Escape') return
       event.preventDefault()
@@ -114,12 +116,6 @@ function RegionOverlay({
     document.addEventListener('keydown', closeOnEscape)
     return () => document.removeEventListener('keydown', closeOnEscape)
   }, [open])
-
-  const handleTriggerKey = (event: KeyboardEvent<HTMLButtonElement>) => {
-    if (event.key !== 'Enter' && event.key !== ' ') return
-    event.preventDefault()
-    void openEditor()
-  }
 
   const save = async (body: string): Promise<SaveResult> => {
     if (!region) return { status: 'error', code: 'save_failed' }
@@ -173,7 +169,6 @@ function RegionOverlay({
         aria-expanded={open}
         disabled={loading}
         onClick={() => void openEditor()}
-        onKeyDown={handleTriggerKey}
       >
         Edit
       </button>
@@ -185,6 +180,7 @@ function RegionOverlay({
           aria-label={`Edit ${reference.fieldKey}`}
         >
           <button
+            ref={closeButtonRef}
             type="button"
             className="movp-overlay__control"
             aria-label={`Close ${reference.fieldKey} editor`}

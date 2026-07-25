@@ -1,4 +1,5 @@
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+import { UUID_PATTERN } from './identifiers.ts'
+
 const FIELD_KEY = /^[A-Za-z][A-Za-z0-9_-]{0,127}$/
 const MAX_RESPONSE_BYTES = 1_048_576
 
@@ -64,7 +65,7 @@ export function createOverlayHostOptions(fetchImpl: typeof fetch = fetch): Overl
       return true
     },
     async resolveEditable(reference) {
-      if (!UUID.test(reference.itemId) || !FIELD_KEY.test(reference.fieldKey)) return null
+      if (!UUID_PATTERN.test(reference.itemId) || !FIELD_KEY.test(reference.fieldKey)) return null
       const response = await fetchImpl(
         `/api/content/${encodeURIComponent(reference.itemId)}/richtext?fieldKey=${encodeURIComponent(reference.fieldKey)}`,
         { credentials: 'same-origin', cache: 'no-store', headers: { accept: 'application/json' } },
@@ -80,7 +81,7 @@ export function createOverlayHostOptions(fetchImpl: typeof fetch = fetch): Overl
       return { ...reference, body: value.body, revisionId: value.revisionId }
     },
     async save(region, body) {
-      if (!UUID.test(region.itemId) || !FIELD_KEY.test(region.fieldKey)) {
+      if (!UUID_PATTERN.test(region.itemId) || !FIELD_KEY.test(region.fieldKey)) {
         return { status: 'error', code: 'invalid_request' }
       }
       let response: Response

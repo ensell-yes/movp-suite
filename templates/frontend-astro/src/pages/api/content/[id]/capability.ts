@@ -3,8 +3,7 @@ import { readServerEnv } from '../../../../lib/env.ts'
 import { gqlRequest } from '../../../../lib/graphql.ts'
 import { getSessionToken } from '../../../../lib/session.ts'
 import { CONTENT_CAN_EDIT_QUERY } from '../../../../lib/content-queries.ts'
-
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+import { UUID_PATTERN } from '../../../../lib/identifiers.ts'
 
 function response(canEdit: boolean): Response {
   return Response.json({ canEdit }, {
@@ -16,7 +15,7 @@ function response(canEdit: boolean): Response {
 export const GET: APIRoute = async ({ params, cookies }) => {
   const itemId = String(params.id ?? '')
   const token = getSessionToken(cookies)
-  if (!token || !UUID.test(itemId)) return response(false)
+  if (!token || !UUID_PATTERN.test(itemId)) return response(false)
 
   const requestId = crypto.randomUUID()
   try {

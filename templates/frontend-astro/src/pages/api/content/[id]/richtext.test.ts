@@ -16,6 +16,9 @@ vi.mock('../../../../lib/env.ts', () => ({
 }))
 vi.mock('../../../../lib/session.ts', () => ({ getSessionToken: () => h.token }))
 vi.mock('../../../../lib/graphql.ts', () => ({ gqlRequest: h.gql }))
+vi.mock('../../../../lib/delivery-observability.ts', () => ({
+  hashWorkspaceId: async () => 'workspace-hash',
+}))
 
 import {
   GET,
@@ -75,10 +78,12 @@ function spyLogs() {
   })
 }
 
-function expectEvent(outcome: string) {
+function expectEvent(outcome: string, hasWorkspaceHash = true) {
   expect(logs).toHaveLength(1)
   const line = JSON.parse(logs[0]!) as Record<string, unknown>
   expect(line.outcome).toBe(outcome)
+  if (hasWorkspaceHash) expect(line.workspace_id_hash).toBe('workspace-hash')
+  else expect(line.workspace_id_hash).toBeUndefined()
   expect(logs[0]).not.toContain('tok')
   expect(logs[0]).not.toContain('"text":"hi"')
   return line
@@ -205,7 +210,7 @@ describe('POST outcomes — exactly one content-disciplined event each', () => {
     spyLogs()
     const res = await post({ fieldKey: 'body', body: okDoc, expectedRevisionId: REV })
     expect(res.status).toBe(500)
-    expectEvent('error')
+    expectEvent('error', false)
   })
 
   it('resolves env and the HttpOnly token independently for every request', async () => {
@@ -251,7 +256,7 @@ describe('GET returns the field body + revision', () => {
 })
 
 describe('boundedText', () => {
-  it('drains without cancelling when the stream exceeds the cap', async () => {
+  it('cancels immediately without reading trailing chunks when the stream exceeds the cap', async () => {
     let step = 0
     let trailingChunkRead = false
     let cancelled = false
@@ -272,8 +277,8 @@ describe('boundedText', () => {
     const request = { body: stream } as Request
 
     expect(await boundedText(request, 5)).toBeNull()
-    expect(trailingChunkRead).toBe(true)
-    expect(cancelled).toBe(false)
+    expect(trailingChunkRead).toBe(false)
+    expect(cancelled).toBe(true)
   })
 
   it('returns the decoded body under the cap', async () => {
@@ -338,6 +343,7 @@ describe('emit content discipline', () => {
       fieldKey: 'body',
       startedAt: Date.now(),
       requestId: 'd3000000-0000-4000-8000-000000000001',
+      workspaceIdHash: 'workspace-hash',
     })
     spy.mockRestore()
     expect(lines).toHaveLength(1)
@@ -347,6 +353,7 @@ describe('emit content discipline', () => {
     expect(parsed.field_key).toBe('body')
     expect(typeof parsed.latency_ms).toBe('number')
     expect(parsed.request_id).toBeTruthy()
+    expect(parsed.workspace_id_hash).toBe('workspace-hash')
     expect(Object.keys(parsed)).not.toContain('body')
     expect(Object.keys(parsed)).not.toContain('token')
   })

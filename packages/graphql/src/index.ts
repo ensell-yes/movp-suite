@@ -3,6 +3,10 @@ export { createYoga, type CreateYogaOpts } from './yoga.ts'
 export { loadEdgeTargets } from './relations.ts'
 export { sha256Hex } from './hash.ts'
 export {
+  createRequestCorrelation,
+  type RequestCorrelation,
+} from './request-correlation.ts'
+export {
   clampPageSize,
   DEFAULT_PAGE_SIZE,
   MAX_PAGE_SIZE,

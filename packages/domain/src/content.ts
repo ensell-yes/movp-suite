@@ -272,23 +272,25 @@ export function makeContentService(ctx: DomainCtx): ContentService {
     },
 
     async updateRichTextField(input) {
+      let workspaceId: string | undefined
       try {
         const detail = await getContentDetail(input.itemId)
         if (!detail) return { status: 'error', code: 'content_item_not_found' }
+        workspaceId = detail.item.workspace_id
         if (!detail.type || !isValidFieldSchema(detail.type.field_schema)) {
-          return { status: 'error', code: 'content_schema_invalid' }
+          return { status: 'error', code: 'content_schema_invalid', workspaceId }
         }
         const field = detail.type.field_schema.find((candidate) => candidate.name === input.fieldKey)
-        if (!field) return { status: 'error', code: 'content_field_not_found' }
+        if (!field) return { status: 'error', code: 'content_field_not_found', workspaceId }
         if (field.type !== 'richtext') {
-          return { status: 'error', code: 'content_field_not_richtext' }
+          return { status: 'error', code: 'content_field_not_richtext', workspaceId }
         }
         if (!detail.currentRevision) {
-          return { status: 'error', code: 'content_revision_not_found' }
+          return { status: 'error', code: 'content_revision_not_found', workspaceId }
         }
         const currentData = detail.currentRevision.data
         if (!currentData || typeof currentData !== 'object' || Array.isArray(currentData)) {
-          return { status: 'error', code: 'content_revision_invalid' }
+          return { status: 'error', code: 'content_revision_invalid', workspaceId }
         }
 
         const updated = await service.update({
@@ -297,20 +299,20 @@ export function makeContentService(ctx: DomainCtx): ContentService {
           expectedRevisionId: input.expectedRevisionId,
         })
         if (!updated.current_revision_id) {
-          return { status: 'error', code: 'content_save_failed' }
+          return { status: 'error', code: 'content_save_failed', workspaceId }
         }
-        return { status: 'saved', revisionId: updated.current_revision_id }
+        return { status: 'saved', revisionId: updated.current_revision_id, workspaceId }
       } catch (error: unknown) {
         if (
           error instanceof Error
           && /\[(?:content_update_conflict|40001)\]/.test(error.message)
         ) {
-          return { status: 'conflict' }
+          return { status: 'conflict', workspaceId }
         }
         if (error instanceof Error && /\[42501\]/.test(error.message)) {
-          return { status: 'error', code: 'content_edit_forbidden' }
+          return { status: 'error', code: 'content_edit_forbidden', workspaceId }
         }
-        return { status: 'error', code: 'content_save_failed' }
+        return { status: 'error', code: 'content_save_failed', workspaceId }
       }
     },
 
