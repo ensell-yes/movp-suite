@@ -97,6 +97,8 @@ export const REQUIRED_JOBS = {
   },
   'c7-inline-overlay': {
     runs: [
+      'supabase start',
+      'supabase db reset',
       'pnpm --filter @movp/editor-sdk test',
       'pnpm --filter @movp/editor-sdk typecheck',
       'pnpm --filter @movp/editor-sdk build',
@@ -109,8 +111,6 @@ export const REQUIRED_JOBS = {
       'pnpm --filter @movp/frontend-astro exec node scripts/check-overlay-bundle.mjs',
       'pnpm --filter @movp/frontend-astro exec playwright install --with-deps chromium',
       'pnpm --filter @movp/frontend-astro exec playwright test --grep "inline overlay"',
-      'supabase start',
-      'supabase db reset',
       'supabase test db supabase/tests/content_edit_capability_test.sql',
     ],
   },

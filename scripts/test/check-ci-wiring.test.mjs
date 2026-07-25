@@ -543,6 +543,8 @@ ${ARMED_JOB}
   c7-inline-overlay:
     runs-on: ubuntu-latest
     steps:
+      - run: supabase start
+      - run: supabase db reset
       - run: pnpm --filter @movp/editor-sdk test
       - run: pnpm --filter @movp/editor-sdk typecheck
       - run: pnpm --filter @movp/editor-sdk build
@@ -555,8 +557,6 @@ ${ARMED_JOB}
       - run: pnpm --filter @movp/frontend-astro exec node scripts/check-overlay-bundle.mjs
       - run: pnpm --filter @movp/frontend-astro exec playwright install --with-deps chromium
       - run: pnpm --filter @movp/frontend-astro exec playwright test --grep "inline overlay"
-      - run: supabase start
-      - run: supabase db reset
       - run: supabase test db supabase/tests/content_edit_capability_test.sql
 
   template-gallery:
