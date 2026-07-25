@@ -38,6 +38,8 @@
 
 - `supabase/migrations/20260723000002_content_edit_capability.sql`
 - `supabase/tests/content_edit_capability_test.sql`
+- `supabase/functions/content-assets/index.test.ts`
+- `supabase/functions/content-assets/handler.ts`
 - `packages/domain/test/content-richtext-field.test.ts`
 - `packages/graphql/test/content-richtext-field.test.ts`
 - `packages/graphql/test/content-richtext-observability.test.ts`
@@ -149,6 +151,17 @@ repo.
 | inbound campaign `produces` edge | existing member allow | non-member deny |
 | content comments/collaboration | existing rules | existing rules |
 
+Preserve and pin the caller-identity side of the write boundary:
+
+- `content_revision.author_id = auth.uid()`;
+- `content_approval_vote.voter_id = auth.uid()`;
+- `content_publish_event.actor_id = auth.uid()`;
+- `content_schedule.scheduled_by = auth.uid()`.
+
+The last three are intentional anti-impersonation tightenings over the previous
+membership-only policies. Add direct denial cases proving an owner/admin cannot
+submit another user's voter, publisher, or scheduler identity.
+
 The edge regression must use direct PostgREST-equivalent SQL under `set local role authenticated` and JWT claims:
 
 1. member insert `src_type='campaign_deliverable', rel='produces', dst_type='content_item'` succeeds;
@@ -172,9 +185,11 @@ The edge regression must use direct PostgREST-equivalent SQL under `set local ro
   The test must also fail if any INSERT/UPDATE/DELETE policy on that exact CMS
   table set is absent from or extra to the allowlist. SELECT policies and the
   explicitly unchanged collaboration tables are outside that comparison.
-  Sabotage proof: replacing the `content_schedule` capability literal with
-  `edit` makes this catalog assertion fail even though owner/admin behavior is
-  otherwise identical.
+  Derive the complete set of capability literals in each policy and require it
+  to equal the expected singleton. Sabotage proofs: replacing the
+  `content_schedule` capability literal with `edit`, or OR-ing an additional
+  `edit` check into its `publish` policy, must fail even though owner/admin
+  behavior is otherwise identical.
 
   Policy names use `<table>_<capability>_<command>`, for example
   `content_item_edit_insert`, `content_approval_vote_approve_insert`, and
@@ -228,7 +243,18 @@ must retain that audited boundary while deriving identity only from
   - `content_seo` -> `edit`;
   - content-originated `edges` -> conditional `edit`.
 
+Keep the identity columns caller-bound in the same policies:
+`content_approval_vote.voter_id`, `content_publish_event.actor_id`, and
+`content_schedule.scheduled_by` must equal `auth.uid()`; the existing
+`content_revision.author_id = auth.uid()` check remains unchanged.
+
 PostgreSQL combines permissive policies with OR. Therefore, drop/replace the old member-write policy before adding an `edit` policy; leaving the old policy in place is a bypass.
+
+For ordinary CMS UPDATE policies, keep member visibility in
+`using (public.is_workspace_member(workspace_id))` and put the required
+capability in `with check`. This makes a direct member update fail loudly with
+`42501` instead of succeeding as a zero-row no-op. DELETE has no `with check`,
+so its unauthorized zero-row behavior is structural and must be documented.
 
 For `edges`, preserve the exact directional predicate in both `using` and `with check`:
 
@@ -249,7 +275,9 @@ Adapt column lookup to the real schema if `workspace_id` is reached through an e
      false result;
   5. map an operational capability-check failure to
      `500 {error:'content_edit_check_failed'}` and a bounded timeout to `503`
-     with the same safe code, emitting exactly one content-disciplined event;
+     with the same safe code, emitting exactly one content-disciplined event
+     with `workspace_id_hash` and bounded
+     `reason:'transport'|'timeout'`;
   6. only then create/use the service-role client for a privileged write.
 
 Do not parse a client-supplied workspace for `finalize`; derive it from the caller-visible asset row. Add Edge unit/integration coverage proving the admin client is never invoked on denial.
@@ -264,6 +292,7 @@ supabase db reset
 supabase test db supabase/tests/content_edit_capability_test.sql
 supabase test db
 pnpm test:forward-only-migrations
+deno test --no-lock supabase/functions/content-assets/index.test.ts
 deno check --no-lock supabase/functions/content-assets/index.ts
 ```
 

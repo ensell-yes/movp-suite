@@ -1,5 +1,5 @@
 begin;
-select plan(32);
+select plan(33);
 
 insert into public.workspace (id, name) values
   ('11111111-1111-1111-1111-111111111111', 'W1');
@@ -35,13 +35,13 @@ insert into public.content_approval (id, workspace_id, content_item_id, state, p
    '00000001-0000-0000-0000-000000000000', 'pending', 'single', 1);
 
 select policies_are('public', 'content_approval',
-  ARRAY['content_approval_select', 'content_approval_insert', 'content_approval_update'],
+  ARRAY['content_approval_select', 'content_approval_edit_insert', 'content_approval_approve_update'],
   'content_approval has exactly the workflow policies (no surviving _rw)');
 select policies_are('public', 'content_approval_vote',
-  ARRAY['content_approval_vote_select', 'content_approval_vote_insert'],
+  ARRAY['content_approval_vote_select', 'content_approval_vote_approve_insert'],
   'content_approval_vote is SELECT+INSERT only (no surviving _rw)');
 select policies_are('public', 'content_publish_event',
-  ARRAY['content_publish_event_select', 'content_publish_event_insert'],
+  ARRAY['content_publish_event_select', 'content_publish_event_publish_insert'],
   'content_publish_event is SELECT+INSERT only (no surviving _rw)');
 
 set local role authenticated;
@@ -54,7 +54,11 @@ select ok(not public.has_content_capability('11111111-1111-1111-1111-11111111111
 
 select throws_ok(
   $$ update public.content_approval set state='approved' where id='000000a9-0000-0000-0000-000000000000' $$,
-  '42501', null, 'a member without approve cap cannot decide an approval');
+  '42501', null, 'a member without approve cap gets a loud approval denial');
+select is(
+  (select state from public.content_approval where id='000000a9-0000-0000-0000-000000000000'),
+  'pending',
+  'a member without approve cap changes no approval row');
 select throws_ok(
   $$ insert into public.content_publish_event (workspace_id, content_item_id, action, revision_id, content_hash, actor_id)
      values ('11111111-1111-1111-1111-111111111111','00000001-0000-0000-0000-000000000000','publish',
