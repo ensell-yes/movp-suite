@@ -758,13 +758,21 @@ export async function boundedText(request: Request, max: number): Promise<string
   if (!reader) return ''
   const chunks: Uint8Array[] = []
   let total = 0
+  let tooLarge = false
+  // Workerd requires the body to be consumed before responding; drop buffered bytes, then drain.
   for (;;) {
     const { done, value } = await reader.read()
     if (done) break
+    if (tooLarge) continue
     total += value.byteLength
-    if (total > max) { await reader.cancel(); return null }
+    if (total > max) {
+      tooLarge = true
+      chunks.length = 0
+      continue
+    }
     chunks.push(value)
   }
+  if (tooLarge) return null
   const merged = new Uint8Array(total)
   let at = 0
   for (const c of chunks) { merged.set(c, at); at += c.byteLength }

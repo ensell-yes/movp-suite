@@ -256,7 +256,12 @@ describe('GET returns the field body + revision', () => {
 })
 
 describe('boundedText', () => {
-  it('cancels immediately without reading trailing chunks when the stream exceeds the cap', async () => {
+  // Draining is load-bearing, not wasteful: responding while the request body is still
+  // unconsumed corrupts the next request on the same workerd connection, which surfaces as
+  // "Your worker threw an exception" on the FOLLOWING request. Cancelling does not help —
+  // only reading to completion does. A mocked stream cannot observe that, so this test
+  // pins the drain itself; tests/e2e/content.spec.ts covers the real runtime behaviour.
+  it('drains an oversized stream to completion without cancelling, and buffers nothing', async () => {
     let step = 0
     let trailingChunkRead = false
     let cancelled = false
@@ -277,8 +282,8 @@ describe('boundedText', () => {
     const request = { body: stream } as Request
 
     expect(await boundedText(request, 5)).toBeNull()
-    expect(trailingChunkRead).toBe(false)
-    expect(cancelled).toBe(true)
+    expect(trailingChunkRead).toBe(true)
+    expect(cancelled).toBe(false)
   })
 
   it('returns the decoded body under the cap', async () => {

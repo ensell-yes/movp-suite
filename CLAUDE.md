@@ -223,9 +223,10 @@
 - The Astro CMS mounts one client-safe `RichTextFieldsIsland` over all rich-text fields and one shared revision.
   It reaches the server only through the bounded `/api/content/[id]/richtext` route, which resolves request-bound
   env/token state at call time, validates the field schema, merges one field, and emits one content-disciplined
-  event. Oversized request bodies cancel their reader immediately, and all overlay-facing UUID checks import the
-  shared strict validator. Form saves still reload the page, so save rich-text first; the dirty-only
-  `beforeunload` guard protects drafts.
+  event. Oversized request bodies drop buffered chunks but drain the request stream to completion before
+  responding; cancelling or abandoning an unconsumed body corrupts the next request on the same workerd
+  connection. All overlay-facing UUID checks import the shared strict validator. Form saves still reload the
+  page, so save rich-text first; the dirty-only `beforeunload` guard protects drafts.
 
 ## Task/CMS Agent Contracts
 

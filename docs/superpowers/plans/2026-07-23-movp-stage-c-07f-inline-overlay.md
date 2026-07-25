@@ -589,7 +589,9 @@ git commit -m "feat(graphql): expose rich text field editing"
     correlation header;
   - it resolves `readServerEnv()` and HttpOnly token during each request;
   - it retains Astro origin checking and bounded request parsing;
-  - it cancels the request reader immediately after the first over-limit chunk;
+  - it drops buffered chunks after the first over-limit chunk but drains the
+    body before responding, because cancelling or abandoning an unconsumed
+    body corrupts the next request on the same workerd connection;
   - conflict and safe error mappings match the existing client contract;
   - response is `no-store`;
   - exactly one `content.richtext_save` proxy log remains;

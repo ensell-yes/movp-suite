@@ -59,17 +59,24 @@ export async function boundedText(request: Request, max: number): Promise<string
 
   const chunks: Uint8Array[] = []
   let total = 0
+  let tooLarge = false
+  // The body must be drained to completion even once oversized: on workerd, responding
+  // with an unconsumed request body corrupts the next request on the connection.
+  // Memory stays bounded because the buffered chunks are dropped, not the read loop.
   for (;;) {
     const { done, value } = await reader.read()
     if (done) break
+    if (tooLarge) continue
     total += value.byteLength
     if (total > max) {
+      tooLarge = true
       chunks.length = 0
-      await reader.cancel()
-      return null
+      continue
     }
     chunks.push(value)
   }
+
+  if (tooLarge) return null
 
   const merged = new Uint8Array(total)
   let offset = 0
