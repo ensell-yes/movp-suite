@@ -3,6 +3,9 @@ uplinks:
   npmjs:
     url: https://registry.npmjs.org/
 packages:
+  '@movp/acl-denied':
+    access: $authenticated
+    publish: $authenticated
   '@movp/*':
     access: $all
     publish: $all
