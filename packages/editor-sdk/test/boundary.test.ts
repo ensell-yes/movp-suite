@@ -41,4 +41,13 @@ describe('client boundary', () => {
       expect(configuredCount, file).toBe(referenceCount)
     }
   })
+
+  it('disables TipTap inline style injection at every editor construction', () => {
+    for (const file of walkRegularFiles(SRC)) {
+      const source = readFileSync(file, 'utf8')
+      const editorCount = source.match(/\buseEditor\(\s*\{/g)?.length ?? 0
+      const strictCount = source.match(/\binjectCSS:\s*false\b/g)?.length ?? 0
+      expect(strictCount, file).toBe(editorCount)
+    }
+  })
 })

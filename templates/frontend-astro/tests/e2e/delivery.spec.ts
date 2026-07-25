@@ -11,6 +11,9 @@ test.describe('published delivery', () => {
 
     expect(response?.status()).toBe(200)
     expect(response?.headers()['cache-control']).toBe('public, s-maxage=60')
+    expect(response?.headers()['content-security-policy']).toBe(
+      "default-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'; img-src https: data:; script-src 'self'; connect-src 'self'; style-src 'self'",
+    )
     await expect(page).toHaveTitle('Published page')
     await expect(page.locator('link[rel="canonical"]')).toHaveAttribute(
       'href',

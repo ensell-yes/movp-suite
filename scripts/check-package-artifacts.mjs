@@ -170,6 +170,9 @@ for (const dirName of publishable) {
       ) {
         throw new Error('package artifact check failed: @movp/editor-sdk overlay export is absent')
       }
+      if (packedManifest.exports?.['./overlay.css'] !== './dist/overlay.css') {
+        throw new Error('package artifact check failed: @movp/editor-sdk overlay stylesheet export is absent')
+      }
       for (const artifact of [
         'package/dist/overlay.js',
         'package/dist/overlay.d.ts',

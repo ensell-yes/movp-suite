@@ -421,6 +421,28 @@ const publishedDelivery = {
     name: 'Published page',
   },
 }
+const deliveryContentType = {
+  id: 'ct-delivery',
+  key: 'article',
+  label: 'Article',
+  field_schema: JSON.stringify([
+    { name: 'title', type: 'text', label: 'Title' },
+    { name: 'body', type: 'richtext', label: 'Body' },
+    { name: 'bodyHtml', type: 'richtext', label: 'Body HTML' },
+  ]),
+}
+const deliveryEditableItem = {
+  id: deliveryItemId,
+  slug: deliveryRoute.slug,
+  status: 'published',
+  content_type_id: deliveryContentType.id,
+  data: JSON.stringify(publishedDelivery.data),
+  current_revision_id: deliveryRevisionId,
+  approved_revision_id: deliveryRevisionId,
+  published_revision_id: deliveryRevisionId,
+  updated_at: deliveryRoute.published_at,
+  content_type: deliveryContentType,
+}
 
 createServer(async (req, res) => {
   const url = new URL(req.url ?? '/', `http://127.0.0.1:${port}`)
@@ -612,6 +634,10 @@ createServer(async (req, res) => {
   if (query.includes('query ContentTypes')) {
     return json(res, 200, { data: { contentTypes: scenario === 'empty' ? [] : contentTypes } })
   }
+  if (query.includes('query ContentCanEdit')) {
+    bump(token, 'contentCanEdit')
+    return json(res, 200, { data: { contentCanEdit: scenario !== 'member' } })
+  }
   if (query.includes('query Content(')) {
     const items = scenario === 'empty' ? [] : [...contentItems, rtStateFor(token).item]
     return json(res, 200, { data: { content: { items, nextCursor: null } } })
@@ -621,6 +647,8 @@ createServer(async (req, res) => {
     const requested = parsed.variables?.id
     const item = requested === RT_ITEM_ID
       ? rtStateFor(token).item
+      : requested === deliveryItemId
+        ? deliveryEditableItem
       : contentItems.find((candidate) => candidate.id === requested) ?? null
     return json(res, 200, { data: { contentItem: scenario === 'empty' ? null : item } })
   }
@@ -644,6 +672,90 @@ createServer(async (req, res) => {
   }
   if (query.includes('mutation RunSeoAudit')) {
     return json(res, 200, { data: { runSeoAudit: { score: 87, checklist: JSON.stringify([{ rule: 'headline', pass: true }]) } } })
+  }
+  if (query.includes('mutation UpdateRichTextField')) {
+    bump(token, 'updateRichTextField')
+    const input = parsed.variables?.input ?? {}
+    if (scenario === 'conflict' && input.itemId === deliveryItemId) {
+      return json(res, 200, {
+        errors: [{
+          message: 'This content was updated by someone else.',
+          extensions: { code: 'CONFLICT' },
+        }],
+      })
+    }
+    if (scenario === 'save-error' && input.itemId === deliveryItemId) {
+      return json(res, 200, {
+        data: {
+          updateRichTextField: {
+            status: 'error',
+            revisionId: null,
+            code: 'content_edit_forbidden',
+          },
+        },
+      })
+    }
+    if (input.itemId === RT_ITEM_ID) {
+      const state = rtStateFor(token)
+      const current = JSON.parse(state.item.data)
+      const submitted = { ...current, [input.fieldKey]: input.body }
+      const submittedData = JSON.stringify(submitted)
+      const currentRevision = state.revisions.find(
+        (revision) => revision.id === state.item.current_revision_id,
+      )
+      if (currentRevision?.data === submittedData) {
+        return json(res, 200, {
+          data: {
+            updateRichTextField: {
+              status: 'saved',
+              revisionId: state.item.current_revision_id,
+              code: null,
+            },
+          },
+        })
+      }
+      if (
+        typeof input.expectedRevisionId === 'string'
+        && input.expectedRevisionId !== state.item.current_revision_id
+      ) {
+        return json(res, 200, {
+          errors: [{
+            message: 'This content was updated by someone else.',
+            extensions: { code: 'CONFLICT' },
+          }],
+        })
+      }
+      state.revSeq += 1
+      const revisionId = rtRevId(state.revSeq)
+      state.revisions.push({
+        id: revisionId,
+        parent_id: state.item.current_revision_id,
+        revision_number: state.revSeq,
+        data: submittedData,
+        author_id: 'u1',
+        created_at: '2026-07-02T00:00:00Z',
+      })
+      state.item.current_revision_id = revisionId
+      state.item.data = submittedData
+      return json(res, 200, {
+        data: {
+          updateRichTextField: {
+            status: 'saved',
+            revisionId,
+            code: null,
+          },
+        },
+      })
+    }
+    return json(res, 200, {
+      data: {
+        updateRichTextField: {
+          status: 'saved',
+          revisionId: '33333333-3333-4333-8333-333333333333',
+          code: null,
+        },
+      },
+    })
   }
   if (query.includes('mutation UpdateContent')) {
     const vid = parsed.variables?.id

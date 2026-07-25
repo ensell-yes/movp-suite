@@ -58,6 +58,7 @@ export function MovpEditor({
 
   const editor = useEditor({
     extensions: [StarterKit.configure({ dropcursor: false })],
+    injectCSS: false,
     editable: !readOnly,
     immediatelyRender: false, // TipTap 2.27.2 warns on SSR unless false (useEditor.ts:110)
     editorProps: {

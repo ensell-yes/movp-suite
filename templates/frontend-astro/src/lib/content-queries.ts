@@ -64,6 +64,11 @@ export const CONTENT_ITEM_QUERY = /* GraphQL */ `
     }
   }`
 
+export const CONTENT_CAN_EDIT_QUERY = /* GraphQL */ `
+  query ContentCanEdit($itemId: ID!) {
+    contentCanEdit(itemId: $itemId)
+  }`
+
 export const CONTENT_REVISIONS_QUERY = /* GraphQL */ `
   query ContentRevisions($itemId: ID!) {
     contentRevisions(itemId: $itemId) { id parent_id revision_number data author_id created_at }

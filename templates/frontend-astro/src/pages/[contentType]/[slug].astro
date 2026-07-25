@@ -134,7 +134,7 @@ try {
 
 await recordDeliveryEvent(observation)
 Astro.response.headers.set('Cache-Control', state === 'found' ? CACHE_SUCCESS : CACHE_FAILURE)
-Astro.response.headers.set('Content-Security-Policy', "default-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'; img-src https: data:; script-src 'self'; style-src 'self'")
+Astro.response.headers.set('Content-Security-Policy', "default-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'; img-src https: data:; script-src 'self'; connect-src 'self'; style-src 'self'")
 Astro.response.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin')
 Astro.response.headers.set('X-Content-Type-Options', 'nosniff')
 if (state !== 'found') Astro.response.status = state === 'not_found' ? 404 : errorStatus
@@ -165,5 +165,9 @@ if (state !== 'found') Astro.response.status = state === 'not_found' ? 404 : err
         </>
       )}
     </main>
+    <script>
+      import { installContentOverlayBootstrap } from '../../components/delivery/overlay-bootstrap.ts'
+      installContentOverlayBootstrap()
+    </script>
   </body>
 </html>

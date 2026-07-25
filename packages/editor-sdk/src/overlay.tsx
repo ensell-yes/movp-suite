@@ -1,8 +1,7 @@
 import { createRoot, type Root } from 'react-dom/client'
-import { useRef, useState, type KeyboardEvent } from 'react'
+import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { MovpEditor } from './editor.tsx'
 import type { SaveResult } from './save.ts'
-import './overlay.css'
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const FIELD_KEY = /^[A-Za-z][A-Za-z0-9_-]{0,127}$/
@@ -105,16 +104,21 @@ function RegionOverlay({
     queueMicrotask(() => triggerRef.current?.focus())
   }
 
+  useEffect(() => {
+    if (!open) return
+    const closeOnEscape = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      closeEditor()
+    }
+    document.addEventListener('keydown', closeOnEscape)
+    return () => document.removeEventListener('keydown', closeOnEscape)
+  }, [open])
+
   const handleTriggerKey = (event: KeyboardEvent<HTMLButtonElement>) => {
     if (event.key !== 'Enter' && event.key !== ' ') return
     event.preventDefault()
     void openEditor()
-  }
-
-  const handleDialogKey = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (event.key !== 'Escape') return
-    event.preventDefault()
-    closeEditor()
   }
 
   const save = async (body: string): Promise<SaveResult> => {
@@ -127,7 +131,7 @@ function RegionOverlay({
     }
     if (result.status === 'saved') {
       setRegion((current) => current
-        ? { ...current, body, revisionId: result.revisionId }
+        ? { ...current, revisionId: result.revisionId }
         : current)
       setSaveError(undefined)
     } else if (result.status === 'error') {
@@ -179,7 +183,6 @@ function RegionOverlay({
           className="movp-overlay__dialog"
           role="dialog"
           aria-label={`Edit ${reference.fieldKey}`}
-          onKeyDown={handleDialogKey}
         >
           <button
             type="button"

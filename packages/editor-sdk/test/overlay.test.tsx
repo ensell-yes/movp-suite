@@ -94,6 +94,7 @@ describe('inline overlay', () => {
     const saveButton = await screen.findByRole('button', { name: 'Save content' })
     fireEvent.click(saveButton)
     await waitFor(() => expect(save).toHaveBeenCalledTimes(1))
+    await screen.findByText('Saved')
     fireEvent.click(saveButton)
     await waitFor(() => expect(save).toHaveBeenCalledTimes(2))
 
