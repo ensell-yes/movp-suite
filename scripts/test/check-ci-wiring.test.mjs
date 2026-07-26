@@ -4,7 +4,11 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, before, describe, it } from 'node:test'
 import { MAX_WORKFLOW_BYTES } from '../lib/guarded-read.mjs'
-import { REQUIRED_JOBS, checkCiWiring } from '../check-ci-wiring.mjs'
+import {
+  REQUIRED_JOBS,
+  REQUIRED_PROTECTED_CONTEXTS,
+  checkCiWiring,
+} from '../check-ci-wiring.mjs'
 
 const SEED_REQUIREMENT = {
   'publishable-versions': REQUIRED_JOBS['publishable-versions'],
@@ -57,6 +61,29 @@ ${ARMED_JOB}
       - run: pnpm test:jobs
 `
 
+const PROTECTED_CONTEXT_WORKFLOW = `name: ci
+on: [push]
+jobs:
+  dependency-audit:
+    runs-on: ubuntu-latest
+    steps: []
+  typecheck:
+    runs-on: ubuntu-latest
+    steps: []
+  boundary:
+    runs-on: ubuntu-latest
+    steps: []
+  publishable-versions:
+    runs-on: ubuntu-latest
+    steps: []
+  forward-only-migrations:
+    runs-on: ubuntu-latest
+    steps: []
+  event-catalog:
+    runs-on: ubuntu-latest
+    steps: []
+`
+
 describe('checkCiWiring — the intended workflow', () => {
   it('PASSES: the job exists under jobs: and invokes every required command', () => {
     assert.deepEqual(checkCiWiring(fixture('good', GOOD), SEED_REQUIREMENT), [])
@@ -69,6 +96,68 @@ describe('checkCiWiring — the intended workflow', () => {
     const problems = checkCiWiring(fixture('no-jobs', noTopLevel), SEED_REQUIREMENT)
     assert.equal(problems.length, 1)
     assert.match(problems[0], /ci_wiring_jobs_block_missing/)
+  })
+})
+
+describe('checkCiWiring — branch-protection contexts remain exact CI job keys', () => {
+  it('pins the six contexts configured on main and accepts their exact job keys', () => {
+    assert.deepEqual(REQUIRED_PROTECTED_CONTEXTS, [
+      'dependency-audit',
+      'typecheck',
+      'boundary',
+      'publishable-versions',
+      'forward-only-migrations',
+      'event-catalog',
+    ])
+    assert.deepEqual(
+      checkCiWiring(
+        fixture('protected-contexts', PROTECTED_CONTEXT_WORKFLOW),
+        {},
+        REQUIRED_PROTECTED_CONTEXTS,
+      ),
+      [],
+    )
+  })
+
+  it('rejects a renamed context even when comment and nested-key decoys retain the old name', () => {
+    const renamed = PROTECTED_CONTEXT_WORKFLOW
+      .replace('  boundary:\n', '  boundary-renamed:\n')
+      .replace(
+        '    steps: []\n',
+        `    steps: []
+    env:
+      boundary:
+    # boundary:
+`,
+      )
+    const problems = checkCiWiring(
+      fixture('protected-context-renamed', renamed),
+      {},
+      REQUIRED_PROTECTED_CONTEXTS,
+    )
+    assert.deepEqual(problems, [
+      'ci_wiring_protected_context_missing: '
+        + join(work, 'protected-context-renamed.yml')
+        + ' branch-protection context "boundary" has no exact "boundary:" job key under "jobs:"',
+    ])
+  })
+
+  it('rejects duplicate job keys for a protected context', () => {
+    const duplicated = `${PROTECTED_CONTEXT_WORKFLOW}
+  boundary:
+    runs-on: ubuntu-latest
+    steps: []
+`
+    const problems = checkCiWiring(
+      fixture('protected-context-duplicated', duplicated),
+      {},
+      REQUIRED_PROTECTED_CONTEXTS,
+    )
+    assert.deepEqual(problems, [
+      'ci_wiring_protected_context_duplicated: '
+        + join(work, 'protected-context-duplicated.yml')
+        + ' branch-protection context "boundary" matches 2 "boundary:" job keys',
+    ])
   })
 })
 

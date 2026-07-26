@@ -4,8 +4,9 @@
 //
 // SCOPE LIMIT — this is NOT a YAML parser and must never grow into one. It is an indentation-aware
 // LINE SCAN with exactly one job: prove that each named job key exists under the top-level `jobs:`
-// mapping, that each required NORMALIZED LINE appears INSIDE that job's own block, and that each
-// required STEP GROUP appears inside a SINGLE step block of it (the ownership assertion, round-11 F1).
+// mapping, that every branch-protection context still names an exact job key, that each required
+// NORMALIZED LINE appears INSIDE that job's own block, and that each required STEP GROUP appears inside
+// a SINGLE step block of it (the ownership assertion, round-11 F1).
 // An indentation-scoped EXACT-LINE match, chunked by list item, is still not a YAML parser — it is
 // merely not restricted to `run:` lines. GitHub remains the authoritative YAML parser (a malformed
 // workflow fails there, loudly). No YAML dependency is added: none is resolvable in this repo (`yaml`
@@ -142,6 +143,19 @@ export const REQUIRED_JOBS = {
   },
 }
 
+// GitHub branch protection matches required checks by this exact job-name string. Keep this inventory
+// aligned with `main` protection: a CI job rename without the corresponding protection update leaves a
+// context that can never report and blocks every merge. This remains local and deterministic; CI must
+// not depend on a GitHub API read to prove its own wiring.
+export const REQUIRED_PROTECTED_CONTEXTS = [
+  'dependency-audit',
+  'typecheck',
+  'boundary',
+  'publishable-versions',
+  'forward-only-migrations',
+  'event-catalog',
+]
+
 export const DEFAULT_WORKFLOW = '.github/workflows/ci.yml'
 
 /** @param {string} line */
@@ -245,11 +259,18 @@ function stepChunks(rawJobLines) {
 
 /**
  * @param {string} [workflowPath]
- * @param {Record<string, JobRequirement>} [requiredJobs]
+ * @param {Record<string, JobRequirement>} [requiredJobs] Supplying a custom table also defaults the
+ *   protected-context inventory to empty so focused fixture tests do not need unrelated jobs.
+ * @param {string[]} [protectedContexts] Exact branch-protection contexts. Defaults to the repository
+ *   inventory when `requiredJobs` is omitted.
  * @returns {string[]} human-readable problems; `[]` means the gate passes. THROWS (`workflow_*`) if the
  *   workflow cannot be safely read.
  */
-export function checkCiWiring(workflowPath = DEFAULT_WORKFLOW, requiredJobs = REQUIRED_JOBS) {
+export function checkCiWiring(workflowPath = DEFAULT_WORKFLOW, requiredJobs, protectedContexts) {
+  const jobsRequired = requiredJobs ?? REQUIRED_JOBS
+  const contextsRequired = protectedContexts ?? (
+    requiredJobs === undefined ? REQUIRED_PROTECTED_CONTEXTS : []
+  )
   const text = readTextGuarded(workflowPath, MAX_WORKFLOW_BYTES, 'workflow')
 
   // Strip comment-only and blank lines BEFORE any structural analysis. THE defect this closes: a
@@ -280,16 +301,32 @@ export function checkCiWiring(workflowPath = DEFAULT_WORKFLOW, requiredJobs = RE
   const jobIndent = indentOf(block[0])
   /** @type {string[]} */
   const problems = []
+  /** @type {Map<string, number[]>} */
+  const jobStarts = new Map()
+  for (let i = 0; i < block.length; i += 1) {
+    if (indentOf(block[i]) !== jobIndent) continue
+    const key = block[i].trim().match(/^([A-Za-z0-9_.-]+):$/)
+    if (key === null) continue
+    const starts = jobStarts.get(key[1]) ?? []
+    starts.push(i)
+    jobStarts.set(key[1], starts)
+  }
 
-  for (const [jobName, requirement] of Object.entries(requiredJobs)) {
-    /** @type {number[]} */
-    const starts = []
-    for (let i = 0; i < block.length; i += 1) {
-      if (indentOf(block[i]) !== jobIndent) continue
-      const key = block[i].trim().match(/^([A-Za-z0-9_.-]+):$/)
-      if (key !== null && key[1] === jobName) starts.push(i)
+  for (const context of contextsRequired) {
+    const starts = jobStarts.get(context) ?? []
+    if (starts.length === 0) {
+      problems.push(
+        `ci_wiring_protected_context_missing: ${workflowPath} branch-protection context "${context}" has no exact "${context}:" job key under "jobs:"`,
+      )
+    } else if (starts.length > 1) {
+      problems.push(
+        `ci_wiring_protected_context_duplicated: ${workflowPath} branch-protection context "${context}" matches ${starts.length} "${context}:" job keys`,
+      )
     }
+  }
 
+  for (const [jobName, requirement] of Object.entries(jobsRequired)) {
+    const starts = jobStarts.get(jobName) ?? []
     if (starts.length === 0) {
       problems.push(
         `ci_wiring_job_missing: ${workflowPath} has no "${jobName}:" job under "jobs:" (a job name in a comment or a substring elsewhere does NOT count)`,
@@ -370,9 +407,9 @@ export function checkCiWiring(workflowPath = DEFAULT_WORKFLOW, requiredJobs = RE
 }
 
 // Exit-code contract: 0 = every required job is armed · 1 = a real finding (a job, a `run:`, a required
-// `lines` entry, or a required `steps` group is missing/duplicated) · 2 = OPERATIONAL failure (the
-// workflow is a symlink, oversized, or unreadable). An operational failure is NEVER 0 — automation reads
-// the code.
+// protected context, `lines` entry, or a required `steps` group is missing/duplicated) · 2 = OPERATIONAL
+// failure (the workflow is a symlink, oversized, or unreadable). An operational failure is NEVER 0 —
+// automation reads the code.
 //
 // GOTCHA: guard `process.argv[1]` before `pathToFileURL` — it is UNDEFINED when this module is imported
 // from an eval context (`node -e`, the REPL), and `pathToFileURL(undefined)` THROWS `ERR_INVALID_ARG_TYPE`
@@ -393,5 +430,7 @@ if (import.meta.url === entryPoint) {
   for (const problem of problems) console.error(problem)
   if (problems.length > 0) process.exit(1)
   const names = Object.keys(REQUIRED_JOBS)
-  console.log(`ci wiring: ${names.length} gate job(s) armed in ${workflowPath} — ${names.join(', ')}`)
+  console.log(
+    `ci wiring: ${names.length} gate job(s) armed and ${REQUIRED_PROTECTED_CONTEXTS.length} protected context(s) match exact job keys in ${workflowPath} — ${names.join(', ')}`,
+  )
 }
