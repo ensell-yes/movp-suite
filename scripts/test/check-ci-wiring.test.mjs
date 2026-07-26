@@ -72,6 +72,32 @@ describe('checkCiWiring — the intended workflow', () => {
   })
 })
 
+describe('checkCiWiring — the dependency audit stays armed', () => {
+  const requirement = REQUIRED_JOBS['dependency-audit']
+  const workflow = `name: ci
+on: [push]
+jobs:
+  dependency-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - run: pnpm check:audit
+`
+
+  it('requires the blocking audit command inside its dedicated job', () => {
+    assert.ok(requirement)
+    assert.deepEqual(checkCiWiring(fixture('dependency-audit', workflow), {
+      'dependency-audit': requirement,
+    }), [])
+
+    const withoutAudit = workflow.replace('      - run: pnpm check:audit\n', '')
+    const problems = checkCiWiring(fixture('dependency-audit-missing', withoutAudit), {
+      'dependency-audit': requirement,
+    })
+    assert.equal(problems.length, 1)
+    assert.match(problems[0], /ci_wiring_run_missing: .*pnpm check:audit/)
+  })
+})
+
 describe('checkCiWiring — C6 productization gates stay armed', () => {
   const workflow = `name: ci
 on: [push]
@@ -506,6 +532,17 @@ on:
     branches: [main]
 
 jobs:
+  dependency-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v6
+        with: { version: 9.12.0 }
+      - uses: actions/setup-node@v6
+        with: { node-version: 22, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm check:audit
+
 ${ARMED_JOB}
   c6-productization:
     runs-on: ubuntu-latest

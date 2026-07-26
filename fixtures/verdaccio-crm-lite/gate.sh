@@ -120,6 +120,13 @@ if [ "$VERDACCIO_READY" != "1" ]; then
   exit 1
 fi
 
+ACL_DENIAL_STATUS="$(curl -sS -o /dev/null -w '%{http_code}' --path-as-is \
+  --connect-timeout 2 --max-time 5 "$REGISTRY/@movp%2Facl-denied")"
+if [ "$ACL_DENIAL_STATUS" != "401" ]; then
+  echo "gate: anonymous Verdaccio ACL probe returned $ACL_DENIAL_STATUS, expected 401" >&2
+  exit 1
+fi
+
 # 3. Publish the bundle to Verdaccio (a throwaway token; Verdaccio accepts any with $all).
 #    The token goes in a TEMP npm userconfig: `npm config set … --location project` would write an
 #    .npmrc into the repo (clobbering the developer's) — INTERFACES F1, no writes under the worktree.

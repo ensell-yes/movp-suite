@@ -62,6 +62,9 @@ import { MAX_WORKFLOW_BYTES, readTextGuarded } from './lib/guarded-read.mjs'
  * @type {Record<string, JobRequirement>}
  */
 export const REQUIRED_JOBS = {
+  'dependency-audit': {
+    runs: ['pnpm check:audit'],
+  },
   'publishable-versions': {
     runs: ['pnpm test:version-gate', 'pnpm check:publishable-versions', 'pnpm check:ci-wiring'],
   },
