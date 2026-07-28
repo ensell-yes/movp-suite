@@ -82,6 +82,9 @@ jobs:
   event-catalog:
     runs-on: ubuntu-latest
     steps: []
+  c6-surface-wiring:
+    runs-on: ubuntu-latest
+    steps: []
 `
 
 describe('checkCiWiring — the intended workflow', () => {
@@ -100,7 +103,7 @@ describe('checkCiWiring — the intended workflow', () => {
 })
 
 describe('checkCiWiring — branch-protection contexts remain exact CI job keys', () => {
-  it('pins the six contexts configured on main and accepts their exact job keys', () => {
+  it('pins the seven contexts configured on main and accepts their exact job keys', () => {
     assert.deepEqual(REQUIRED_PROTECTED_CONTEXTS, [
       'dependency-audit',
       'typecheck',
@@ -108,6 +111,7 @@ describe('checkCiWiring — branch-protection contexts remain exact CI job keys'
       'publishable-versions',
       'forward-only-migrations',
       'event-catalog',
+      'c6-surface-wiring',
     ])
     assert.deepEqual(
       checkCiWiring(

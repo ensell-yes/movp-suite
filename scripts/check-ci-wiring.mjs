@@ -154,6 +154,7 @@ export const REQUIRED_PROTECTED_CONTEXTS = [
   'publishable-versions',
   'forward-only-migrations',
   'event-catalog',
+  'c6-surface-wiring',
 ]
 
 export const DEFAULT_WORKFLOW = '.github/workflows/ci.yml'

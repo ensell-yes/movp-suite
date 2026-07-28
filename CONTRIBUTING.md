@@ -12,7 +12,7 @@ reproduce.
 - Preserve local Supabase port isolation unless you first prove a safe override strategy.
 - Run the relevant package tests, typecheck, SQL tests, and slice gates before asking for
   review.
-- Apply the eight-dimension review harness from `CLAUDE.md` when reviewing plans, code, or
+- Apply the multi-dimension review harness from `CLAUDE.md` when reviewing plans, code, or
   pull requests.
 
 ## Common Gates
