@@ -248,11 +248,12 @@
 - Agent content updates pass the revision they read as `expectedRevisionId` (CLI `--expected-revision`). Agent
   task creates reuse `idempotencyKey` after an indeterminate failure.
 
-## Nine-Dimension Review Harness
+## Multi-Dimension Review Harness
 
-When asked to review, audit, critique, assess, or score any artifact, score all nine
-dimensions: Correctness, Safety, Reliability, Observability, Efficiency, Performance,
-Simplicity, Maintainability, and Usability. A ready/approved claim is valid only when the
-mean clears the threshold and no individual dimension sits below it. (Dimension added
-2026-07-28; reviews scored before that date used eight dimensions and are not directly
-comparable.)
+When asked to review, audit, critique, assess, or score any artifact, score every
+dimension of the multi-dimension review harness — currently: Correctness, Safety,
+Reliability, Observability, Verifiability, Efficiency, Performance, Simplicity,
+Maintainability, Coherence, and Usability. A ready/approved claim is valid only when
+the mean clears the threshold and no individual dimension sits below it.
+(Maintainability, Verifiability, and Coherence added 2026-07-28; earlier reviews
+scored eight dimensions and are not directly comparable.)
