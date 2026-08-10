@@ -226,7 +226,7 @@
   assignments remain eligible after a variant traffic ramp-down or deactivation while its item remains published;
   fresh selection alone requires an active positive-weight variant. Experiment configuration and raw assignment
   writes require `publish` capability; delivery persistence stays within the security-definer RPC. A persistence
-  failure serves control and emits only bounded experiment telemetry. Variants must be same-workspace, published
+  failure serves the assigned variant and emits only bounded experiment telemetry. Variants must be same-workspace, published
   content items of the requested content type; draft, paused, or cross-workspace variants fall back or fail closed per
   `supabase/tests/experiment_delivery_test.sql`.
 - Sitemap indexes come only from the bounded shard RPC. Each child carries one exclusive/inclusive shard pair,

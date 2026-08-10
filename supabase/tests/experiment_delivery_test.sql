@@ -320,12 +320,12 @@ select ok(
     public.experiment_delivery_signed_key_for_test('visitor_0000000001'),
     false
   )->'experiment' is not null,
-  'experiment metadata is returned for a signed deterministic first-sight assignment'
+  'experiment metadata is returned for a signed deterministic first delivery'
 );
 select is(
   (select count(*)::integer from public.experiment_assignment),
   0,
-  'first-sight signed assignment selects a variant without creating an assignment row'
+  'signed first delivery selects a variant without creating an assignment row'
 );
 select is(
   (
@@ -335,7 +335,7 @@ select is(
     )
   ),
   '[1,1]'::jsonb,
-  'a signed first sight contributes matching aggregate and daily exposures'
+  'a signed first delivery contributes matching aggregate and daily exposures'
 );
 select is(
   public.get_published_by_slug(
@@ -386,7 +386,7 @@ select is(
     )
   ),
   '[4,4]'::jsonb,
-  'aggregate and daily exposure counts include first sight and every signed delivery'
+  'aggregate and daily exposure counts include signed first delivery and every signed return'
 );
 select is(
   pg_catalog.octet_length((select assignment_key_hash from public.experiment_assignment)),

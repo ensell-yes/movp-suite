@@ -204,10 +204,11 @@ describe('delivery observability', () => {
 
   it('routes every public response through its single observation owner', async () => {
     const page = await readFile(`${ROOT}/src/pages/[contentType]/[slug].astro`, 'utf8')
+    const deliveryPage = await readFile(`${ROOT}/src/lib/delivery-page.ts`, 'utf8')
     expect(page.match(/recordDeliveryEvent\(observation\)/g)).toHaveLength(1)
     expect(page).not.toContain('catch {')
-    expect(page).toContain('deliveryFailureStatus(result.code)')
-    expect(page).not.toContain("result.code === 'delivery_upstream_timeout' ? 503 : 500")
+    expect(deliveryPage).toContain('deliveryFailureStatus(result.code)')
+    expect(`${page}\n${deliveryPage}`).not.toContain("result.code === 'delivery_upstream_timeout' ? 503 : 500")
 
     for (const route of [
       'sitemap.xml.ts',

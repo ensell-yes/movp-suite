@@ -9,8 +9,17 @@ import {
   listPublishedDeliveryShards,
   parseDeclaredPublishedRichText,
   parsePublishedRichText,
+  type PublishedContent,
+  type PublishedExperiment,
   type DeliveryPublicEnv,
 } from './delivery.ts'
+import {
+  DELIVERY_PAGE_CACHE_FAILURE,
+  DELIVERY_PAGE_CACHE_SUCCESS,
+  resolveDeliveryPage,
+  type DeliveryPageDeps,
+  type DeliveryPageServerEnv,
+} from './delivery-page.ts'
 
 const ROOT = fileURLToPath(new URL('../..', import.meta.url))
 const ITEM_ID = '11111111-1111-4111-8111-111111111111'
@@ -19,6 +28,49 @@ const env: DeliveryPublicEnv = {
   supabaseUrl: 'https://example.supabase.co',
   supabaseAnonKey: 'anon-key',
   workspaceId: '33333333-3333-4333-8333-333333333333',
+}
+const pageEnv: DeliveryPageServerEnv = {
+  ...env,
+  publicSiteUrl: 'https://pages.example.test',
+}
+const REQUEST_ID = '44444444-4444-4444-8444-444444444444'
+
+function publishedValue(
+  overrides: Readonly<{
+    title?: string
+    experimentActive?: boolean
+    experiment?: PublishedExperiment | null
+    experimentAssignmentErrorCode?: 'delivery_experiment_assignment_persist_failed' | 'delivery_experiment_assignment_unsigned' | null
+  }> = {},
+): PublishedContent {
+  return {
+    itemId: ITEM_ID,
+    contentType: 'article',
+    slug: 'safe-page',
+    publishedRevisionId: REVISION_ID,
+    publishedAt: '2026-07-23T12:00:00Z',
+    data: {
+      title: overrides.title ?? 'Safe page',
+      body: '{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Published"}]}]}',
+    },
+    richTextFieldKeys: ['body'],
+    meta: { description: 'Description' },
+    jsonld: null,
+    experimentActive: overrides.experimentActive ?? false,
+    experimentAssignmentErrorCode: overrides.experimentAssignmentErrorCode ?? null,
+    experiment: overrides.experiment ?? null,
+  }
+}
+
+function pageDeps(
+  result: Awaited<ReturnType<typeof getPublishedBySlug>>,
+  mintedAssignmentKey = `11111111-1111-4111-8111-111111111111.${'a'.repeat(43)}`,
+): DeliveryPageDeps {
+  return {
+    createDeliveryAssignmentKey: vi.fn<DeliveryPageDeps['createDeliveryAssignmentKey']>()
+      .mockResolvedValue(mintedAssignmentKey),
+    getPublishedBySlug: vi.fn<DeliveryPageDeps['getPublishedBySlug']>().mockResolvedValue(result),
+  }
 }
 
 function jsonResponse(value: unknown, status = 200): Response {
@@ -367,9 +419,149 @@ describe('published delivery adapter', () => {
 })
 
 describe('published delivery route boundaries', () => {
+  it('uses a minted signed key for first-sight experiment delivery and stores the cookie afterward', async () => {
+    const mintedAssignmentKey = `11111111-1111-4111-8111-111111111111.${'a'.repeat(43)}`
+    const deps = pageDeps({
+      status: 'found',
+      value: publishedValue({
+        title: 'Variant title',
+        experimentActive: true,
+        experiment: {
+          experimentId: '55555555-5555-4555-8555-555555555555',
+          experimentKey: 'safe-page-test',
+          variantId: '66666666-6666-4666-8666-666666666666',
+          variantKey: 'variant-b',
+        },
+      }),
+    }, mintedAssignmentKey)
+
+    const page = await resolveDeliveryPage({
+      contentType: 'article',
+      slug: 'safe-page',
+      storedAssignmentKey: undefined,
+      signingKey: 'test-delivery-assignment-signing-key-000000000000000000000001',
+      serverEnv: pageEnv,
+      requestId: REQUEST_ID,
+      startedAt: 100,
+    }, deps)
+
+    expect(deps.getPublishedBySlug).toHaveBeenCalledWith(
+      {
+        workspaceId: pageEnv.workspaceId,
+        supabaseUrl: pageEnv.supabaseUrl,
+        supabaseAnonKey: pageEnv.supabaseAnonKey,
+      },
+      'article',
+      'safe-page',
+      { assignmentKey: mintedAssignmentKey, persistAssignment: false },
+    )
+    expect(page.title).toBe('Variant title')
+    expect(page.safeGeneratedHtml).toContain('Published')
+    expect(page.assignmentCookieValue).toBe(mintedAssignmentKey)
+    expect(page.cacheControl).toBe(DELIVERY_PAGE_CACHE_FAILURE)
+    expect(page.observation).toEqual(expect.objectContaining({
+      outcome: 'found',
+      experimentActive: true,
+      experimentVariantServed: true,
+    }))
+  })
+
+  it('reuses a returned assignment cookie and does not replace it', async () => {
+    const cookieAssignmentKey = `22222222-2222-4222-8222-222222222222.${'b'.repeat(43)}`
+    const deps = pageDeps({
+      status: 'found',
+      value: publishedValue({
+        experimentActive: true,
+        experiment: {
+          experimentId: '55555555-5555-4555-8555-555555555555',
+          experimentKey: 'safe-page-test',
+          variantId: '66666666-6666-4666-8666-666666666666',
+          variantKey: 'variant-b',
+        },
+      }),
+    })
+
+    const page = await resolveDeliveryPage({
+      contentType: 'article',
+      slug: 'safe-page',
+      storedAssignmentKey: cookieAssignmentKey,
+      signingKey: 'test-delivery-assignment-signing-key-000000000000000000000001',
+      serverEnv: pageEnv,
+      requestId: REQUEST_ID,
+      startedAt: 100,
+    }, deps)
+
+    expect(deps.createDeliveryAssignmentKey).not.toHaveBeenCalled()
+    expect(deps.getPublishedBySlug).toHaveBeenCalledWith(
+      expect.any(Object),
+      'article',
+      'safe-page',
+      { assignmentKey: cookieAssignmentKey, persistAssignment: true },
+    )
+    expect(page.assignmentCookieValue).toBeNull()
+    expect(page.cacheControl).toBe(DELIVERY_PAGE_CACHE_FAILURE)
+  })
+
+  it('serves an unsigned experiment without setting a cookie when the signing key is absent', async () => {
+    const deps = pageDeps({
+      status: 'found',
+      value: publishedValue({
+        experimentActive: true,
+        experimentAssignmentErrorCode: 'delivery_experiment_assignment_unsigned',
+      }),
+    })
+
+    const page = await resolveDeliveryPage({
+      contentType: 'article',
+      slug: 'safe-page',
+      storedAssignmentKey: undefined,
+      signingKey: null,
+      serverEnv: pageEnv,
+      requestId: REQUEST_ID,
+      startedAt: 100,
+    }, deps)
+
+    expect(deps.createDeliveryAssignmentKey).not.toHaveBeenCalled()
+    expect(deps.getPublishedBySlug).toHaveBeenCalledWith(
+      expect.any(Object),
+      'article',
+      'safe-page',
+      { assignmentKey: null, persistAssignment: false },
+    )
+    expect(page.assignmentCookieValue).toBeNull()
+    expect(page.cacheControl).toBe(DELIVERY_PAGE_CACHE_FAILURE)
+    expect(page.observation).toEqual(expect.objectContaining({
+      experimentActive: true,
+      experimentVariantServed: false,
+      experimentAssignmentErrorCode: 'delivery_experiment_assignment_unsigned',
+    }))
+  })
+
+  it('keeps non-experiment pages publicly cacheable without storing a minted key', async () => {
+    const deps = pageDeps({ status: 'found', value: publishedValue() })
+
+    const page = await resolveDeliveryPage({
+      contentType: 'article',
+      slug: 'safe-page',
+      storedAssignmentKey: undefined,
+      signingKey: 'test-delivery-assignment-signing-key-000000000000000000000001',
+      serverEnv: pageEnv,
+      requestId: REQUEST_ID,
+      startedAt: 100,
+    }, deps)
+
+    expect(page.assignmentCookieValue).toBeNull()
+    expect(page.cacheControl).toBe(DELIVERY_PAGE_CACHE_SUCCESS)
+    expect(page.observation).toEqual(expect.objectContaining({
+      experimentActive: false,
+      experimentVariantServed: false,
+    }))
+  })
+
   it('keeps request env request-scoped, has one renderer sink, and imports no editor code', async () => {
     const files = [
       'src/lib/delivery.ts',
+      'src/lib/delivery-page.ts',
       'src/pages/[contentType]/[slug].astro',
       'src/pages/sitemap.xml.ts',
       'src/pages/sitemap-[boundary].xml.ts',
@@ -378,23 +570,22 @@ describe('published delivery route boundaries', () => {
     ]
     const sources = await Promise.all(files.map((path) => readFile(`${ROOT}/${path}`, 'utf8')))
     const joined = sources.join('\n')
-    const page = sources[1] ?? ''
+    const deliveryPage = sources[1] ?? ''
+    const page = sources[2] ?? ''
 
     expect(joined).not.toContain('process.env')
     expect(joined).not.toMatch(/@movp\/editor-sdk|@tiptap\//)
     expect(joined.match(/readServerEnv\(\)/g)?.length).toBeGreaterThanOrEqual(4)
     expect(page.match(/set:html=/g)).toHaveLength(1)
-    expect(page).toContain('renderDocToHtml')
-    expect(page).toContain("const CACHE_SUCCESS = 'public, s-maxage=60'")
-    expect(page).toContain("const CACHE_FAILURE = 'no-store'")
+    expect(deliveryPage).toContain('renderDocToHtml')
+    expect(deliveryPage).toContain("export const DELIVERY_PAGE_CACHE_SUCCESS = 'public, s-maxage=60'")
+    expect(deliveryPage).toContain("export const DELIVERY_PAGE_CACHE_FAILURE = 'no-store'")
     expect(page).not.toContain("Astro.response.headers.set('Vary', 'Cookie')")
     expect(page).toContain('Astro.cookies.set(DELIVERY_ASSIGNMENT_COOKIE')
-    expect(page).toContain('const persistAssignment = cookieAssignmentKey !== null')
-    expect(page.indexOf('const result = await getPublishedBySlug')).toBeLessThan(
-      page.indexOf('const signingKey = readDeliveryAssignmentSigningKey()'),
-    )
-    expect(page).toContain('if (experimentActive && shouldStoreAssignmentCookie)')
-    expect(page).toContain("experimentAssignmentErrorCode = 'delivery_experiment_assignment_unsigned'")
-    expect(page).toContain("state === 'found' && !experimentActive ? CACHE_SUCCESS : CACHE_FAILURE")
+    expect(page).toContain('resolveDeliveryPage')
+    expect(deliveryPage).toContain("experimentAssignmentErrorCode = 'delivery_experiment_assignment_unsigned'")
+    expect(joined).toContain('const persistAssignment = cookieAssignmentKey !== null')
+    expect(joined).toContain('if (assignmentKey === null && input.signingKey !== null)')
+    expect(joined).toContain('experimentActive ? DELIVERY_PAGE_CACHE_FAILURE : DELIVERY_PAGE_CACHE_SUCCESS')
   })
 })

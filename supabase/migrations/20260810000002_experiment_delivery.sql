@@ -298,57 +298,6 @@ $$;
 revoke all on function movp_internal.delivery_assignment_signing_secret()
   from public, anon, authenticated, service_role;
 
-create or replace function movp_internal.delivery_assignment_key_is_signed(
-  p_workspace_id uuid,
-  p_assignment_key text
-)
-returns boolean
-language plpgsql
-stable
-security definer
-set search_path = ''
-as $$
-declare
-  key_parts text[];
-  signing_secret text;
-  expected_signature text;
-begin
-  if p_workspace_id is null
-    or p_assignment_key is null
-    or p_assignment_key !~ '^[A-Za-z0-9_-]{16,128}\.[A-Za-z0-9_-]{43}$'
-  then
-    return false;
-  end if;
-
-  signing_secret := movp_internal.delivery_assignment_signing_secret();
-  if signing_secret is null then
-    return false;
-  end if;
-
-  key_parts := pg_catalog.string_to_array(p_assignment_key, '.');
-  expected_signature := pg_catalog.rtrim(
-    pg_catalog.translate(
-      pg_catalog.encode(
-        extensions.hmac(
-          p_workspace_id::text || ':' || key_parts[1],
-          signing_secret,
-          'sha256'
-        ),
-        'base64'
-      ),
-      '+/',
-      '-_'
-    ),
-    '='
-  );
-
-  return expected_signature = key_parts[2];
-end;
-$$;
-
-revoke all on function movp_internal.delivery_assignment_key_is_signed(uuid, text)
-  from public, anon, authenticated, service_role;
-
 create or replace function movp_internal.published_experiment_variants(
   p_workspace_id uuid,
   p_experiment_id uuid,

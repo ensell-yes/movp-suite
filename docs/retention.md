@@ -60,8 +60,8 @@ most 10,000. Schedule it independently; retention is deploy-time configuration, 
 An active experiment response with an unverified assignment token emits the bounded
 `delivery_experiment_assignment_unsigned` code. Alert on a sustained non-zero rate after deployment or
 secret rotation: it means the Worker secret and Vault secret are absent or do not match, while delivery
-continues deterministically without recording exposure data. The Worker mint is lazy: a missing Worker
-secret leaves non-experiment pages cacheable and serves experiment control without setting a cookie.
+continues deterministically without recording exposure data. A missing Worker secret leaves non-experiment
+pages cacheable and serves experiment control without setting a cookie.
 The delivery RPC materializes the published variant set once per experiment request; keep this path below
 100 signed experiment requests per second per variant until counter sharding is introduced.
 
