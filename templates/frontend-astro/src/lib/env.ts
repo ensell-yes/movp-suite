@@ -8,6 +8,12 @@ export type ServerEnv = {
   supabaseAnonKey: string
 }
 
+type DeliveryAssignmentEnv = Readonly<{
+  DELIVERY_ASSIGNMENT_SIGNING_KEY?: string
+}>
+
+const deliveryAssignmentEnv: DeliveryAssignmentEnv = env
+
 const encoder = new TextEncoder()
 
 export function readServerEnv(): ServerEnv {
@@ -22,15 +28,14 @@ export function readServerEnv(): ServerEnv {
   return { graphqlEndpoint, publicSiteUrl, workspaceId, supabaseUrl, supabaseAnonKey }
 }
 
-export function readDeliveryAssignmentSigningKey(): string {
-  const serverBindings = env as unknown as Readonly<Record<string, unknown>>
-  const signingKey = serverBindings.DELIVERY_ASSIGNMENT_SIGNING_KEY
+export function readDeliveryAssignmentSigningKey(): string | null {
+  const signingKey = deliveryAssignmentEnv.DELIVERY_ASSIGNMENT_SIGNING_KEY
   if (
     typeof signingKey !== 'string'
     || encoder.encode(signingKey).byteLength < 32
     || encoder.encode(signingKey).byteLength > 512
   ) {
-    throw new Error('env_misconfigured: DELIVERY_ASSIGNMENT_SIGNING_KEY is not set or is invalid')
+    return null
   }
   return signingKey
 }

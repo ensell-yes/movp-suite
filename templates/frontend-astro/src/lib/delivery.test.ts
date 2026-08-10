@@ -390,6 +390,11 @@ describe('published delivery route boundaries', () => {
     expect(page).not.toContain("Astro.response.headers.set('Vary', 'Cookie')")
     expect(page).toContain('Astro.cookies.set(DELIVERY_ASSIGNMENT_COOKIE')
     expect(page).toContain('const persistAssignment = cookieAssignmentKey !== null')
+    expect(page.indexOf('const result = await getPublishedBySlug')).toBeLessThan(
+      page.indexOf('const signingKey = readDeliveryAssignmentSigningKey()'),
+    )
+    expect(page).toContain('if (experimentActive && shouldStoreAssignmentCookie)')
+    expect(page).toContain("experimentAssignmentErrorCode = 'delivery_experiment_assignment_unsigned'")
     expect(page).toContain("state === 'found' && !experimentActive ? CACHE_SUCCESS : CACHE_FAILURE")
   })
 })

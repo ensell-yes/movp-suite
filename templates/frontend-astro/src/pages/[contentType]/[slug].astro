@@ -60,12 +60,6 @@ let observation: DeliveryObservation = {
 
 try {
   const { publicSiteUrl, workspaceId, supabaseUrl, supabaseAnonKey } = readServerEnv()
-  if (assignmentKey === null) {
-    assignmentKey = await createDeliveryAssignmentKey(
-      workspaceId,
-      readDeliveryAssignmentSigningKey(),
-    )
-  }
   observationWorkspaceId = workspaceId
   const result = await getPublishedBySlug(
     { workspaceId, supabaseUrl, supabaseAnonKey },
@@ -78,6 +72,14 @@ try {
     experimentActive = item.experimentActive
     experimentVariantServed = item.experiment !== null
     experimentAssignmentErrorCode = item.experimentAssignmentErrorCode ?? undefined
+    if (experimentActive && shouldStoreAssignmentCookie) {
+      const signingKey = readDeliveryAssignmentSigningKey()
+      if (signingKey === null) {
+        experimentAssignmentErrorCode = 'delivery_experiment_assignment_unsigned'
+      } else {
+        assignmentKey = await createDeliveryAssignmentKey(workspaceId, signingKey)
+      }
+    }
     const route: DeliveryRoute = {
       contentType: item.contentType,
       slug: item.slug,

@@ -566,43 +566,43 @@ select throws_ok(
 );
 reset role;
 
-create function public.fail_experiment_assignment_persist_test()
+create function public.fail_experiment_exposure_persist_test()
 returns trigger
 language plpgsql
 as $$
 begin
-  raise exception 'experiment_assignment_persist_test_failure';
+  raise exception 'experiment_exposure_persist_test_failure';
 end;
 $$;
-create trigger experiment_assignment_persist_test_tg
-before insert or update on public.experiment_assignment
-for each row execute function public.fail_experiment_assignment_persist_test();
+create trigger experiment_exposure_persist_test_tg
+before insert or update on movp_internal.experiment_variant_exposure
+for each row execute function public.fail_experiment_exposure_persist_test();
 
 select is(
   public.get_published_by_slug(
     'ab000000-0000-0000-0000-000000000001',
     'landing',
     'home',
-    public.experiment_delivery_signed_key_for_test('visitor_persist_failure_01'),
+    public.experiment_delivery_signed_key_for_test('visitor_variant_b_0001'),
     true
-  )->'data'->>'title',
-  'Control',
-  'assignment persistence failure serves the published control revision'
+  )->'experiment'->>'variant_key',
+  'variant-b',
+  'an exposure persistence failure preserves the sticky variant'
 );
 select is(
   public.get_published_by_slug(
     'ab000000-0000-0000-0000-000000000001',
     'landing',
     'home',
-    public.experiment_delivery_signed_key_for_test('visitor_persist_failure_02'),
+    public.experiment_delivery_signed_key_for_test('visitor_variant_b_0001'),
     true
   )->>'experiment_assignment_error_code',
   'delivery_experiment_assignment_persist_failed',
-  'assignment persistence failure returns only the bounded safe code'
+  'exposure persistence failure returns only the bounded safe code'
 );
 
-drop trigger experiment_assignment_persist_test_tg on public.experiment_assignment;
-drop function public.fail_experiment_assignment_persist_test();
+drop trigger experiment_exposure_persist_test_tg on movp_internal.experiment_variant_exposure;
+drop function public.fail_experiment_exposure_persist_test();
 
 select ok(
   pg_get_functiondef('public.get_published_by_slug(uuid, text, text, text, boolean)'::regprocedure)

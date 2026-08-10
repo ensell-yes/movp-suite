@@ -1,0 +1,2 @@
+# Required only to mint a persistent experiment-assignment cookie locally.
+DELIVERY_ASSIGNMENT_SIGNING_KEY=replace-with-at-least-32-byte-local-secret

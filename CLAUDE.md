@@ -102,7 +102,9 @@
 - The adapter requires `SESSION` KV. Keep the ID-less binding in source so Wrangler auto-provisions
   it; do not manually create or commit an account-specific namespace id.
 - Frontend bindings are the five public vars (`GRAPHQL_ENDPOINT`, `PUBLIC_SITE_URL`, `WORKSPACE_ID`,
-  `SUPABASE_URL`, and `SUPABASE_ANON_KEY`) plus `SESSION`/adapter-generated `ASSETS`. Do not add an
+  `SUPABASE_URL`, and `SUPABASE_ANON_KEY`) plus `SESSION`/adapter-generated `ASSETS`; the optional,
+  server-only `DELIVERY_ASSIGNMENT_SIGNING_KEY` mints experiment cookies and must never be placed in
+  `wrangler.jsonc`. Do not add an
   R2 binding until code has a real runtime consumer. Regenerate binding types after config changes.
 - The frontend shell lives in `templates/frontend-astro/src/layouts/Base.astro` with the sticky,
   icon-bearing `TopNav.astro`. Breakpoints are mobile `<768px`, tablet `768px`–`1023px`, and desktop
@@ -212,7 +214,8 @@
   `delivery_experiment_assignment_unsigned` code for every active experiment request with an unverified key, making
   a missing or skewed signing secret measurable. A signed first sight writes one bounded per-variant
   `movp_internal.experiment_variant_exposure` counter and one narrow
-  `movp_internal.experiment_variant_exposure_daily` row. Its all-time count is the total signed-delivery denominator;
+  `movp_internal.experiment_variant_exposure_daily` row. Its all-time count is a replayable signed-delivery traffic
+  signal, not a fraud-resistant denominator;
   daily rows are retained for 90 days by the bounded, service-role-only
   `public.prune_experiment_variant_exposure_daily_retention(...)`, and
   `public.reporting_experiment_exposure(ws, days)` is the member-gated, 90-day-clamped reader for windowed operator

@@ -44,8 +44,10 @@ the Cloudflare Worker secret `DELIVERY_ASSIGNMENT_SIGNING_KEY` and the Supabase 
 workspace id; the delivery RPC verifies that signature before it writes. Do not place this value in
 `wrangler.jsonc`, public environment variables, or migration SQL.
 
-`movp_internal.experiment_variant_exposure.exposure_count` is the bounded per-variant total for
-signed delivery requests, including first visits. In contrast,
+`movp_internal.experiment_variant_exposure.exposure_count` is a bounded-storage, per-variant
+count of signed delivery requests, including first visits. A signed cookie is replayable by a
+network client, so this is an operational traffic signal rather than a fraud-resistant conversion
+denominator. In contrast,
 `public.experiment_assignment.exposure_count` records only visits after a signed cookie has returned
 and must not be used as an experiment conversion-rate denominator. Aggregate exposure rows are bounded
 by the number of variants and are retained with experiment/variant lifecycle.
@@ -58,7 +60,10 @@ most 10,000. Schedule it independently; retention is deploy-time configuration, 
 An active experiment response with an unverified assignment token emits the bounded
 `delivery_experiment_assignment_unsigned` code. Alert on a sustained non-zero rate after deployment or
 secret rotation: it means the Worker secret and Vault secret are absent or do not match, while delivery
-continues deterministically without recording exposure data.
+continues deterministically without recording exposure data. The Worker mint is lazy: a missing Worker
+secret leaves non-experiment pages cacheable and serves experiment control without setting a cookie.
+The delivery RPC materializes the published variant set once per experiment request; keep this path below
+100 signed experiment requests per second per variant until counter sharding is introduced.
 
 Schedule it separately from the internal spine job so assignment volume is visible on its own:
 
