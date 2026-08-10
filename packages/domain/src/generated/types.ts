@@ -801,6 +801,99 @@ export interface ContentSeoUpdate {
   content_item_id?: string
 }
 
+export interface ExperimentRow {
+  id: string
+  workspace_id: string
+  key: string
+  name: string
+  status: 'draft' | 'running' | 'paused' | 'archived'
+  starts_at: string | null
+  ends_at: string | null
+  target_content_item_id: string
+  created_at: string
+  updated_at: string
+}
+
+export interface ExperimentCreate {
+  workspace_id: string
+  key: string
+  name: string
+  status?: 'draft' | 'running' | 'paused' | 'archived'
+  starts_at?: string
+  ends_at?: string
+  target_content_item_id: string
+}
+
+export interface ExperimentUpdate {
+  key?: string
+  name?: string
+  status?: 'draft' | 'running' | 'paused' | 'archived'
+  starts_at?: string
+  ends_at?: string
+  target_content_item_id?: string
+}
+
+export interface ExperimentVariantRow {
+  id: string
+  workspace_id: string
+  key: string
+  traffic_basis_points: number
+  active: boolean
+  position: number
+  experiment_id: string
+  content_item_id: string
+  created_at: string
+  updated_at: string
+}
+
+export interface ExperimentVariantCreate {
+  workspace_id: string
+  key: string
+  traffic_basis_points: number
+  active?: boolean
+  position?: number
+  experiment_id: string
+  content_item_id: string
+}
+
+export interface ExperimentVariantUpdate {
+  key?: string
+  traffic_basis_points?: number
+  active?: boolean
+  position?: number
+  experiment_id?: string
+  content_item_id?: string
+}
+
+export interface ExperimentAssignmentRow {
+  id: string
+  workspace_id: string
+  assignment_key_hash: string
+  exposure_count: number
+  last_seen_at: string | null
+  experiment_id: string
+  variant_id: string
+  created_at: string
+  updated_at: string
+}
+
+export interface ExperimentAssignmentCreate {
+  workspace_id: string
+  assignment_key_hash: string
+  exposure_count?: number
+  last_seen_at?: string
+  experiment_id: string
+  variant_id: string
+}
+
+export interface ExperimentAssignmentUpdate {
+  assignment_key_hash?: string
+  exposure_count?: number
+  last_seen_at?: string
+  experiment_id?: string
+  variant_id?: string
+}
+
 export interface MarketingPlanRow {
   id: string
   workspace_id: string

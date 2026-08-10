@@ -4,19 +4,19 @@ select plan(23);
 
 select is((select count(*)::int from pg_catalog.pg_views
   where schemaname = 'reporting' and viewname <> 'v_task_cycle'),
-  26, '26 generated reporting views exist');
+  29, '29 generated reporting views exist');
 select is(
   (select count(*)::int
      from pg_catalog.pg_class c
      join pg_catalog.pg_namespace n on n.oid = c.relnamespace
     where n.nspname = 'reporting' and c.relkind = 'v' and c.relname <> 'v_task_cycle'
       and c.reloptions @> array['security_invoker=true']),
-  26, 'every generated reporting view is security_invoker');
+  29, 'every generated reporting view is security_invoker');
 select is(
   (select count(*)::int from pg_catalog.pg_views v
     where v.schemaname = 'reporting' and v.viewname <> 'v_task_cycle'
       and has_table_privilege('authenticated', format('%I.%I', v.schemaname, v.viewname)::regclass, 'select')),
-  26, 'authenticated can select every generated reporting view');
+  29, 'authenticated can select every generated reporting view');
 select is(
   (select count(*)::int from pg_catalog.pg_views v
     where v.schemaname = 'reporting'

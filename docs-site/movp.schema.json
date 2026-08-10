@@ -1,7 +1,7 @@
 {
   "manifestVersion": 1,
   "generatorVersion": "0.1.1",
-  "schemaFingerprint": "268dc36b15138c9eacd3efd01f5bf320f7ed5b0bb0a3c1c2b0f5acf211555115",
+  "schemaFingerprint": "42518c7ddf9216e0fdb2fd3f03ad80a3e1b8f0d23f8388bbb9655becac5689d9",
   "collections": [
     {
       "name": "asset",
@@ -1177,6 +1177,186 @@
           "label": "Schema Version",
           "cardinality": null,
           "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        }
+      ]
+    },
+    {
+      "name": "experiment",
+      "internal": true,
+      "label": "Experiment",
+      "workspaceScoped": true,
+      "layer": "platform",
+      "fields": [
+        {
+          "name": "ends_at",
+          "type": "datetime",
+          "label": "Ends At",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "key",
+          "type": "text",
+          "label": "Key",
+          "cardinality": null,
+          "reporting_role": "dimension",
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "name",
+          "type": "text",
+          "label": "Name",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "starts_at",
+          "type": "datetime",
+          "label": "Starts At",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "status",
+          "type": "enum",
+          "label": "Status",
+          "cardinality": null,
+          "reporting_role": "dimension",
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "target_content_item",
+          "type": "relation",
+          "label": "Target Content Item",
+          "cardinality": "many-to-one",
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        }
+      ]
+    },
+    {
+      "name": "experiment_assignment",
+      "internal": true,
+      "label": "Experiment Assignment",
+      "workspaceScoped": true,
+      "layer": "platform",
+      "fields": [
+        {
+          "name": "assignment_key_hash",
+          "type": "text",
+          "label": "Assignment Key Hash",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "experiment",
+          "type": "relation",
+          "label": "Experiment",
+          "cardinality": "many-to-one",
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "exposure_count",
+          "type": "number",
+          "label": "Exposure Count",
+          "cardinality": null,
+          "reporting_role": "measure",
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "last_seen_at",
+          "type": "datetime",
+          "label": "Last Seen At",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "variant",
+          "type": "relation",
+          "label": "Variant",
+          "cardinality": "many-to-one",
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        }
+      ]
+    },
+    {
+      "name": "experiment_variant",
+      "internal": true,
+      "label": "Experiment Variant",
+      "workspaceScoped": true,
+      "layer": "platform",
+      "fields": [
+        {
+          "name": "active",
+          "type": "boolean",
+          "label": "Active",
+          "cardinality": null,
+          "reporting_role": "dimension",
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "content_item",
+          "type": "relation",
+          "label": "Content Item",
+          "cardinality": "many-to-one",
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "experiment",
+          "type": "relation",
+          "label": "Experiment",
+          "cardinality": "many-to-one",
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "key",
+          "type": "text",
+          "label": "Key",
+          "cardinality": null,
+          "reporting_role": "dimension",
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "position",
+          "type": "number",
+          "label": "Position",
+          "cardinality": null,
+          "reporting_role": null,
+          "searchable": false,
+          "embeddable": false
+        },
+        {
+          "name": "traffic_basis_points",
+          "type": "number",
+          "label": "Traffic Basis Points",
+          "cardinality": null,
+          "reporting_role": "measure",
           "searchable": false,
           "embeddable": false
         }

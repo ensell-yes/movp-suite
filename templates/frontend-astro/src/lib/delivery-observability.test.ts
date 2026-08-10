@@ -27,10 +27,45 @@ describe('delivery observability', () => {
 
   it('emits exactly one content-disciplined public-read event per outcome', async () => {
     const cases = [
-      { outcome: 'found' as const },
-      { outcome: 'not_found' as const },
-      { outcome: 'error' as const, errorCode: 'delivery_upstream_timeout' as const },
-      { outcome: 'error' as const, errorCode: 'delivery_render_invalid_document' as const },
+      {
+        outcome: 'found' as const,
+        experimentActive: false,
+        experimentVariantServed: false,
+      },
+      {
+        outcome: 'not_found' as const,
+        experimentActive: false,
+        experimentVariantServed: false,
+      },
+      {
+        outcome: 'found' as const,
+        experimentActive: true,
+        experimentVariantServed: true,
+      },
+      {
+        outcome: 'found' as const,
+        experimentActive: true,
+        experimentVariantServed: false,
+        experimentAssignmentErrorCode: 'delivery_experiment_assignment_persist_failed' as const,
+      },
+      {
+        outcome: 'found' as const,
+        experimentActive: true,
+        experimentVariantServed: true,
+        experimentAssignmentErrorCode: 'delivery_experiment_assignment_unsigned' as const,
+      },
+      {
+        outcome: 'error' as const,
+        errorCode: 'delivery_upstream_timeout' as const,
+        experimentActive: false,
+        experimentVariantServed: false,
+      },
+      {
+        outcome: 'error' as const,
+        errorCode: 'delivery_render_invalid_document' as const,
+        experimentActive: false,
+        experimentVariantServed: false,
+      },
     ]
 
     for (const outcome of cases) {
@@ -57,6 +92,11 @@ describe('delivery observability', () => {
         request_id: REQUEST_ID,
         outcome: outcome.outcome,
         ...(outcome.outcome === 'error' ? { error_code: outcome.errorCode } : {}),
+        experiment_active: outcome.experimentActive,
+        experiment_variant_served: outcome.experimentVariantServed,
+        ...('experimentAssignmentErrorCode' in outcome
+          ? { experiment_assignment_error_code: outcome.experimentAssignmentErrorCode }
+          : {}),
         latency_ms: 25,
         redaction_version: 1,
       })
@@ -150,6 +190,8 @@ describe('delivery observability', () => {
       routeKind: 'page',
       outcome: 'error',
       errorCode: 'not-a-delivery-code',
+      experimentActive: false,
+      experimentVariantServed: false,
       requestId: REQUEST_ID,
       startedAt: 1,
     } as unknown as Parameters<typeof recordDeliveryEvent>[0], {
@@ -162,10 +204,11 @@ describe('delivery observability', () => {
 
   it('routes every public response through its single observation owner', async () => {
     const page = await readFile(`${ROOT}/src/pages/[contentType]/[slug].astro`, 'utf8')
+    const deliveryPage = await readFile(`${ROOT}/src/lib/delivery-page.ts`, 'utf8')
     expect(page.match(/recordDeliveryEvent\(observation\)/g)).toHaveLength(1)
     expect(page).not.toContain('catch {')
-    expect(page).toContain('deliveryFailureStatus(result.code)')
-    expect(page).not.toContain("result.code === 'delivery_upstream_timeout' ? 503 : 500")
+    expect(deliveryPage).toContain('deliveryFailureStatus(result.code)')
+    expect(`${page}\n${deliveryPage}`).not.toContain("result.code === 'delivery_upstream_timeout' ? 503 : 500")
 
     for (const route of [
       'sitemap.xml.ts',

@@ -26,7 +26,7 @@ describe('agent contract export', () => {
 
       const schema = JSON.parse(first[0])
       const tools = JSON.parse(first[1])
-      assert.equal(schema.collections.length, 46)
+      assert.equal(schema.collections.length, 49)
       assert.equal(schema.events.length, 35)
       assert.equal(tools.toolCount, 176)
       assert.equal(tools.runtimeFingerprint, schema.runtimeFingerprint)

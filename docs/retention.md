@@ -32,6 +32,58 @@ Do not prune `failed`, `pending`, or `running` jobs. The RPC only prunes termina
 events; `workflow_run.source_event_id` intentionally remains an audit pointer even after the
 event row ages out.
 
+## Experiment Assignments
+
+`public.prune_experiment_assignment_retention(...)` removes stale, hash-only A/B assignment rows.
+It is service-role-only, retains the newest activity by `last_seen_at`, defaults to 90 days, and
+deletes at most 10,000 rows per call.
+
+Before enabling experiment delivery, provision one high-entropy value in both deployment stores:
+the Cloudflare Worker secret `DELIVERY_ASSIGNMENT_SIGNING_KEY` and the Supabase Vault secret named
+`movp_delivery_assignment_signing_key`. The public route signs each cookie's random nonce with the
+workspace id; the delivery RPC verifies that signature before it writes. Do not place this value in
+`wrangler.jsonc`, public environment variables, or migration SQL.
+
+`movp_internal.experiment_variant_exposure.exposure_count` is a bounded-storage, per-variant
+count of signed delivery requests, including first visits. A signed cookie is replayable by a
+network client, so this is an operational traffic signal rather than a fraud-resistant conversion
+denominator. In contrast,
+`public.experiment_assignment.exposure_count` records only visits after a signed cookie has returned
+and must not be used as an experiment conversion-rate denominator. Aggregate exposure rows are bounded
+by the number of variants and are retained with experiment/variant lifecycle.
+`movp_internal.experiment_variant_exposure_daily` stores one narrow counter per variant and observed date, so
+`public.reporting_experiment_exposure(workspace_id, days)` can return a member-gated, 90-day-clamped count without
+adding per-visitor rows or rebuilding JSONB on delivery. The daily table is service-role-only and
+`public.prune_experiment_variant_exposure_daily_retention(...)` removes rows older than 90 days in batches of at
+most 10,000. Schedule it independently; retention is deploy-time configuration, not migration SQL.
+
+An active experiment response with an unverified assignment token emits the bounded
+`delivery_experiment_assignment_unsigned` code. Alert on a sustained non-zero rate after deployment or
+secret rotation: it means the Worker secret and Vault secret are absent or do not match, while delivery
+continues deterministically without recording exposure data. A missing Worker secret leaves non-experiment
+pages cacheable and serves experiment control without setting a cookie.
+The delivery RPC materializes the published variant set once per experiment request; keep this path below
+100 signed experiment requests per second per variant until counter sharding is introduced.
+
+Schedule it separately from the internal spine job so assignment volume is visible on its own:
+
+```sql
+select cron.schedule(
+  'experiment-assignment-retention-daily',
+  '17 3 * * *',
+  $$ select public.prune_experiment_assignment_retention(); $$
+);
+
+select cron.schedule(
+  'experiment-exposure-daily-retention',
+  '27 3 * * *',
+  $$ select public.prune_experiment_variant_exposure_daily_retention(); $$
+);
+```
+
+Monitor returned delete counts for both jobs. A sustained increase means investigate experiment traffic and
+cookie behavior before changing the retention window or batch bound.
+
 ## Verification
 
 Before enabling the schedule in a new environment:

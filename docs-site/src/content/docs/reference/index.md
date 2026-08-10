@@ -29,6 +29,9 @@ Generated from manifest version 1 (generator 0.1.1).
 | [Content SEO](/reference/content_seo/) | `content_seo` | platform | 5 |
 | [Content Type](/reference/content_type/) | `content_type` | platform | 5 |
 | [Event Type](/reference/event_type/) | `event_type` | platform | 7 |
+| [Experiment](/reference/experiment/) | `experiment` | platform | 6 |
+| [Experiment Assignment](/reference/experiment_assignment/) | `experiment_assignment` | platform | 5 |
+| [Experiment Variant](/reference/experiment_variant/) | `experiment_variant` | platform | 6 |
 | [External Record](/reference/external_record/) | `external_record` | platform | 3 |
 | [Marketing Plan](/reference/marketing_plan/) | `marketing_plan` | platform | 7 |
 | [Mention](/reference/mention/) | `mention` | platform | 4 |
