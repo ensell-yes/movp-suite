@@ -33,6 +33,9 @@ import { campaignMetric } from './collections/campaign_metric.ts'
 import { campaignSegment } from './collections/campaign_segment.ts'
 import { automationRule } from './collections/automation_rule.ts'
 import { eventType } from './collections/event_type.ts'
+import { experiment } from './collections/experiment.ts'
+import { experimentAssignment } from './collections/experiment_assignment.ts'
+import { experimentVariant } from './collections/experiment_variant.ts'
 import { externalRecord } from './collections/external_record.ts'
 import { marketingPlan } from './collections/marketing_plan.ts'
 import { platformEvent } from './collections/platform_event.ts'
@@ -79,6 +82,9 @@ export const schema = defineSchema({
   contentCollection,
   contentCollectionEntry,
   contentSeo,
+  experiment,
+  experimentVariant,
+  experimentAssignment,
   // Campaigns (Phase 5, Part A). Order encodes inline-FK deps:
   //  - marketing_plan precedes campaign (campaign.marketing_plan_id -> it).
   //  - campaign precedes every campaign_* child (child.campaign_id -> campaign).

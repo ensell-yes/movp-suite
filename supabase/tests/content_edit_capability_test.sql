@@ -161,7 +161,16 @@ insert into expected_content_write_policy (tablename, cmd, policyname, capabilit
   ('content_type', 'UPDATE', 'content_type_edit_update', 'edit'),
   ('edges', 'DELETE', 'edges_content_edit_delete', 'edit'),
   ('edges', 'INSERT', 'edges_content_edit_insert', 'edit'),
-  ('edges', 'UPDATE', 'edges_content_edit_update', 'edit');
+  ('edges', 'UPDATE', 'edges_content_edit_update', 'edit'),
+  ('experiment', 'DELETE', 'experiment_publish_delete', 'publish'),
+  ('experiment', 'INSERT', 'experiment_publish_insert', 'publish'),
+  ('experiment', 'UPDATE', 'experiment_publish_update', 'publish'),
+  ('experiment_assignment', 'DELETE', 'experiment_assignment_publish_delete', 'publish'),
+  ('experiment_assignment', 'INSERT', 'experiment_assignment_publish_insert', 'publish'),
+  ('experiment_assignment', 'UPDATE', 'experiment_assignment_publish_update', 'publish'),
+  ('experiment_variant', 'DELETE', 'experiment_variant_publish_delete', 'publish'),
+  ('experiment_variant', 'INSERT', 'experiment_variant_publish_insert', 'publish'),
+  ('experiment_variant', 'UPDATE', 'experiment_variant_publish_update', 'publish');
 
 select results_eq(
   $$
@@ -200,7 +209,10 @@ select results_eq(
         'content_collection',
         'content_collection_entry',
         'content_seo',
-        'edges'
+        'edges',
+        'experiment',
+        'experiment_assignment',
+        'experiment_variant'
       )
       and p.cmd <> 'SELECT'
     order by 1, 2, 3

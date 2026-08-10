@@ -2,7 +2,9 @@ import { readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it, vi } from 'vitest'
 import {
+  createDeliveryAssignmentKey,
   getPublishedBySlug,
+  isDeliveryAssignmentKey,
   listPublishedDelivery,
   listPublishedDeliveryShards,
   parseDeclaredPublishedRichText,
@@ -43,9 +45,17 @@ describe('published delivery adapter', () => {
       richtext_field_keys_supported: true,
       meta: { description: 'Description' },
       jsonld: { '@type': 'Article' },
+      experiment_active: false,
+      experiment_assignment_error_code: null,
     }))
 
-    const result = await getPublishedBySlug(env, 'article', 'safe-page', fetcher)
+    const result = await getPublishedBySlug(
+      env,
+      'article',
+      'safe-page',
+      { assignmentKey: null, persistAssignment: false },
+      fetcher,
+    )
 
     expect(result).toEqual({
       status: 'found',
@@ -63,6 +73,9 @@ describe('published delivery adapter', () => {
         richTextFieldKeys: ['body', 'bodyHtml'],
         meta: { description: 'Description' },
         jsonld: { '@type': 'Article' },
+        experimentActive: false,
+        experimentAssignmentErrorCode: null,
+        experiment: null,
       },
     })
     expect(fetcher).toHaveBeenCalledWith(
@@ -79,6 +92,128 @@ describe('published delivery adapter', () => {
       ws: env.workspaceId,
       p_content_type_key: 'article',
       p_slug: 'safe-page',
+      p_assignment_key: null,
+      p_persist_assignment: false,
+    })
+  })
+
+  it('passes a bounded assignment key and validates experiment metadata', async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({
+      item_id: ITEM_ID,
+      content_type_key: 'article',
+      slug: 'safe-page',
+      published_revision_id: REVISION_ID,
+      published_at: '2026-07-23T12:00:00Z',
+      data: { title: 'Variant' },
+      richtext_field_keys: [],
+      richtext_field_keys_supported: true,
+      meta: null,
+      jsonld: null,
+      experiment_active: true,
+      experiment_assignment_error_code: null,
+      experiment: {
+        experiment_id: '44444444-4444-4444-8444-444444444444',
+        experiment_key: 'safe-page-test',
+        variant_id: '55555555-5555-4555-8555-555555555555',
+        variant_key: 'variant-b',
+      },
+    }))
+
+    const result = await getPublishedBySlug(
+      env,
+      'article',
+      'safe-page',
+      {
+        assignmentKey: `visitor_0000000001.${'a'.repeat(43)}`,
+        persistAssignment: true,
+      },
+      fetcher,
+    )
+
+    expect(result).toEqual({
+      status: 'found',
+      value: expect.objectContaining({
+        experiment: {
+          experimentId: '44444444-4444-4444-8444-444444444444',
+          experimentKey: 'safe-page-test',
+          variantId: '55555555-5555-4555-8555-555555555555',
+          variantKey: 'variant-b',
+        },
+      }),
+    })
+    expect(JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body))).toEqual({
+      ws: env.workspaceId,
+      p_content_type_key: 'article',
+      p_slug: 'safe-page',
+      p_assignment_key: `visitor_0000000001.${'a'.repeat(43)}`,
+      p_persist_assignment: true,
+    })
+    await expect(getPublishedBySlug(
+      env,
+      'article',
+      'safe-page',
+      { assignmentKey: 'bad', persistAssignment: true },
+      fetcher,
+    )).resolves.toEqual({ status: 'error', code: 'delivery_request_invalid' })
+  })
+
+  it('mints only a workspace-bound signed assignment token shape', async () => {
+    const randomUuid = vi.spyOn(crypto, 'randomUUID').mockReturnValue(
+      '11111111-1111-4111-8111-111111111111',
+    )
+    try {
+      const assignmentKey = await createDeliveryAssignmentKey(
+        env.workspaceId,
+        'test-delivery-assignment-signing-key-000000000000000000000001',
+      )
+
+      expect(assignmentKey).toBe(
+        '11111111-1111-4111-8111-111111111111.FQbrcE1eHCnJ3DnPuoi8mR_n4mpeL7mRmbxPIPf4nG0',
+      )
+      await expect(createDeliveryAssignmentKey(
+        env.workspaceId.toUpperCase(),
+        'test-delivery-assignment-signing-key-000000000000000000000001',
+      )).resolves.toBe(assignmentKey)
+      expect(isDeliveryAssignmentKey(assignmentKey)).toBe(true)
+      expect(isDeliveryAssignmentKey('visitor_0000000001')).toBe(false)
+    } finally {
+      randomUuid.mockRestore()
+    }
+  })
+
+  it('accepts the bounded unsigned assignment observation code', async () => {
+    const result = await getPublishedBySlug(
+      env,
+      'article',
+      'safe-page',
+      { assignmentKey: `visitor_0000000001.${'a'.repeat(43)}`, persistAssignment: false },
+      vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({
+        item_id: ITEM_ID,
+        content_type_key: 'article',
+        slug: 'safe-page',
+        published_revision_id: REVISION_ID,
+        published_at: '2026-07-23T12:00:00Z',
+        data: { title: 'Variant' },
+        richtext_field_keys: [],
+        richtext_field_keys_supported: true,
+        meta: null,
+        jsonld: null,
+        experiment_active: true,
+        experiment_assignment_error_code: 'delivery_experiment_assignment_unsigned',
+        experiment: {
+          experiment_id: '44444444-4444-4444-8444-444444444444',
+          experiment_key: 'safe-page-test',
+          variant_id: '55555555-5555-4555-8555-555555555555',
+          variant_key: 'variant-b',
+        },
+      })),
+    )
+
+    expect(result).toEqual({
+      status: 'found',
+      value: expect.objectContaining({
+        experimentAssignmentErrorCode: 'delivery_experiment_assignment_unsigned',
+      }),
     })
   })
 
@@ -87,6 +222,7 @@ describe('published delivery adapter', () => {
       env,
       'article',
       'missing',
+      { assignmentKey: null, persistAssignment: false },
       vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(null)),
     )
     expect(result).toEqual({ status: 'not_found' })
@@ -97,6 +233,7 @@ describe('published delivery adapter', () => {
       env,
       'article',
       'safe-page',
+      { assignmentKey: null, persistAssignment: false },
       vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({
         item_id: ITEM_ID,
         content_type_key: 'article',
@@ -121,6 +258,7 @@ describe('published delivery adapter', () => {
       env,
       'article',
       'safe-page',
+      { assignmentKey: null, persistAssignment: false },
       vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({
         item_id: ITEM_ID,
         content_type_key: 'article',
@@ -144,6 +282,7 @@ describe('published delivery adapter', () => {
       env,
       'article',
       'safe-page',
+      { assignmentKey: null, persistAssignment: false },
       vi.fn<typeof fetch>().mockResolvedValue(new Response('{}', {
         headers: { 'content-type': 'text/plain' },
       })),
@@ -160,6 +299,7 @@ describe('published delivery adapter', () => {
       env,
       'article',
       'safe-page',
+      { assignmentKey: null, persistAssignment: false },
       vi.fn<typeof fetch>().mockResolvedValue(new Response(oversized, {
         headers: { 'content-type': 'application/json' },
       })),
@@ -247,5 +387,9 @@ describe('published delivery route boundaries', () => {
     expect(page).toContain('renderDocToHtml')
     expect(page).toContain("const CACHE_SUCCESS = 'public, s-maxage=60'")
     expect(page).toContain("const CACHE_FAILURE = 'no-store'")
+    expect(page).not.toContain("Astro.response.headers.set('Vary', 'Cookie')")
+    expect(page).toContain('Astro.cookies.set(DELIVERY_ASSIGNMENT_COOKIE')
+    expect(page).toContain('const persistAssignment = cookieAssignmentKey !== null')
+    expect(page).toContain("state === 'found' && !experimentActive ? CACHE_SUCCESS : CACHE_FAILURE")
   })
 })

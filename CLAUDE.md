@@ -89,7 +89,7 @@
   then fail closed with a single content-disciplined event.
 - `pnpm docs:agent-contract -- --out-dir <existing-directory>` atomically exports the authoritative
   `schema.json`, `mcp-tools.json`, and generated `schema-reference.md` from the real schema and MCP
-  registry. The deterministic exporter test pins 46 collections, 35 events, and the capability-safe
+  registry. The deterministic exporter test pins 49 collections, 35 events, and the capability-safe
   176-tool registry for release `0.1.1`.
 
 ## Astro Cloudflare Templates
@@ -202,6 +202,30 @@
   or validation failures are `no-store`. Operational failures use `500`, except bounded upstream timeouts use
   `503`. The end-to-end 60-second withdrawal guarantee additionally depends on the exact-route Cloudflare Cache
   Rule deployment check; there is no purge webhook, cache-tag, or API token.
+- A/B delivery experiments are resolved inside `public.get_published_by_slug(..., p_assignment_key,
+  p_persist_assignment)` over the published-only CMS boundary. The public route owns the HttpOnly
+  `movp-ab-assignment` cookie: it is `<nonce>.<hmac-sha256(workspace_id:nonce)>`, minted from the request-bound
+  Worker `DELIVERY_ASSIGNMENT_SIGNING_KEY`. The same value must be held in Supabase Vault as
+  `movp_delivery_assignment_signing_key`; each delivery RPC reads that secret once and reuses it for verification,
+  so unsigned browser/RPC input can
+  resolve deterministically but cannot create assignment or exposure rows. It emits the bounded
+  `delivery_experiment_assignment_unsigned` code for every active experiment request with an unverified key, making
+  a missing or skewed signing secret measurable. A signed first sight writes one bounded per-variant
+  `movp_internal.experiment_variant_exposure` counter and one narrow
+  `movp_internal.experiment_variant_exposure_daily` row. Its all-time count is the total signed-delivery denominator;
+  daily rows are retained for 90 days by the bounded, service-role-only
+  `public.prune_experiment_variant_exposure_daily_retention(...)`, and
+  `public.reporting_experiment_exposure(ws, days)` is the member-gated, 90-day-clamped reader for windowed operator
+  counts. `public.experiment_assignment.exposure_count` is deliberately
+  returning-visit-only state, not a total-exposure metric; assignment storage contains only a SHA-256 hash of the
+  cookie value and retention removes stale rows in bounded batches. A workspace can run at most 20 experiments, and every experiment page is an
+  always-origin `no-store` response: never use `Vary: Cookie` or public HTML caching for split traffic. Sticky
+  assignments remain eligible after a variant traffic ramp-down or deactivation while its item remains published;
+  fresh selection alone requires an active positive-weight variant. Experiment configuration and raw assignment
+  writes require `publish` capability; delivery persistence stays within the security-definer RPC. A persistence
+  failure serves control and emits only bounded experiment telemetry. Variants must be same-workspace, published
+  content items of the requested content type; draft, paused, or cross-workspace variants fall back or fail closed per
+  `supabase/tests/experiment_delivery_test.sql`.
 - Sitemap indexes come only from the bounded shard RPC. Each child carries one exclusive/inclusive shard pair,
   performs at most four 1,000-row reads, and remains below 4,000 URLs and the uncompressed protocol byte cap.
   `packages/delivery/test` plus the required `c7-delivery` CI job pin these boundaries.

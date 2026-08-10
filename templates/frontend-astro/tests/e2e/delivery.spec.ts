@@ -38,6 +38,29 @@ test.describe('published delivery', () => {
     }
   })
 
+  test('keeps experiment delivery private and mints one signed HttpOnly cookie', async ({ request }) => {
+    const first = await request.get('/article/experiment-page')
+
+    expect(first.status()).toBe(200)
+    expect(first.headers()['cache-control']).toBe('no-store')
+    expect(first.headers().vary).toBeUndefined()
+    const setCookie = first.headers()['set-cookie']
+    expect(setCookie).toMatch(/^movp-ab-assignment=[A-Za-z0-9_-]{16,128}\.[A-Za-z0-9_-]{43};/)
+    expect(setCookie).toContain('HttpOnly')
+    expect(setCookie).toContain('SameSite=Lax')
+
+    const cookie = setCookie?.split(';', 1)[0]
+    expect(cookie).toBeTruthy()
+    const returning = await request.get('/article/experiment-page', {
+      headers: { cookie: String(cookie) },
+    })
+
+    expect(returning.status()).toBe(200)
+    expect(returning.headers()['cache-control']).toBe('no-store')
+    expect(returning.headers().vary).toBeUndefined()
+    expect(returning.headers()['set-cookie']).toBeUndefined()
+  })
+
   test('serves bounded sitemap index and child artifacts', async ({ request }) => {
     const index = await request.get('/sitemap.xml')
     expect(index.status()).toBe(200)

@@ -5,7 +5,13 @@ import {
   renderDocToHtml,
   type DeliveryRoute,
 } from '@movp/delivery'
-import { getPublishedBySlug, parseDeclaredPublishedRichText } from '../../lib/delivery.ts'
+import {
+  DELIVERY_ASSIGNMENT_COOKIE,
+  createDeliveryAssignmentKey,
+  getPublishedBySlug,
+  isDeliveryAssignmentKey,
+  parseDeclaredPublishedRichText,
+} from '../../lib/delivery.ts'
 import {
   createDeliveryRequestContext,
   deliveryFailureCode,
@@ -13,7 +19,7 @@ import {
   recordDeliveryEvent,
   type DeliveryObservation,
 } from '../../lib/delivery-observability.ts'
-import { readServerEnv } from '../../lib/env.ts'
+import { readDeliveryAssignmentSigningKey, readServerEnv } from '../../lib/env.ts'
 
 const CACHE_SUCCESS = 'public, s-maxage=60'
 const CACHE_FAILURE = 'no-store'
@@ -27,26 +33,51 @@ let plainFields: Array<readonly [string, string | number | boolean]> = []
 let state: 'found' | 'not_found' | 'error' = 'error'
 let errorStatus = 500
 let observationWorkspaceId: string | undefined
+let experimentActive = false
+let experimentVariantServed = false
+let experimentAssignmentErrorCode:
+  | 'delivery_experiment_assignment_persist_failed'
+  | 'delivery_experiment_assignment_unsigned'
+  | undefined
+const storedAssignmentKey = Astro.cookies.get(DELIVERY_ASSIGNMENT_COOKIE)?.value
+const cookieAssignmentKey = isDeliveryAssignmentKey(storedAssignmentKey)
+  ? storedAssignmentKey
+  : null
+let assignmentKey: string | null = cookieAssignmentKey
+const persistAssignment = cookieAssignmentKey !== null
+const shouldStoreAssignmentCookie = !persistAssignment
 const observationContext = createDeliveryRequestContext()
 let observation: DeliveryObservation = {
   event: 'delivery.public_read',
   routeKind: 'page',
   outcome: 'error',
   errorCode: 'delivery_internal_error',
+  experimentActive: false,
+  experimentVariantServed: false,
   requestId: observationContext.requestId,
   startedAt: observationContext.startedAt,
 }
 
 try {
   const { publicSiteUrl, workspaceId, supabaseUrl, supabaseAnonKey } = readServerEnv()
+  if (assignmentKey === null) {
+    assignmentKey = await createDeliveryAssignmentKey(
+      workspaceId,
+      readDeliveryAssignmentSigningKey(),
+    )
+  }
   observationWorkspaceId = workspaceId
   const result = await getPublishedBySlug(
     { workspaceId, supabaseUrl, supabaseAnonKey },
     contentType,
     slug,
+    { assignmentKey, persistAssignment },
   )
   if (result.status === 'found') {
     const item = result.value
+    experimentActive = item.experimentActive
+    experimentVariantServed = item.experiment !== null
+    experimentAssignmentErrorCode = item.experimentAssignmentErrorCode ?? undefined
     const route: DeliveryRoute = {
       contentType: item.contentType,
       slug: item.slug,
@@ -95,6 +126,11 @@ try {
       workspaceId,
       requestId: observationContext.requestId,
       startedAt: observationContext.startedAt,
+      experimentActive,
+      experimentVariantServed,
+      ...(experimentAssignmentErrorCode === undefined
+        ? {}
+        : { experimentAssignmentErrorCode }),
     }
   } else if (result.status === 'not_found') {
     state = 'not_found'
@@ -105,6 +141,8 @@ try {
       workspaceId,
       requestId: observationContext.requestId,
       startedAt: observationContext.startedAt,
+      experimentActive: false,
+      experimentVariantServed: false,
     }
   } else {
     state = 'error'
@@ -117,6 +155,8 @@ try {
       workspaceId,
       requestId: observationContext.requestId,
       startedAt: observationContext.startedAt,
+      experimentActive: false,
+      experimentVariantServed: false,
     }
   }
 } catch (error: unknown) {
@@ -129,11 +169,25 @@ try {
     workspaceId: observationWorkspaceId,
     requestId: observationContext.requestId,
     startedAt: observationContext.startedAt,
+    experimentActive: false,
+    experimentVariantServed: false,
   }
 }
 
 await recordDeliveryEvent(observation)
-Astro.response.headers.set('Cache-Control', state === 'found' ? CACHE_SUCCESS : CACHE_FAILURE)
+if (state === 'found' && experimentActive && shouldStoreAssignmentCookie && assignmentKey !== null) {
+  Astro.cookies.set(DELIVERY_ASSIGNMENT_COOKIE, assignmentKey, {
+    path: '/',
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: Astro.url.protocol === 'https:',
+    maxAge: 60 * 60 * 24 * 365,
+  })
+}
+Astro.response.headers.set(
+  'Cache-Control',
+  state === 'found' && !experimentActive ? CACHE_SUCCESS : CACHE_FAILURE,
+)
 Astro.response.headers.set('Content-Security-Policy', "default-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'; img-src https: data:; script-src 'self'; connect-src 'self'; style-src 'self'")
 Astro.response.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin')
 Astro.response.headers.set('X-Content-Type-Options', 'nosniff')

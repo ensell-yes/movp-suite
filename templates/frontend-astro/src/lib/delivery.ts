@@ -16,6 +16,20 @@ export type PublishedContent = Readonly<{
   richTextFieldKeys: readonly string[]
   meta: unknown
   jsonld: unknown
+  experimentActive: boolean
+  experimentAssignmentErrorCode: DeliveryExperimentAssignmentErrorCode | null
+  experiment: PublishedExperiment | null
+}>
+
+export type DeliveryExperimentAssignmentErrorCode =
+  | 'delivery_experiment_assignment_persist_failed'
+  | 'delivery_experiment_assignment_unsigned'
+
+export type PublishedExperiment = Readonly<{
+  experimentId: string
+  experimentKey: string
+  variantId: string
+  variantKey: string
 }>
 
 export type PublishedRoute = Readonly<{
@@ -56,9 +70,11 @@ const REQUEST_TIMEOUT_MS = 5_000
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const TYPE_KEY_PATTERN = /^[a-z][a-z0-9_-]{0,127}$/
 const CURSOR_PATTERN = /^[A-Za-z0-9_-]{4,128}$/
+const ASSIGNMENT_KEY_PATTERN = /^[A-Za-z0-9_-]{16,128}\.[A-Za-z0-9_-]{43}$/
 const CONTROL_PATTERN = /[\u0000-\u001f\u007f-\u009f]/
 const encoder = new TextEncoder()
 const decoder = new TextDecoder('utf-8', { fatal: true })
+export const DELIVERY_ASSIGNMENT_COOKIE = 'movp-ab-assignment'
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -81,6 +97,43 @@ function validTimestamp(value: unknown): value is string {
 
 function validCursor(value: unknown): value is string {
   return typeof value === 'string' && CURSOR_PATTERN.test(value)
+}
+
+export function isDeliveryAssignmentKey(value: unknown): value is string {
+  return typeof value === 'string' && ASSIGNMENT_KEY_PATTERN.test(value)
+}
+
+function base64Url(value: ArrayBuffer): string {
+  const bytes = new Uint8Array(value)
+  let encoded = ''
+  for (const byte of bytes) encoded += String.fromCharCode(byte)
+  return btoa(encoded).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '')
+}
+
+export async function createDeliveryAssignmentKey(
+  workspaceId: string,
+  signingKey: string,
+): Promise<string> {
+  const normalizedWorkspaceId = workspaceId.toLowerCase()
+  if (!UUID_PATTERN.test(normalizedWorkspaceId)) throw new Error('delivery_assignment_workspace_invalid')
+  const signingKeyBytes = encoder.encode(signingKey)
+  if (signingKeyBytes.byteLength < 32 || signingKeyBytes.byteLength > 512) {
+    throw new Error('delivery_assignment_signing_key_invalid')
+  }
+  const nonce = crypto.randomUUID()
+  const hmacKey = await crypto.subtle.importKey(
+    'raw',
+    signingKeyBytes,
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  )
+  const signature = await crypto.subtle.sign(
+    'HMAC',
+    hmacKey,
+    encoder.encode(`${normalizedWorkspaceId}:${nonce}`),
+  )
+  return `${nonce}.${base64Url(signature)}`
 }
 
 function validateEnv(value: DeliveryPublicEnv): boolean {
@@ -215,9 +268,37 @@ function validatePublishedContent(value: unknown): PublishedContent | null {
     || !Array.isArray(value.richtext_field_keys)
     || value.richtext_field_keys.length > 256
     || value.richtext_field_keys_supported !== true
+    || typeof value.experiment_active !== 'boolean'
+    || (
+      value.experiment_assignment_error_code !== null
+      && value.experiment_assignment_error_code !== undefined
+      && value.experiment_assignment_error_code !== 'delivery_experiment_assignment_persist_failed'
+      && value.experiment_assignment_error_code !== 'delivery_experiment_assignment_unsigned'
+    )
   ) {
     return null
   }
+  let experiment: PublishedExperiment | null = null
+  if (value.experiment !== undefined && value.experiment !== null) {
+    if (
+      !isRecord(value.experiment)
+      || !UUID_PATTERN.test(String(value.experiment.experiment_id))
+      || !UUID_PATTERN.test(String(value.experiment.variant_id))
+      || typeof value.experiment.experiment_key !== 'string'
+      || !TYPE_KEY_PATTERN.test(value.experiment.experiment_key)
+      || typeof value.experiment.variant_key !== 'string'
+      || !TYPE_KEY_PATTERN.test(value.experiment.variant_key)
+    ) {
+      return null
+    }
+    experiment = {
+      experimentId: String(value.experiment.experiment_id),
+      experimentKey: value.experiment.experiment_key,
+      variantId: String(value.experiment.variant_id),
+      variantKey: value.experiment.variant_key,
+    }
+  }
+
   const richTextFieldKeys: string[] = []
   const seenFieldKeys = new Set<string>()
   for (const fieldKey of value.richtext_field_keys) {
@@ -241,6 +322,13 @@ function validatePublishedContent(value: unknown): PublishedContent | null {
     richTextFieldKeys,
     meta: value.meta ?? null,
     jsonld: value.jsonld ?? null,
+    experimentActive: value.experiment_active,
+    experimentAssignmentErrorCode:
+      value.experiment_assignment_error_code === 'delivery_experiment_assignment_persist_failed'
+      || value.experiment_assignment_error_code === 'delivery_experiment_assignment_unsigned'
+        ? value.experiment_assignment_error_code
+        : null,
+    experiment,
   }
 }
 
@@ -269,15 +357,26 @@ export async function getPublishedBySlug(
   env: DeliveryPublicEnv,
   contentType: string,
   slug: string,
+  options: Readonly<{ assignmentKey: string | null; persistAssignment: boolean }> = {
+    assignmentKey: null,
+    persistAssignment: false,
+  },
   fetcher: Fetcher = fetch,
 ): Promise<DeliveryResult<PublishedContent>> {
-  if (!TYPE_KEY_PATTERN.test(contentType) || !validSlug(slug)) {
+  if (
+    !TYPE_KEY_PATTERN.test(contentType)
+    || !validSlug(slug)
+    || (options.assignmentKey !== null && !isDeliveryAssignmentKey(options.assignmentKey))
+    || typeof options.persistAssignment !== 'boolean'
+  ) {
     return { status: 'error', code: 'delivery_request_invalid' }
   }
   const result = await callRpc(env, 'get_published_by_slug', {
     ws: env.workspaceId,
     p_content_type_key: contentType,
     p_slug: slug,
+    p_assignment_key: options.assignmentKey,
+    p_persist_assignment: options.persistAssignment,
   }, fetcher)
   if (!result.ok) return { status: 'error', code: result.code }
   if (result.value === null) return { status: 'not_found' }

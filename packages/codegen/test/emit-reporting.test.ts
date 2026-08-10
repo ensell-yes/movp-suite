@@ -12,8 +12,8 @@ describe('emitReportingSql (C4a.2)', () => {
   })
 
   it('emits one security-invoker view per collection with reporting metadata', () => {
-    expect((sql.match(/create or replace view reporting\.v_/g) ?? []).length).toBe(26)
-    expect((sql.match(/with \(security_invoker = true\)/g) ?? []).length).toBe(26)
+    expect((sql.match(/create or replace view reporting\.v_/g) ?? []).length).toBe(29)
+    expect((sql.match(/with \(security_invoker = true\)/g) ?? []).length).toBe(29)
   })
 
   it('selects the campaign metric star-schema columns in declaration order', () => {
@@ -48,7 +48,7 @@ describe('emitReportingSql (C4a.2)', () => {
   })
 
   it('grants select on every view to authenticated and service_role', () => {
-    expect((sql.match(/grant select on reporting\.v_[a-z_]+ to authenticated, service_role;/g) ?? []).length).toBe(26)
+    expect((sql.match(/grant select on reporting\.v_[a-z_]+ to authenticated, service_role;/g) ?? []).length).toBe(29)
   })
 
   it('rejects a reporting role on a many-to-many relation', () => {

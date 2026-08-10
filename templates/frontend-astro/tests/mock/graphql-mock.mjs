@@ -420,6 +420,22 @@ const publishedDelivery = {
     '@type': 'Article',
     name: 'Published page',
   },
+  experiment_active: false,
+  experiment_assignment_error_code: null,
+  experiment: null,
+}
+const experimentDelivery = {
+  ...publishedDelivery,
+  slug: 'experiment-page',
+  data: { ...publishedDelivery.data, title: 'Experiment page' },
+  meta: { title: 'Experiment page', description: 'Experiment description' },
+  experiment_active: true,
+  experiment: {
+    experiment_id: '44444444-4444-4444-8444-444444444444',
+    experiment_key: 'published-page-experiment',
+    variant_id: '55555555-5555-4555-8555-555555555555',
+    variant_key: 'control',
+  },
 }
 const deliveryContentType = {
   id: 'ct-delivery',
@@ -556,9 +572,13 @@ createServer(async (req, res) => {
       return json(
         res,
         200,
-        parsed.p_content_type_key === 'article' && parsed.p_slug === 'published-page'
-          ? publishedDelivery
-          : null,
+        parsed.p_content_type_key !== 'article'
+          ? null
+          : parsed.p_slug === 'published-page'
+            ? publishedDelivery
+            : parsed.p_slug === 'experiment-page'
+              ? experimentDelivery
+              : null,
       )
     }
     if (url.pathname === '/rest/v1/rpc/list_published_delivery_shards') {

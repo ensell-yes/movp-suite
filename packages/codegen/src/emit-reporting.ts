@@ -47,8 +47,17 @@ from public.${name};
 grant select on reporting.v_${name} to authenticated, service_role;`
 }
 
-export function emitReportingSql(schema: MovpSchema): string {
-  const collections = schema.collections.filter((collection) => reportingFields(collection).length > 0)
+export function emitReportingSql(
+  schema: MovpSchema,
+  opts: { includeCollections?: readonly string[]; excludeCollections?: readonly string[] } = {},
+): string {
+  const included = opts.includeCollections === undefined ? null : new Set(opts.includeCollections)
+  const excluded = new Set(opts.excludeCollections ?? [])
+  const collections = schema.collections.filter((collection) =>
+    reportingFields(collection).length > 0
+    && (included === null || included.has(collection.name))
+    && !excluded.has(collection.name)
+  )
   return `${HEADER}
 -- reporting schema: SECURITY-INVOKER views over collections with reporting metadata.
 -- RLS on the underlying tables still binds — a member sees only their workspaces.

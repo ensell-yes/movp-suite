@@ -20,6 +20,11 @@ const externalRecordDeltaOwnership = {
   events: ['external.record.upserted', 'ingest.idempotency_conflict'],
 } satisfies Omit<GeneratedDelta, 'emit'>
 
+const experimentDeltaOwnership = {
+  file: '20260810000001_movp_generated_experiments.sql',
+  collections: ['experiment', 'experiment_variant', 'experiment_assignment'],
+} satisfies Omit<GeneratedDelta, 'emit'>
+
 function deltaOwnedCollections(deltas: readonly GeneratedDelta[]): string[] {
   return deltas.flatMap((delta) => delta.collections ?? [])
 }
@@ -31,10 +36,25 @@ function deltaOwnedEvents(deltas: readonly GeneratedDelta[]): string[] {
 // Post-freeze generated objects ship as immutable, timestamped delta migrations.
 // Once an entry merges, never remove or rename it; changed output gets a new entry.
 export const GENERATED_DELTAS: readonly GeneratedDelta[] = [
-  { file: '20260711000001_movp_generated_reporting.sql', emit: emitReportingSql },
+  {
+    file: '20260711000001_movp_generated_reporting.sql',
+    emit: (schema) => emitReportingSql(schema, {
+      excludeCollections: experimentDeltaOwnership.collections,
+    }),
+  },
   {
     ...externalRecordDeltaOwnership,
     emit: (schema) => emitDeltaSql(schema, externalRecordDeltaOwnership),
+  },
+  {
+    ...experimentDeltaOwnership,
+    emit: (schema) => emitDeltaSql(schema, experimentDeltaOwnership),
+  },
+  {
+    file: '20260810000003_movp_generated_experiment_reporting.sql',
+    emit: (schema) => emitReportingSql(schema, {
+      includeCollections: experimentDeltaOwnership.collections,
+    }),
   },
 ]
 

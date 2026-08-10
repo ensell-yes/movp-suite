@@ -12,8 +12,8 @@ insert into public.campaign_metric (workspace_id, campaign_id, metric_key, value
   ('c4c00000-0000-0000-0000-000000000001', 'c4c00000-0000-0000-0000-0000000000a1', 'clicks', 10, current_date),
   ('c4c00000-0000-0000-0000-000000000002', 'c4c00000-0000-0000-0000-0000000000a2', 'clicks', 20, current_date);
 
-select is(reporting.setup_bi_mirror(), 27,
-  'mirror creates one BI view per reporting view (26 generated + v_task_cycle)');
+select is(reporting.setup_bi_mirror(), 30,
+  'mirror creates one BI view per reporting view (29 generated + v_task_cycle)');
 
 create role movp_bi_smoke;
 grant movp_bi_smoke to postgres;

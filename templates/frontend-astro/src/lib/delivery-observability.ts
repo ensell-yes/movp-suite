@@ -9,11 +9,15 @@ import type { DeliveryErrorCode } from './delivery.ts'
 
 type DeliveryRouteKind = 'page' | 'sitemap_index' | 'sitemap_child' | 'robots' | 'llms'
 type DeliveryArtifactRouteKind = Exclude<DeliveryRouteKind, 'page'>
+export type DeliveryExperimentAssignmentErrorCode =
+  | 'delivery_experiment_assignment_persist_failed'
+  | 'delivery_experiment_assignment_unsigned'
 export type DeliverySafeErrorCode =
   | DeliveryArtifactErrorCode
   | DeliveryErrorCode
   | DeliveryRenderErrorCode
   | 'delivery_artifact_bounds_invalid'
+  | DeliveryExperimentAssignmentErrorCode
   | 'delivery_internal_error'
   | 'delivery_observability_write_failed'
 
@@ -34,15 +38,19 @@ export type DeliveryArtifactObservationInput =
       errorCode: DeliverySafeErrorCode
     }>)
 
+type DeliveryPublicReadObservationBase = DeliveryEventBase & Readonly<{
+  event: 'delivery.public_read'
+  routeKind: 'page'
+  experimentActive: boolean
+  experimentVariantServed: boolean
+  experimentAssignmentErrorCode?: DeliveryExperimentAssignmentErrorCode
+}>
+
 export type DeliveryObservation =
-  | (DeliveryEventBase & Readonly<{
-      event: 'delivery.public_read'
-      routeKind: 'page'
+  | (DeliveryPublicReadObservationBase & Readonly<{
       outcome: 'found' | 'not_found'
     }>)
-  | (DeliveryEventBase & Readonly<{
-      event: 'delivery.public_read'
-      routeKind: 'page'
+  | (DeliveryPublicReadObservationBase & Readonly<{
       outcome: 'error'
       errorCode: DeliverySafeErrorCode
     }>)
@@ -56,6 +64,9 @@ export type DeliveryLogRecord = Readonly<{
   request_id: string
   outcome: 'found' | 'not_found' | 'generated' | 'error'
   error_code?: DeliverySafeErrorCode
+  experiment_active?: boolean
+  experiment_variant_served?: boolean
+  experiment_assignment_error_code?: DeliveryExperimentAssignmentErrorCode
   latency_ms: number
   redaction_version: number
 }>
@@ -84,6 +95,8 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3
 const MAX_LATENCY_MS = 24 * 60 * 60 * 1_000
 const DELIVERY_SAFE_ERROR_CODES: Readonly<Record<DeliverySafeErrorCode, true>> = {
   delivery_artifact_bounds_invalid: true,
+  delivery_experiment_assignment_persist_failed: true,
+  delivery_experiment_assignment_unsigned: true,
   delivery_internal_error: true,
   delivery_jsonld_invalid: true,
   delivery_jsonld_too_large: true,
@@ -180,6 +193,15 @@ export async function recordDeliveryEvent(
       request_id: requestId,
       outcome: input.outcome,
       ...('errorCode' in input ? { error_code: safeErrorCode(input.errorCode) } : {}),
+      ...(input.event === 'delivery.public_read'
+        ? {
+            experiment_active: input.experimentActive,
+            experiment_variant_served: input.experimentVariantServed,
+            ...(input.experimentAssignmentErrorCode === undefined
+              ? {}
+              : { experiment_assignment_error_code: input.experimentAssignmentErrorCode }),
+          }
+        : {}),
       latency_ms: latency(input.startedAt, deps.now()),
       redaction_version: REDACTION_VERSION,
     }
