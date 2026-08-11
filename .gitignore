@@ -9,6 +9,7 @@ supabase/.temp/
 .DS_Store
 .env
 .env.*
+graphify-out/
 
 # personal VS Code multi-root workspace (local only)
 movp-suite.code-workspace
