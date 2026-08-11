@@ -44,6 +44,7 @@ test.describe('published delivery', () => {
     expect(first.status()).toBe(200)
     expect(first.headers()['cache-control']).toBe('no-store')
     expect(first.headers().vary).toBeUndefined()
+    expect(await first.text()).toContain('Experiment variant page')
     const setCookie = first.headers()['set-cookie']
     expect(setCookie).toMatch(/^movp-ab-assignment=[A-Za-z0-9_-]{16,128}\.[A-Za-z0-9_-]{43};/)
     expect(setCookie).toContain('HttpOnly')
@@ -58,6 +59,7 @@ test.describe('published delivery', () => {
     expect(returning.status()).toBe(200)
     expect(returning.headers()['cache-control']).toBe('no-store')
     expect(returning.headers().vary).toBeUndefined()
+    expect(await returning.text()).toContain('Experiment variant page')
     expect(returning.headers()['set-cookie']).toBeUndefined()
   })
 

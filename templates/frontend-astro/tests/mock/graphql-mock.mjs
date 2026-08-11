@@ -427,15 +427,23 @@ const publishedDelivery = {
 const experimentDelivery = {
   ...publishedDelivery,
   slug: 'experiment-page',
-  data: { ...publishedDelivery.data, title: 'Experiment page' },
-  meta: { title: 'Experiment page', description: 'Experiment description' },
+  data: { ...publishedDelivery.data, title: 'Experiment variant page' },
+  meta: { title: 'Experiment variant page', description: 'Experiment description' },
   experiment_active: true,
   experiment: {
     experiment_id: '44444444-4444-4444-8444-444444444444',
     experiment_key: 'published-page-experiment',
     variant_id: '55555555-5555-4555-8555-555555555555',
-    variant_key: 'control',
+    variant_key: 'variant-b',
   },
+}
+const experimentControlDelivery = {
+  ...publishedDelivery,
+  slug: 'experiment-page',
+  data: { ...publishedDelivery.data, title: 'Experiment control page' },
+  meta: { title: 'Experiment control page', description: 'Experiment description' },
+  experiment_active: true,
+  experiment: null,
 }
 const deliveryContentType = {
   id: 'ct-delivery',
@@ -577,7 +585,9 @@ createServer(async (req, res) => {
           : parsed.p_slug === 'published-page'
             ? publishedDelivery
             : parsed.p_slug === 'experiment-page'
-              ? experimentDelivery
+              ? parsed.p_assignment_key === null || parsed.p_assignment_key === undefined
+                ? experimentControlDelivery
+                : experimentDelivery
               : null,
       )
     }

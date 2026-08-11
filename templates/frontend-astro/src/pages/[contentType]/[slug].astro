@@ -62,7 +62,6 @@ try {
   assignmentCookieValue = page.assignmentCookieValue
   cacheControl = page.cacheControl
   observation = page.observation
-  observationWorkspaceId = serverEnv.workspaceId
 } catch (error: unknown) {
   state = 'error'
   observation = {
@@ -92,7 +91,7 @@ Astro.response.headers.set('Cache-Control', cacheControl)
 Astro.response.headers.set('Content-Security-Policy', "default-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'; img-src https: data:; script-src 'self'; connect-src 'self'; style-src 'self'")
 Astro.response.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin')
 Astro.response.headers.set('X-Content-Type-Options', 'nosniff')
-if (state !== 'found') Astro.response.status = state === 'not_found' ? 404 : errorStatus
+if (state !== 'found') Astro.response.status = errorStatus
 ---
 <!doctype html>
 <html lang="en">

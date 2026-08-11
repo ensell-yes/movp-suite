@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   createDeliveryAssignmentKey,
   getPublishedBySlug,
@@ -9,7 +9,6 @@ import {
   listPublishedDeliveryShards,
   parseDeclaredPublishedRichText,
   parsePublishedRichText,
-  type PublishedContent,
   type PublishedExperiment,
   type DeliveryPublicEnv,
 } from './delivery.ts'
@@ -17,7 +16,6 @@ import {
   DELIVERY_PAGE_CACHE_FAILURE,
   DELIVERY_PAGE_CACHE_SUCCESS,
   resolveDeliveryPage,
-  type DeliveryPageDeps,
   type DeliveryPageServerEnv,
 } from './delivery-page.ts'
 
@@ -34,42 +32,50 @@ const pageEnv: DeliveryPageServerEnv = {
   publicSiteUrl: 'https://pages.example.test',
 }
 const REQUEST_ID = '44444444-4444-4444-8444-444444444444'
+const SIGNING_KEY = 'test-delivery-assignment-signing-key-000000000000000000000001'
+type FetchMock = ReturnType<typeof vi.fn<typeof fetch>>
 
-function publishedValue(
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function publishedRpcValue(
   overrides: Readonly<{
     title?: string
     experimentActive?: boolean
     experiment?: PublishedExperiment | null
     experimentAssignmentErrorCode?: 'delivery_experiment_assignment_persist_failed' | 'delivery_experiment_assignment_unsigned' | null
   }> = {},
-): PublishedContent {
+): Record<string, unknown> {
+  const experiment = overrides.experiment === undefined || overrides.experiment === null
+    ? null
+    : {
+        experiment_id: overrides.experiment.experimentId,
+        experiment_key: overrides.experiment.experimentKey,
+        variant_id: overrides.experiment.variantId,
+        variant_key: overrides.experiment.variantKey,
+      }
   return {
-    itemId: ITEM_ID,
-    contentType: 'article',
+    item_id: ITEM_ID,
+    content_type_key: 'article',
     slug: 'safe-page',
-    publishedRevisionId: REVISION_ID,
-    publishedAt: '2026-07-23T12:00:00Z',
+    published_revision_id: REVISION_ID,
+    published_at: '2026-07-23T12:00:00Z',
     data: {
       title: overrides.title ?? 'Safe page',
       body: '{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Published"}]}]}',
     },
-    richTextFieldKeys: ['body'],
+    richtext_field_keys: ['body'],
+    richtext_field_keys_supported: true,
     meta: { description: 'Description' },
     jsonld: null,
-    experimentActive: overrides.experimentActive ?? false,
-    experimentAssignmentErrorCode: overrides.experimentAssignmentErrorCode ?? null,
-    experiment: overrides.experiment ?? null,
-  }
-}
-
-function pageDeps(
-  result: Awaited<ReturnType<typeof getPublishedBySlug>>,
-  mintedAssignmentKey = `11111111-1111-4111-8111-111111111111.${'a'.repeat(43)}`,
-): DeliveryPageDeps {
-  return {
-    createDeliveryAssignmentKey: vi.fn<DeliveryPageDeps['createDeliveryAssignmentKey']>()
-      .mockResolvedValue(mintedAssignmentKey),
-    getPublishedBySlug: vi.fn<DeliveryPageDeps['getPublishedBySlug']>().mockResolvedValue(result),
+    experiment_active: overrides.experimentActive ?? false,
+    experiment_assignment_error_code: overrides.experimentAssignmentErrorCode ?? null,
+    experiment,
   }
 }
 
@@ -78,6 +84,15 @@ function jsonResponse(value: unknown, status = 200): Response {
     status,
     headers: { 'content-type': 'application/json' },
   })
+}
+
+function capturedRpcBody(fetcher: FetchMock): Record<string, unknown> {
+  const init = fetcher.mock.calls[0]?.[1]
+  const body = init?.body
+  if (typeof body !== 'string') throw new Error('missing_fetch_body')
+  const parsed = JSON.parse(body) as unknown
+  if (!isRecord(parsed)) throw new Error('invalid_fetch_body')
+  return parsed
 }
 
 describe('published delivery adapter', () => {
@@ -419,11 +434,34 @@ describe('published delivery adapter', () => {
 })
 
 describe('published delivery route boundaries', () => {
+  it('returns a no-store 404 when published content is not found', async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(null))
+    vi.stubGlobal('fetch', fetcher)
+
+    const page = await resolveDeliveryPage({
+      contentType: 'article',
+      slug: 'missing-page',
+      storedAssignmentKey: undefined,
+      signingKey: null,
+      serverEnv: pageEnv,
+      requestId: REQUEST_ID,
+      startedAt: 100,
+    })
+
+    expect(page).toEqual(expect.objectContaining({
+      state: 'not_found',
+      errorStatus: 404,
+      cacheControl: DELIVERY_PAGE_CACHE_FAILURE,
+      observation: expect.objectContaining({
+        outcome: 'not_found',
+        experimentActive: false,
+      }),
+    }))
+  })
+
   it('uses a minted signed key for first-sight experiment delivery and stores the cookie afterward', async () => {
-    const mintedAssignmentKey = `11111111-1111-4111-8111-111111111111.${'a'.repeat(43)}`
-    const deps = pageDeps({
-      status: 'found',
-      value: publishedValue({
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(
+      publishedRpcValue({
         title: 'Variant title',
         experimentActive: true,
         experiment: {
@@ -433,31 +471,30 @@ describe('published delivery route boundaries', () => {
           variantKey: 'variant-b',
         },
       }),
-    }, mintedAssignmentKey)
+    ))
+    vi.stubGlobal('fetch', fetcher)
 
     const page = await resolveDeliveryPage({
       contentType: 'article',
       slug: 'safe-page',
       storedAssignmentKey: undefined,
-      signingKey: 'test-delivery-assignment-signing-key-000000000000000000000001',
+      signingKey: SIGNING_KEY,
       serverEnv: pageEnv,
       requestId: REQUEST_ID,
       startedAt: 100,
-    }, deps)
+    })
 
-    expect(deps.getPublishedBySlug).toHaveBeenCalledWith(
-      {
-        workspaceId: pageEnv.workspaceId,
-        supabaseUrl: pageEnv.supabaseUrl,
-        supabaseAnonKey: pageEnv.supabaseAnonKey,
-      },
-      'article',
-      'safe-page',
-      { assignmentKey: mintedAssignmentKey, persistAssignment: false },
-    )
+    const body = capturedRpcBody(fetcher)
+    expect(body).toEqual(expect.objectContaining({
+      ws: pageEnv.workspaceId,
+      p_content_type_key: 'article',
+      p_slug: 'safe-page',
+      p_persist_assignment: false,
+    }))
+    expect(isDeliveryAssignmentKey(body.p_assignment_key)).toBe(true)
     expect(page.title).toBe('Variant title')
     expect(page.safeGeneratedHtml).toContain('Published')
-    expect(page.assignmentCookieValue).toBe(mintedAssignmentKey)
+    expect(page.assignmentCookieValue).toBe(body.p_assignment_key)
     expect(page.cacheControl).toBe(DELIVERY_PAGE_CACHE_FAILURE)
     expect(page.observation).toEqual(expect.objectContaining({
       outcome: 'found',
@@ -468,9 +505,8 @@ describe('published delivery route boundaries', () => {
 
   it('reuses a returned assignment cookie and does not replace it', async () => {
     const cookieAssignmentKey = `22222222-2222-4222-8222-222222222222.${'b'.repeat(43)}`
-    const deps = pageDeps({
-      status: 'found',
-      value: publishedValue({
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(
+      publishedRpcValue({
         experimentActive: true,
         experiment: {
           experimentId: '55555555-5555-4555-8555-555555555555',
@@ -479,37 +515,64 @@ describe('published delivery route boundaries', () => {
           variantKey: 'variant-b',
         },
       }),
-    })
+    ))
+    vi.stubGlobal('fetch', fetcher)
 
     const page = await resolveDeliveryPage({
       contentType: 'article',
       slug: 'safe-page',
       storedAssignmentKey: cookieAssignmentKey,
-      signingKey: 'test-delivery-assignment-signing-key-000000000000000000000001',
+      signingKey: SIGNING_KEY,
       serverEnv: pageEnv,
       requestId: REQUEST_ID,
       startedAt: 100,
-    }, deps)
+    })
 
-    expect(deps.createDeliveryAssignmentKey).not.toHaveBeenCalled()
-    expect(deps.getPublishedBySlug).toHaveBeenCalledWith(
-      expect.any(Object),
-      'article',
-      'safe-page',
-      { assignmentKey: cookieAssignmentKey, persistAssignment: true },
-    )
+    expect(capturedRpcBody(fetcher)).toEqual(expect.objectContaining({
+      p_assignment_key: cookieAssignmentKey,
+      p_persist_assignment: true,
+    }))
     expect(page.assignmentCookieValue).toBeNull()
     expect(page.cacheControl).toBe(DELIVERY_PAGE_CACHE_FAILURE)
   })
 
-  it('serves an unsigned experiment without setting a cookie when the signing key is absent', async () => {
-    const deps = pageDeps({
-      status: 'found',
-      value: publishedValue({
+  it('passes an RPC assignment persistence failure into the delivery observation', async () => {
+    const cookieAssignmentKey = `22222222-2222-4222-8222-222222222222.${'b'.repeat(43)}`
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(
+      publishedRpcValue({
         experimentActive: true,
-        experimentAssignmentErrorCode: 'delivery_experiment_assignment_unsigned',
+        experimentAssignmentErrorCode: 'delivery_experiment_assignment_persist_failed',
       }),
+    ))
+    vi.stubGlobal('fetch', fetcher)
+
+    const page = await resolveDeliveryPage({
+      contentType: 'article',
+      slug: 'safe-page',
+      storedAssignmentKey: cookieAssignmentKey,
+      signingKey: SIGNING_KEY,
+      serverEnv: pageEnv,
+      requestId: REQUEST_ID,
+      startedAt: 100,
     })
+
+    expect(capturedRpcBody(fetcher)).toEqual(expect.objectContaining({
+      p_assignment_key: cookieAssignmentKey,
+      p_persist_assignment: true,
+    }))
+    expect(page.observation).toEqual(expect.objectContaining({
+      experimentActive: true,
+      experimentAssignmentErrorCode: 'delivery_experiment_assignment_persist_failed',
+    }))
+  })
+
+  it('serves an unsigned experiment without setting a cookie when the signing key is absent', async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(
+      publishedRpcValue({
+        experimentActive: true,
+      }),
+    ))
+    vi.stubGlobal('fetch', fetcher)
 
     const page = await resolveDeliveryPage({
       contentType: 'article',
@@ -519,15 +582,12 @@ describe('published delivery route boundaries', () => {
       serverEnv: pageEnv,
       requestId: REQUEST_ID,
       startedAt: 100,
-    }, deps)
+    })
 
-    expect(deps.createDeliveryAssignmentKey).not.toHaveBeenCalled()
-    expect(deps.getPublishedBySlug).toHaveBeenCalledWith(
-      expect.any(Object),
-      'article',
-      'safe-page',
-      { assignmentKey: null, persistAssignment: false },
-    )
+    expect(capturedRpcBody(fetcher)).toEqual(expect.objectContaining({
+      p_assignment_key: null,
+      p_persist_assignment: false,
+    }))
     expect(page.assignmentCookieValue).toBeNull()
     expect(page.cacheControl).toBe(DELIVERY_PAGE_CACHE_FAILURE)
     expect(page.observation).toEqual(expect.objectContaining({
@@ -538,18 +598,24 @@ describe('published delivery route boundaries', () => {
   })
 
   it('keeps non-experiment pages publicly cacheable without storing a minted key', async () => {
-    const deps = pageDeps({ status: 'found', value: publishedValue() })
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(publishedRpcValue()))
+    vi.stubGlobal('fetch', fetcher)
 
     const page = await resolveDeliveryPage({
       contentType: 'article',
       slug: 'safe-page',
       storedAssignmentKey: undefined,
-      signingKey: 'test-delivery-assignment-signing-key-000000000000000000000001',
+      signingKey: SIGNING_KEY,
       serverEnv: pageEnv,
       requestId: REQUEST_ID,
       startedAt: 100,
-    }, deps)
+    })
 
+    const body = capturedRpcBody(fetcher)
+    expect(body).toEqual(expect.objectContaining({
+      p_persist_assignment: false,
+    }))
+    expect(isDeliveryAssignmentKey(body.p_assignment_key)).toBe(true)
     expect(page.assignmentCookieValue).toBeNull()
     expect(page.cacheControl).toBe(DELIVERY_PAGE_CACHE_SUCCESS)
     expect(page.observation).toEqual(expect.objectContaining({
@@ -578,14 +644,14 @@ describe('published delivery route boundaries', () => {
     expect(joined.match(/readServerEnv\(\)/g)?.length).toBeGreaterThanOrEqual(4)
     expect(page.match(/set:html=/g)).toHaveLength(1)
     expect(deliveryPage).toContain('renderDocToHtml')
-    expect(deliveryPage).toContain("export const DELIVERY_PAGE_CACHE_SUCCESS = 'public, s-maxage=60'")
-    expect(deliveryPage).toContain("export const DELIVERY_PAGE_CACHE_FAILURE = 'no-store'")
     expect(page).not.toContain("Astro.response.headers.set('Vary', 'Cookie')")
     expect(page).toContain('Astro.cookies.set(DELIVERY_ASSIGNMENT_COOKIE')
     expect(page).toContain('resolveDeliveryPage')
-    expect(deliveryPage).toContain("experimentAssignmentErrorCode = 'delivery_experiment_assignment_unsigned'")
-    expect(joined).toContain('const persistAssignment = cookieAssignmentKey !== null')
-    expect(joined).toContain('if (assignmentKey === null && input.signingKey !== null)')
-    expect(joined).toContain('experimentActive ? DELIVERY_PAGE_CACHE_FAILURE : DELIVERY_PAGE_CACHE_SUCCESS')
+  })
+
+  it('passes helper failure statuses through the Astro adapter', async () => {
+    const page = await readFile(`${ROOT}/src/pages/[contentType]/[slug].astro`, 'utf8')
+
+    expect(page).toContain("if (state !== 'found') Astro.response.status = errorStatus")
   })
 })

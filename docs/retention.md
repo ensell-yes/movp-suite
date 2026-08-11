@@ -62,6 +62,30 @@ An active experiment response with an unverified assignment token emits the boun
 secret rotation: it means the Worker secret and Vault secret are absent or do not match, while delivery
 continues deterministically without recording exposure data. A missing Worker secret leaves non-experiment
 pages cacheable and serves experiment control without setting a cookie.
+
+To verify deployed Worker/Vault agreement without reading either secret, extract the assignment key from a
+first-sight request with no `movp-ab-assignment` cookie to a published experiment page:
+
+```sh
+ASSIGNMENT_KEY="$(curl -sS -D - -o /dev/null 'https://<site>/<content-type>/<slug>' \
+  | sed -n 's/^[Ss]et-[Cc]ookie: movp-ab-assignment=\([^;]*\).*/\1/p')"
+if [ -z "$ASSIGNMENT_KEY" ]; then
+  echo 'no cookie minted: DELIVERY_ASSIGNMENT_SIGNING_KEY is missing on the Worker' >&2
+fi
+```
+
+Expected: no output and a non-empty `ASSIGNMENT_KEY`. A missing cookie stops the check and identifies the
+missing Worker secret. Confirm the linked project reference matches the Supabase project used by the deployed
+Worker, then query its Vault-backed verifier:
+
+```sh
+supabase projects list
+supabase db query --linked "select movp_internal.delivery_assignment_key_is_signed('<workspace-id>'::uuid, '${ASSIGNMENT_KEY:?no assignment key: Worker signing key missing}');"
+```
+
+Expected: `supabase projects list` marks the intended project as linked, and the query returns `true`. A `false`
+result means the Vault signing secret is absent or its verifier rejects the cookie minted by the deployed Worker.
+
 The delivery RPC materializes the published variant set once per experiment request; keep this path below
 100 signed experiment requests per second per variant until counter sharding is introduced.
 

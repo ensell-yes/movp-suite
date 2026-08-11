@@ -24,11 +24,6 @@ export type DeliveryPageServerEnv = DeliveryPublicEnv & Readonly<{
   publicSiteUrl: string
 }>
 
-export type DeliveryPageDeps = Readonly<{
-  createDeliveryAssignmentKey: typeof createDeliveryAssignmentKey
-  getPublishedBySlug: typeof getPublishedBySlug
-}>
-
 export type DeliveryPageResult = Readonly<{
   title: string
   description: string | null
@@ -52,15 +47,7 @@ export type DeliveryPageInput = Readonly<{
   startedAt: number
 }>
 
-const defaultDeps: DeliveryPageDeps = {
-  createDeliveryAssignmentKey,
-  getPublishedBySlug,
-}
-
-export async function resolveDeliveryPage(
-  input: DeliveryPageInput,
-  deps: DeliveryPageDeps = defaultDeps,
-): Promise<DeliveryPageResult> {
+export async function resolveDeliveryPage(input: DeliveryPageInput): Promise<DeliveryPageResult> {
   const cookieAssignmentKey = isDeliveryAssignmentKey(input.storedAssignmentKey)
     ? input.storedAssignmentKey
     : null
@@ -69,10 +56,10 @@ export async function resolveDeliveryPage(
   const shouldStoreAssignmentCookie = !persistAssignment
 
   if (assignmentKey === null && input.signingKey !== null) {
-    assignmentKey = await deps.createDeliveryAssignmentKey(input.serverEnv.workspaceId, input.signingKey)
+    assignmentKey = await createDeliveryAssignmentKey(input.serverEnv.workspaceId, input.signingKey)
   }
 
-  const result = await deps.getPublishedBySlug(
+  const result = await getPublishedBySlug(
     {
       workspaceId: input.serverEnv.workspaceId,
       supabaseUrl: input.serverEnv.supabaseUrl,
@@ -91,7 +78,7 @@ export async function resolveDeliveryPage(
       safeGeneratedHtml: '',
       plainFields: [],
       state: 'not_found',
-      errorStatus: 500,
+      errorStatus: 404,
       assignmentCookieValue: null,
       cacheControl: DELIVERY_PAGE_CACHE_FAILURE,
       observation: {
