@@ -12,7 +12,7 @@
     "build": "tsup src/index.ts --format esm --dts --sourcemap --clean --target node20 --out-dir dist && tsx src/build.ts"
   },
   "devDependencies": {
-    "vitest": "^3.2.6",
+    "vitest": "^4.1.12",
     "tsx": "^4.19.0",
     "tsup": "^8.5.1",
     "@types/node": "^26.0.1"

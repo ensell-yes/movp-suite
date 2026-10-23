@@ -1,3 +1,4 @@
+import { type Editor } from '@tiptap/core'
 import { EditorContent, useEditor } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -42,7 +43,7 @@ export function MovpEditor({
   const baselineRef = useRef('')
   const dirtyRef = useRef<boolean | null>(null)
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const editorRef = useRef<ReturnType<typeof useEditor>>(null)
+  const editorRef = useRef<Editor | null>(null)
   const onDirtyChangeRef = useRef(onDirtyChange)
   onDirtyChangeRef.current = onDirtyChange
 
@@ -60,7 +61,8 @@ export function MovpEditor({
     extensions: [StarterKit.configure({ dropcursor: false })],
     injectCSS: false,
     editable: !readOnly,
-    immediatelyRender: false, // TipTap 2.27.2 warns on SSR unless false (useEditor.ts:110)
+    immediatelyRender: false, // TipTap warns on SSR unless false
+    shouldRerenderOnTransaction: true,
     editorProps: {
       attributes: { role: 'textbox', 'aria-label': 'Rich text editor', 'aria-multiline': 'true' },
     },
@@ -85,7 +87,7 @@ export function MovpEditor({
       timerRef.current = null
     }
     editor.chain()
-      .setContent(tipTapAdapter.decode(initialBody), false)
+      .setContent(tipTapAdapter.decode(initialBody), { emitUpdate: false })
       // A host load establishes the undo baseline; it must not become an undoable user edit.
       .command(({ tr }) => {
         tr.setMeta('addToHistory', false)

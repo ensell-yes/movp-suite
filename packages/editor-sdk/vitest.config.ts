@@ -1,6 +1,5 @@
 import { defineConfig } from 'vitest/config'
 
 export default defineConfig({
-  test: { environment: 'node' },
-  esbuild: { jsx: 'automatic', jsxImportSource: 'react' },
+  test: { environment: 'node', setupFiles: ['./test/setup.ts'] },
 })
