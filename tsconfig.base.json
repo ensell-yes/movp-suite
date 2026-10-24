@@ -9,6 +9,6 @@
     "skipLibCheck": true,
     "esModuleInterop": true,
     "lib": ["ES2022", "DOM"],
-    "types": []
+    "types": ["node"]
   }
 }

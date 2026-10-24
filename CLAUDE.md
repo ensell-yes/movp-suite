@@ -159,7 +159,7 @@
   and drives CLI, GraphQL, and MCP over their real runtimes. Keep its network probes and Docker startup retries
   bounded and fail-loud. Any package imported through a Deno subpath must publish that subpath and its built
   artifacts; `pnpm check:packages` pins `@movp/search/gte-small`.
-- `@movp/editor-sdk` is the client-safe embeddable rich-text editor (TipTap, permissive-only). It NEVER imports
+- `@movp/editor-sdk` is the client-safe embeddable rich-text editor (TipTap 3, permissive-only). It NEVER imports
   `@movp/domain`/`@movp/auth`/`@movp/graphql`/`@supabase`; the host injects `onSave`, maps transport conflicts
   to `{ status: 'conflict' }`, retains `onSaved(revisionId)` for the next expected revision, and receives
   non-destructive refresh/destructive load-latest callbacks from its host. Its `onDirtyChange` signal is

@@ -5,5 +5,5 @@ export default defineConfig({
     environment: 'node',
     include: ['tests/**/*.test.ts', 'src/**/*.test.{ts,tsx}'],
   },
-  esbuild: { jsx: 'automatic', jsxImportSource: 'react' },
+  oxc: { jsx: { runtime: 'automatic', importSource: 'react' } },
 })
