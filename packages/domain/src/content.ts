@@ -62,7 +62,7 @@ function isValidFieldSchema(schema: unknown): schema is FieldDefShape[] {
 }
 
 function fieldSchemaToZod(fields: FieldDefShape[]): z.ZodType<Record<string, unknown>> {
-  const shape: z.ZodRawShape = {}
+  const shape: Record<string, z.ZodTypeAny> = {}
   for (const field of fields) {
     let base: z.ZodTypeAny
     switch (field.type) {

@@ -35,7 +35,7 @@ function fieldInput(def: FieldDef): z.ZodType<unknown> {
       z.boolean(),
       z.null(),
       z.array(z.unknown()),
-      z.record(z.unknown()),
+      z.record(z.string(), z.unknown()),
     ])
   }
   if (def.type === 'enum') {
@@ -76,7 +76,7 @@ function text(value: unknown) {
   }
 }
 
-const jsonObjectInput = z.union([z.string(), z.record(z.unknown())])
+const jsonObjectInput = z.union([z.string(), z.record(z.string(), z.unknown())])
 const fieldSchemaInput = z.union([
   z.string(),
   z.array(z.object({
